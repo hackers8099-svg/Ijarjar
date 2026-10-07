@@ -12,6 +12,7 @@ import so.ijarjar.app.model.Clip
 import so.ijarjar.app.model.LayerKind
 import so.ijarjar.app.model.MediaKind
 import so.ijarjar.app.model.Project
+import so.ijarjar.app.render.SpeedMap
 import kotlin.math.abs
 
 /**
@@ -138,7 +139,8 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         val idx = main.currentMediaItemIndex
         val c = project.clips.getOrNull(idx) ?: return
         currentIndex = idx
-        main.playbackParameters = PlaybackParameters(if (c.kind == MediaKind.VIDEO) c.speed else 1f)
+        lastSpeed = if (c.kind == MediaKind.VIDEO) SpeedMap.speedAtSrc(c, main.currentPosition.coerceAtLeast(0)) else 1f
+        main.playbackParameters = PlaybackParameters(lastSpeed)
         main.volume = if (muteMain) 0f else c.volume.coerceIn(0f, 1f)
     }
 
@@ -152,7 +154,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         val idx = main.currentMediaItemIndex
         val c = project.clips.getOrNull(idx) ?: return 0
         val pos = main.currentPosition.coerceAtLeast(0)
-        val local = if (c.kind == MediaKind.VIDEO) (pos / c.speed).toLong() else pos
+        val local = if (c.kind == MediaKind.VIDEO) SpeedMap.srcToOut(c, pos) else pos
         return project.clipStartMs(idx) + local.coerceAtMost(c.outDurationMs)
     }
 
@@ -168,7 +170,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             if (i == p.clips.size - 1) { idx = i; local = c.outDurationMs - 1 }
         }
         val c = p.clips[idx]
-        val pos = if (c.kind == MediaKind.VIDEO) (local * c.speed).toLong() else local
+        val pos = if (c.kind == MediaKind.VIDEO) SpeedMap.outToSrc(c, local) else local
         main.seekTo(idx, pos.coerceAtLeast(0))
         if (idx != currentIndex) applyClipState()
         syncSecondary(t, force = true)
@@ -190,7 +192,15 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     }
 
     /** Called every frame while the editor is visible. */
+    private var lastSpeed = 1f
+
     fun tick(): Long {
+        // speed curves: follow the curve while playing
+        val c = project.clips.getOrNull(main.currentMediaItemIndex)
+        if (c != null && c.hasCurve) {
+            val sp = SpeedMap.speedAtSrc(c, main.currentPosition.coerceAtLeast(0))
+            if (kotlin.math.abs(sp - lastSpeed) > 0.01f) { lastSpeed = sp; main.playbackParameters = PlaybackParameters(sp) }
+        }
         val t = currentTimeMs()
         syncSecondary(t, force = false)
         return t

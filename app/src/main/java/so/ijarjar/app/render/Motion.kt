@@ -14,6 +14,7 @@ class ClipMotion(
     var tx: Float = 0f,         // fraction of canvas width
     var ty: Float = 0f,         // fraction of canvas height
     var mirror: Boolean = false,
+    var sx: Float = 1f,         // extra horizontal squeeze
     var fadeColor: Int = Color.BLACK,
     var fadeAlpha: Float = 0f
 )
@@ -70,6 +71,27 @@ object Motion {
                 m.rotation += if (incoming) -180f * e else 180f * e
                 m.scale *= 1f - 0.4f * e
                 m.fadeColor = Color.BLACK; m.fadeAlpha = maxOf(m.fadeAlpha, e * 0.5f)
+            }
+            TransitionKind.SLIDE_LEFT -> m.tx += if (incoming) e * 1.0f else -e * 1.0f
+            TransitionKind.SLIDE_RIGHT -> m.tx += if (incoming) -e * 1.0f else e * 1.0f
+            TransitionKind.SLIDE_UP -> m.ty += if (incoming) e * 1.0f else -e * 1.0f
+            TransitionKind.SLIDE_DOWN -> m.ty += if (incoming) -e * 1.0f else e * 1.0f
+            TransitionKind.WHIP -> {
+                m.tx += if (incoming) e * 0.6f else -e * 0.6f
+                m.sx *= 1f + 0.5f * e
+                m.fadeColor = Color.WHITE; m.fadeAlpha = maxOf(m.fadeAlpha, e * 0.45f)
+            }
+            TransitionKind.SQUEEZE -> {
+                m.sx *= (1f - e).coerceAtLeast(0.02f)
+                m.fadeColor = Color.BLACK; m.fadeAlpha = maxOf(m.fadeAlpha, e * 0.3f)
+            }
+            TransitionKind.GLITCH -> {
+                val k = (u / 60).toInt()
+                val r = ((k * 1103515245 + 12345) ushr 8 and 0xFFFF) / 65535f
+                m.tx += (r - 0.5f) * 0.12f * e
+                m.sx *= 1f + (r - 0.5f) * 0.3f * e
+                m.fadeColor = if (r > 0.5f) Color.argb(255, 255, 0, 255) else Color.argb(255, 0, 255, 255)
+                m.fadeAlpha = maxOf(m.fadeAlpha, e * 0.35f * r)
             }
             TransitionKind.SHAKE -> {
                 m.tx += sin(u * 0.09f) * 0.05f * e

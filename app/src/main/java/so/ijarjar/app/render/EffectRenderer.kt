@@ -44,6 +44,29 @@ object EffectRenderer {
                 EffectKind.ZOOM_PULSE -> m.scale *= 1f + (0.5f + 0.5f * sin(u / 1000f * 2f * PI.toFloat() * 1.5f)) * 0.12f * k
                 EffectKind.SLOW_ZOOM -> m.scale *= 1f + (u / l.durationMs).coerceIn(0f, 1f) * 0.3f * k
                 EffectKind.SWAY -> m.rotation += sin(u / 1000f * 2f * PI.toFloat() * 0.6f) * 4f * k
+                EffectKind.BOUNCE -> {
+                    val ph = (u / 600f) % 1f
+                    m.ty -= abs(sin(ph * PI.toFloat())) * 0.04f * k
+                    m.scale *= 1f + abs(sin(ph * PI.toFloat())) * 0.04f * k
+                }
+                EffectKind.GLITCH -> {
+                    val f = (u / 70f).toInt()
+                    if (rnd(f, 3) > 0.55f) {
+                        m.tx += (rnd(f, 1) - 0.5f) * 0.08f * k
+                        m.sx *= 1f + (rnd(f, 2) - 0.5f) * 0.12f * k
+                        if (rnd(f, 4) > 0.8f) { m.fadeColor = Color.argb(255, 255, 0, 255); m.fadeAlpha = maxOf(m.fadeAlpha, 0.25f * k) }
+                    }
+                }
+                EffectKind.EARTHQUAKE -> {
+                    m.tx += (sin(u * 0.11f) + sin(u * 0.27f) * 0.6f) * 0.045f * k
+                    m.ty += (cos(u * 0.13f) + cos(u * 0.31f) * 0.6f) * 0.04f * k
+                    m.rotation += sin(u * 0.05f) * 2.5f * k
+                    m.scale *= 1f + 0.1f * k
+                }
+                EffectKind.FADE_WHITE -> {
+                    val f = (u / l.durationMs).coerceIn(0f, 1f)
+                    m.fadeColor = Color.WHITE; m.fadeAlpha = maxOf(m.fadeAlpha, f * l.opacity)
+                }
                 EffectKind.FLASH -> {
                     val ph = (u % 800f) / 800f
                     val a = if (ph < 0.25f) 1f - ph / 0.25f else 0f
@@ -78,6 +101,15 @@ object EffectRenderer {
                         0f, 0f, 0f, 1f, 0f))
                 }
                 EffectKind.RAINBOW -> hueRotate((t - l.startMs) / 1000f * 120f * k)
+                EffectKind.NEON -> ColorMatrix().apply {
+                    setSaturation(1f + 1.2f * k)
+                    postConcat(ColorMatrix(floatArrayOf(
+                        1f + 0.4f * k, 0f, 0f, 0f, -40f * k,
+                        0f, 1f + 0.4f * k, 0f, 0f, -40f * k,
+                        0f, 0f, 1f + 0.4f * k, 0f, -40f * k,
+                        0f, 0f, 0f, 1f, 0f)))
+                    postConcat(hueRotate(sin((t - l.startMs) / 700f) * 40f * k))
+                }
                 EffectKind.NEGATIVE -> ColorMatrix(floatArrayOf(
                     1f - 2f * k, 0f, 0f, 0f, 255f * k,
                     0f, 1f - 2f * k, 0f, 0f, 255f * k,
@@ -179,6 +211,73 @@ object EffectRenderer {
                     val x = rnd(frame, 11) * W
                     canvas.drawLine(x, 0f, x, H, paint)
                 }
+            }
+            EffectKind.BUBBLES -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = maxOf(1f, W * 0.003f)
+                particles(canvas, W, H, u, 30, k, -0.1f) { x, y, s, _ ->
+                    paint.color = Color.argb((180 * k).toInt(), 220, 240, 255); canvas.drawCircle(x, y, s * 2.5f, paint)
+                }
+                paint.style = Paint.Style.FILL
+            }
+            EffectKind.FIREWORKS -> {
+                for (b in 0 until 4) {
+                    val period = 1600f
+                    val local = (u + b * 400f) % period
+                    val cycle = ((u + b * 400f) / period).toInt()
+                    val cx = (0.2f + rnd(cycle * 7 + b, 1) * 0.6f) * W
+                    val cy = (0.15f + rnd(cycle * 7 + b, 2) * 0.4f) * H
+                    val pr = local / period
+                    val col = Color.HSVToColor(floatArrayOf(rnd(cycle * 7 + b, 3) * 360f, 0.7f, 1f))
+                    paint.color = col; paint.alpha = ((1f - pr) * 255 * k).toInt()
+                    for (j in 0 until 24) {
+                        val a = j / 24f * 2f * PI.toFloat()
+                        val r = pr * W * 0.25f
+                        canvas.drawCircle(cx + cos(a) * r, cy + sin(a) * r + pr * pr * H * 0.05f, W * 0.006f, paint)
+                    }
+                }
+            }
+            EffectKind.LIGHT_LEAK -> {
+                val ph = u / 3000f
+                val x = (0.5f + 0.5f * sin(ph * 2f * PI.toFloat())) * W
+                paint.shader = RadialGradient(x, H * 0.2f, maxOf(W, H) * 0.6f,
+                    intArrayOf(Color.argb((150 * k).toInt(), 255, 140, 40), Color.argb((60 * k).toInt(), 255, 60, 90), Color.TRANSPARENT),
+                    floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP)
+                canvas.drawRect(0f, 0f, W, H, paint)
+                paint.shader = null
+            }
+            EffectKind.VHS -> {
+                paint.color = Color.argb((40 * k).toInt(), 0, 0, 0)
+                var y = 0f
+                val step = maxOf(2f, H / 240f)
+                while (y < H) { canvas.drawRect(0f, y, W, y + step / 2, paint); y += step }
+                val band = (u / 4f) % (H * 1.3f) - H * 0.15f
+                paint.color = Color.argb((50 * k).toInt(), 255, 255, 255)
+                canvas.drawRect(0f, band, W, band + H * 0.03f, paint)
+                paint.color = Color.argb((220 * k).toInt(), 255, 255, 255)
+                paint.textSize = W * 0.05f
+                canvas.drawText("PLAY ▶", W * 0.06f, H * 0.08f, paint)
+            }
+            EffectKind.REC -> {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = maxOf(2f, W * 0.006f)
+                paint.color = Color.argb((230 * k).toInt(), 255, 255, 255)
+                val m = W * 0.06f; val len = W * 0.08f
+                canvas.drawLine(m, m, m + len, m, paint); canvas.drawLine(m, m, m, m + len, paint)
+                canvas.drawLine(W - m, m, W - m - len, m, paint); canvas.drawLine(W - m, m, W - m, m + len, paint)
+                canvas.drawLine(m, H - m, m + len, H - m, paint); canvas.drawLine(m, H - m, m, H - m - len, paint)
+                canvas.drawLine(W - m, H - m, W - m - len, H - m, paint); canvas.drawLine(W - m, H - m, W - m, H - m - len, paint)
+                paint.style = Paint.Style.FILL
+                if ((u / 500).toInt() % 2 == 0) { paint.color = Color.argb((255 * k).toInt(), 255, 40, 40); canvas.drawCircle(m * 1.6f, m * 1.9f, W * 0.015f, paint) }
+                paint.color = Color.argb((230 * k).toInt(), 255, 255, 255); paint.textSize = W * 0.04f
+                canvas.drawText("REC", m * 1.6f + W * 0.03f, m * 1.9f + W * 0.014f, paint)
+                val sec = (u / 1000).toInt()
+                canvas.drawText("%02d:%02d".format(sec / 60, sec % 60), W - m - W * 0.16f, m * 1.9f + W * 0.014f, paint)
+            }
+            EffectKind.SPOTLIGHT -> {
+                val x = (0.5f + 0.25f * sin(u / 1500f)) * W
+                paint.shader = RadialGradient(x, H * 0.45f, minOf(W, H) * 0.45f,
+                    intArrayOf(Color.TRANSPARENT, Color.argb((210 * k).toInt(), 0, 0, 0)), floatArrayOf(0.6f, 1f), Shader.TileMode.CLAMP)
+                canvas.drawRect(0f, 0f, W, H, paint)
+                paint.shader = null
             }
             else -> {}
         }

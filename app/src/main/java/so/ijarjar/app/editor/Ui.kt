@@ -13,8 +13,6 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.widget.NestedScrollView
-import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.slider.Slider
 
@@ -99,22 +97,39 @@ object Ui {
         return box
     }
 
-    fun sheet(c: Context, title: String, onDismiss: (() -> Unit)? = null): Pair<BottomSheetDialog, LinearLayout> {
-        val d = BottomSheetDialog(c)
-        val scroll = NestedScrollView(c).apply {
-            background = roundBg(SURFACE, dp(c, 18f).toFloat())
-        }
-        val root = LinearLayout(c).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(c, 18f), dp(c, 14f), dp(c, 18f), dp(c, 22f))
-        }
-        scroll.addView(root)
-        root.addView(text(c, title, 17f, TEXT, true).apply { setPadding(0, 0, 0, dp(c, 10f)) })
-        d.setContentView(scroll)
-        d.behavior.state = BottomSheetBehavior.STATE_EXPANDED
-        d.behavior.skipCollapsed = true
-        if (onDismiss != null) d.setOnDismissListener { onDismiss() }
-        return Pair(d, root)
+    /**
+     * Opens an editing panel at the bottom of the editor (like CapCut): the preview stays visible
+     * above it and the panel replaces the timeline while it is open.
+     */
+    fun sheet(c: Context, title: String, onDismiss: (() -> Unit)? = null): Pair<Panel, LinearLayout> {
+        val p = Panel(c, title)
+        if (onDismiss != null) p.setOnDismissListener(onDismiss)
+        return Pair(p, p.root)
+    }
+
+    /** Label + slider on one line (keeps panels short). */
+    fun sliderRow(c: Context, label: String, from: Float, to: Float, value: Float, step: Float = 0f, onChange: (Float) -> Unit): View {
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        row.addView(text(c, label, 12f, TEXT2).apply { maxLines = 1 }, LinearLayout.LayoutParams(dp(c, 92f), ViewGroup.LayoutParams.WRAP_CONTENT))
+        row.addView(slider(c, from, to, value, step, onChange), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        return row
+    }
+
+    /** A horizontally scrolling row to put tiles in (left to right, like CapCut). */
+    fun hrow(c: Context): Pair<HorizontalScrollView, LinearLayout> {
+        val sv = HorizontalScrollView(c).apply { isHorizontalScrollBarEnabled = false }
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL; setPadding(0, dp(c, 4f), 0, dp(c, 4f)) }
+        sv.addView(row)
+        return Pair(sv, row)
+    }
+
+    /** Tabs on top of a panel; each tab fills the body when chosen. */
+    fun tabs(c: Context, root: LinearLayout, tabs: List<Pair<String, (LinearLayout) -> Unit>>, selected: Int = 0) {
+        val body = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        fun show(i: Int) { body.removeAllViews(); tabs[i].second(body) }
+        root.addView(choiceRow(c, tabs.map { it.first }, selected) { show(it) })
+        root.addView(body)
+        show(selected)
     }
 
     fun label(c: Context, s: String) = text(c, s, 13f, TEXT2).apply { setPadding(0, dp(c, 10f), 0, dp(c, 2f)) }
@@ -195,5 +210,53 @@ object Ui {
         }
         paint(selected)
         return sv
+    }
+}
+
+/** Implemented by the screen that shows panels. */
+interface PanelHost {
+    fun attachPanel(panel: Panel)
+    fun detachPanel(panel: Panel)
+}
+
+/** An inline bottom panel with a title and a done button. */
+class Panel(val context: Context, title: String) {
+    val view: LinearLayout
+    val root: LinearLayout
+    private var onDismiss: (() -> Unit)? = null
+    private var dismissed = false
+
+    init {
+        view = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Ui.SURFACE)
+        }
+        val head = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(Ui.dp(context, 16f), Ui.dp(context, 4f), Ui.dp(context, 4f), 0)
+        }
+        head.addView(Ui.text(context, title, 15f, Ui.TEXT, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_check, 24f, Ui.ACCENT) { dismiss() })
+        view.addView(head)
+        val scroll = NestedScrollView(context)
+        root = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(Ui.dp(context, 14f), 0, Ui.dp(context, 14f), Ui.dp(context, 10f))
+        }
+        scroll.addView(root)
+        view.addView(scroll)
+    }
+
+    fun setOnDismissListener(f: () -> Unit) { onDismiss = f }
+
+    fun show() { (context as? PanelHost)?.attachPanel(this) }
+
+    /** Closes without running the dismiss action twice. */
+    fun dismiss() {
+        if (dismissed) return
+        dismissed = true
+        (context as? PanelHost)?.detachPanel(this)
+        onDismiss?.invoke()
     }
 }

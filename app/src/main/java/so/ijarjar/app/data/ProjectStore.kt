@@ -48,7 +48,17 @@ object ProjectStore {
         if (p.clips == null) p.clips = mutableListOf()
         if (p.layers == null) p.layers = mutableListOf()
         if (p.audios == null) p.audios = mutableListOf()
-        for (l in p.layers) if (l.keyframes == null) l.keyframes = mutableListOf()
+        for (l in p.layers) {
+            if (l.keyframes == null) l.keyframes = mutableListOf()
+            if (l.frames == null) l.frames = mutableListOf()
+            if (l.strokes == null) l.strokes = mutableListOf()
+            if (l.adjust == null) l.adjust = so.ijarjar.app.model.Adjust()
+        }
+        for (c in p.clips) {
+            if (c.curvePoints == null || c.curvePoints.size != 5) c.curvePoints = mutableListOf(1f, 1f, 1f, 1f, 1f)
+            if (c.adjust == null) c.adjust = so.ijarjar.app.model.Adjust()
+        }
+        if (p.bgAdjust == null) p.bgAdjust = so.ijarjar.app.model.Adjust()
         // older projects had a single "music" field
         p.music?.let { m ->
             if (m.uri.isNotEmpty()) {

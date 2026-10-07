@@ -161,11 +161,15 @@ class TimelineView(context: Context) : View(context) {
             canvas.restore()
             var bx = r.left + dp(4f)
             val by = r.bottom - dp(10f)
-            if (c.kind == MediaKind.VIDEO && c.speed != 1f) {
+            if (c.hasCurve) {
+                drawIcon(canvas, R.drawable.ic_speed, bx, by, dp(13f), 0xFFFFCC00.toInt()); bx += dp(14f)
+                canvas.drawText(c.curve.label, bx, by + dp(4f), labelPaint); bx += labelPaint.measureText(c.curve.label) + dp(6f)
+            } else if (c.kind == MediaKind.VIDEO && c.speed != 1f) {
                 drawIcon(canvas, R.drawable.ic_speed, bx, by, dp(13f)); bx += dp(14f)
                 canvas.drawText("${trim(c.speed)}x", bx, by + dp(4f), labelPaint); bx += dp(28f)
             }
             if (c.volume == 0f) { drawIcon(canvas, R.drawable.ic_mute, bx, by, dp(13f)); bx += dp(16f) }
+            if (c.reversed) { drawIcon(canvas, R.drawable.ic_reverse, bx, by, dp(13f)); bx += dp(16f) }
             if (!c.adjust.isIdentity()) { drawIcon(canvas, R.drawable.ic_filter, bx, by, dp(13f)); bx += dp(16f) }
             if (c.tScale != 1f || c.tRot != 0f || c.tX != 0f || c.tY != 0f || c.mirror) drawIcon(canvas, R.drawable.ic_canvas, bx, by, dp(13f))
             if ((selection as? Sel.ClipSel)?.index == i) drawSelection(canvas, r, Color.WHITE)
@@ -276,6 +280,8 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.VIDEO -> 0xFFB8336A.toInt()
         LayerKind.EFFECT -> 0xFF8A6D1E.toInt()
         LayerKind.SHAPE -> 0xFF2E8B57.toInt()
+        LayerKind.ANIMATED -> 0xFFB04BD6.toInt()
+        LayerKind.DRAW -> 0xFFD6814B.toInt()
     }
 
     private fun layerIcon(l: Layer) = when (l.kind) {
@@ -285,6 +291,8 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.VIDEO -> R.drawable.ic_overlay
         LayerKind.EFFECT -> R.drawable.ic_effects
         LayerKind.SHAPE -> R.drawable.ic_shape
+        LayerKind.ANIMATED -> R.drawable.ic_animation
+        LayerKind.DRAW -> R.drawable.ic_pencil
     }
 
     private fun drawLayers(canvas: Canvas, p: Project) {
@@ -332,6 +340,8 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.VIDEO -> l.name
         LayerKind.EFFECT -> l.effect.label
         LayerKind.SHAPE -> l.shape.label
+        LayerKind.ANIMATED -> l.name
+        LayerKind.DRAW -> L.t("Sawir gacmeed", "Drawing")
     }
 
     private fun drawSelection(canvas: Canvas, r: RectF, color: Int, handles: Boolean = true) {

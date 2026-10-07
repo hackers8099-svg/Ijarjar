@@ -28,6 +28,7 @@ import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.RgbMatrix
+import androidx.media3.effect.SingleColorLut
 import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -48,6 +49,8 @@ import so.ijarjar.app.render.EffectRenderer
 import so.ijarjar.app.render.Filters
 import so.ijarjar.app.render.LayerRenderer
 import so.ijarjar.app.render.Motion
+import so.ijarjar.app.render.Lut
+import so.ijarjar.app.render.SpeedMap
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -200,17 +203,23 @@ class Exporter(
         }
         val audio = mutableListOf<AudioProcessor>()
         val video = mutableListOf<Effect>()
-        if (c.kind == MediaKind.VIDEO && c.speed != 1f) {
+        if (c.kind == MediaKind.VIDEO && (c.speed != 1f || c.hasCurve)) {
             val speed = c.speed
+            val curve = c.hasCurve
             val pair = Effects.createExperimentalSpeedChangingEffect(object : SpeedProvider {
-                override fun getSpeed(timeUs: Long): Float = speed
-                override fun getNextSpeedChangeTimeUs(timeUs: Long): Long = C.TIME_UNSET
+                override fun getSpeed(timeUs: Long): Float = if (curve) SpeedMap.speedAtSrc(c, timeUs / 1000) else speed
+                override fun getNextSpeedChangeTimeUs(timeUs: Long): Long {
+                    if (!curve) return C.TIME_UNSET
+                    val n = SpeedMap.nextChangeUs(c, timeUs)
+                    return if (n < 0) C.TIME_UNSET else n
+                }
             })
             audio.add(pair.first)
             video.add(pair.second)
         }
         if (c.volume != 1f) audio.add(volumeProcessor(c.volume))
         video.addAll(Filters.exportEffects(c.adjust, c.width.coerceAtLeast(16)))
+        c.adjust.lutUri?.let { u -> Lut.load(context, u)?.let { lut -> video.add(SingleColorLut.createFromCube(lut.toCube(c.adjust.lutStrength))) } }
         if (project.layers.any { it.isEffect() && it.effect.group == 2 }) video.add(EffectColor(clipStartMs))
         video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
         video.add(ClipTransform(index, w.toFloat() / h))
@@ -239,7 +248,7 @@ class Exporter(
             val m = Motion.clipMotion(project, index, clock.localMs(presentationTimeUs))
             return Matrix().apply {
                 postScale(aspect, 1f)
-                postScale(m.scale * (if (m.mirror) -1f else 1f), m.scale)
+                postScale(m.scale * m.sx * (if (m.mirror) -1f else 1f), m.scale)
                 postRotate(-m.rotation)
                 postScale(1f / aspect, 1f)
                 postTranslate(2f * m.tx, -2f * m.ty)
@@ -285,9 +294,12 @@ class Exporter(
             val active = project.layers.filter { it.isActive(t) }
             // anything that moves needs a redraw every frame
             val animated = active.any {
-                it.kind == LayerKind.VIDEO || it.isEffect() || it.keyframes.isNotEmpty() ||
+                !(it.kind == LayerKind.TEXT || it.kind == LayerKind.STICKER || it.kind == LayerKind.IMAGE || it.kind == LayerKind.SHAPE || it.kind == LayerKind.DRAW) ||
+                    it.keyframes.isNotEmpty() || it.motionBlur ||
                     it.animIn != so.ijarjar.app.model.LayerAnim.NONE || it.animOut != so.ijarjar.app.model.LayerAnim.NONE ||
-                    it.animLoop != so.ijarjar.app.model.LoopAnim.NONE
+                    it.animLoop != so.ijarjar.app.model.LoopAnim.NONE || it.expr != so.ijarjar.app.model.Expression.NONE ||
+                    it.textIn != so.ijarjar.app.model.TextAnim.NONE || it.textOut != so.ijarjar.app.model.TextAnim.NONE ||
+                    it.textLoop != so.ijarjar.app.model.TextLoop.NONE
             }
             val key = active.joinToString(",") { it.id }
             if (!animated && key == lastKey && frameSource.lastOwner === this) return bmp
@@ -298,7 +310,7 @@ class Exporter(
             for (l in LayerRenderer.drawOrder(active)) {
                 val content = if (l.kind == LayerKind.VIDEO) frameSource.videoFrame(l, t, w) else null
                 if (l.kind == LayerKind.VIDEO && content == null) continue
-                LayerRenderer.draw(context, canvas, l, t, w, h, content)
+                LayerRenderer.draw(context, canvas, l, t, w, h, content, 1920)
             }
             return bmp
         }

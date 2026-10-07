@@ -1,11 +1,13 @@
 package so.ijarjar.app.model
 
+import com.google.gson.Gson
 import so.ijarjar.app.L
 import java.util.UUID
 
 enum class MediaKind { VIDEO, IMAGE }
 
-enum class LayerKind { VIDEO, IMAGE, TEXT, STICKER, EFFECT, SHAPE }
+/** ANIMATED = GIF or PNG sequence (transparent motion graphics). DRAW = brush drawing. */
+enum class LayerKind { VIDEO, IMAGE, TEXT, STICKER, EFFECT, SHAPE, ANIMATED, DRAW }
 
 enum class AudioKind { MUSIC, VOICE, EXTRACTED, SOUND }
 
@@ -22,12 +24,20 @@ enum class FilterPreset(val so: String, val en: String) {
     GOLDEN("Dahab", "Golden"),
     TEAL_ORANGE("Cinema", "Cinematic"),
     PINK("Casaan", "Pink"),
+    MOODY("Murugo", "Moody"),
+    PASTEL("Jilicsan", "Pastel"),
+    SUNSET("Qorrax-dhac", "Sunset"),
+    FOREST("Kayn", "Forest"),
+    MATTE("Matte", "Matte"),
+    CYBER("Cyber", "Cyberpunk"),
+    MONO_HI("Madow adag", "Hi-con B&W"),
+    KODAK("Filim", "Film"),
     INVERT("Rogan", "Invert");
 
     val label: String get() = L.t(so, en)
 }
 
-/** In / out animations for layers. */
+/** In / out animations for a whole layer. */
 enum class LayerAnim(val so: String, val en: String) {
     NONE("Midna", "None"),
     FADE("Iftiimi", "Fade"),
@@ -36,9 +46,54 @@ enum class LayerAnim(val so: String, val en: String) {
     SLIDE_LEFT("Bidix", "Slide left"),
     SLIDE_RIGHT("Midig", "Slide right"),
     ZOOM("Weyneyn", "Zoom"),
+    ZOOM_OUT("Yaraan", "Zoom out"),
     POP("Bood", "Pop"),
     SPIN("Wareeg", "Spin"),
+    FLIP("Rog", "Flip"),
+    DROP("Dhac", "Drop"),
+    BLUR("Qariin", "Blur"),
     TYPEWRITER("Qoraal-qor", "Typewriter");
+
+    val label: String get() = L.t(so, en)
+}
+
+/** Letter / word animations for text (Apple, After Effects, Premiere style). */
+enum class TextAnim(val so: String, val en: String) {
+    NONE("Midna", "None"),
+    APPLE("Apple", "Apple blur"),
+    LETTER_FADE("Xaraf-xaraf", "Letter fade"),
+    LETTER_RISE("Xaraf kor", "Letter rise"),
+    LETTER_DROP("Xaraf dhac", "Letter drop"),
+    LETTER_POP("Xaraf bood", "Letter pop"),
+    LETTER_SPIN("Xaraf wareeg", "Letter spin"),
+    LETTER_ZOOM("Xaraf weyn", "Letter zoom"),
+    TRACKING("Kala fidin", "Tracking"),
+    COLOR_IN("Midab", "With colors"),
+    RANDOM("Kala firdhi", "Random letters"),
+    WORD_FADE_UP("Eray kor", "Word fade up"),
+    WORD_FADE_DOWN("Eray hoos", "Word fade down"),
+    WORD_SLIDE_LEFT("Eray bidix", "From left"),
+    WORD_SLIDE_RIGHT("Eray midig", "From right"),
+    WORD_POP("Eray bood", "Word pop"),
+    TYPEWRITER("Qoraal-qor", "Typewriter"),
+    GLITCH("Glitch", "Glitch"),
+    BOUNCE_IN("Booddo", "Bounce");
+
+    val label: String get() = L.t(so, en)
+}
+
+/** Looping letter / word animations (captions, titles). */
+enum class TextLoop(val so: String, val en: String) {
+    NONE("Midna", "None"),
+    WAVE("Mowjad", "Wave"),
+    BOUNCE("Bood", "Bounce"),
+    KARAOKE("Karaoke", "Karaoke"),
+    WORD_HIGHLIGHT("Eray iftiin", "Word highlight"),
+    WORD_POP("Eray weyn", "Word pop"),
+    SHIMMER("Dhalaal", "Shimmer"),
+    RAINBOW("Qaanso", "Rainbow"),
+    JITTER("Gariir", "Jitter"),
+    FLICKER("Libdhi", "Flicker");
 
     val label: String get() = L.t(so, en)
 }
@@ -51,7 +106,14 @@ enum class TransitionKind(val so: String, val en: String) {
     ZOOM_IN("Gal", "Zoom in"),
     ZOOM_OUT("Ka bax", "Zoom out"),
     SPIN("Wareeg", "Spin"),
-    SHAKE("Gariir", "Shake");
+    SHAKE("Gariir", "Shake"),
+    SLIDE_LEFT("Bidix", "Slide left"),
+    SLIDE_RIGHT("Midig", "Slide right"),
+    SLIDE_UP("Kor", "Slide up"),
+    SLIDE_DOWN("Hoos", "Slide down"),
+    WHIP("Whip", "Whip pan"),
+    SQUEEZE("Cadaadi", "Squeeze"),
+    GLITCH("Glitch", "Glitch");
 
     val label: String get() = L.t(so, en)
 }
@@ -76,13 +138,18 @@ enum class EffectKind(val so: String, val en: String, val group: Int) {
     ZOOM_PULSE("Weyn-yar", "Zoom pulse", 0),
     SLOW_ZOOM("Soo dhowaan", "Slow zoom", 0),
     SWAY("Lulo", "Sway", 0),
+    BOUNCE("Booddo", "Bounce", 0),
+    GLITCH("Glitch", "Glitch", 0),
+    EARTHQUAKE("Dhulgariir", "Earthquake", 0),
     FLASH("Iftiin", "Flash", 1),
     STROBE("Libiqsi", "Strobe", 1),
     FADE_BLACK("Madoobaan", "Fade to black", 1),
+    FADE_WHITE("Caddaan", "Fade to white", 1),
     BW("Madow-Cadaan", "Black & white", 2),
     OLD_FILM("Filim qadiim", "Old film", 2),
     RAINBOW("Qaanso-roobaad", "Rainbow", 2),
     NEGATIVE("Rogan", "Negative", 2),
+    NEON("Neon", "Neon", 2),
     VIGNETTE("Geeso madow", "Vignette", 3),
     LETTERBOX("Cinema", "Letterbox", 3),
     SNOW("Baraf", "Snow", 3),
@@ -90,7 +157,13 @@ enum class EffectKind(val so: String, val en: String, val group: Int) {
     CONFETTI("Dabaaldeg", "Confetti", 3),
     STARS("Xiddigo", "Sparkles", 3),
     RAIN("Roob", "Rain", 3),
-    GRAIN("Bus", "Film grain", 3);
+    GRAIN("Bus", "Film grain", 3),
+    BUBBLES("Xumbo", "Bubbles", 3),
+    FIREWORKS("Rashaash", "Fireworks", 3),
+    LIGHT_LEAK("Iftiin daadan", "Light leak", 3),
+    VHS("VHS", "VHS", 3),
+    REC("Kamarad", "Camera REC", 3),
+    SPOTLIGHT("Iftiin dhexe", "Spotlight", 3);
 
     val label: String get() = L.t(so, en)
 }
@@ -105,7 +178,9 @@ enum class ShapeKind(val so: String, val en: String) {
     HEART("Qalbi", "Heart"),
     ARROW("Fallaar", "Arrow"),
     LINE("Xariiq", "Line"),
-    BUBBLE("Hadal", "Speech bubble");
+    BUBBLE("Hadal", "Speech bubble"),
+    HEXAGON("Lix-geesle", "Hexagon"),
+    RING("Giraan", "Ring");
 
     val label: String get() = L.t(so, en)
 }
@@ -123,7 +198,57 @@ enum class MaskKind(val so: String, val en: String) {
     val label: String get() = L.t(so, en)
 }
 
+/** After Effects style expressions that add motion on top of keyframes. */
+enum class Expression(val so: String, val en: String) {
+    NONE("Midna", "None"),
+    BOUNCE("Bood (inertia)", "Bounce"),
+    WIGGLE("Ruxid", "Wiggle"),
+    LOOP_CYCLE("Ku celi", "loopOut cycle"),
+    LOOP_PINGPONG("Tag-iyo-kaalay", "loopOut pingpong"),
+    SQUASH("Cadaadis", "Squash & stretch"),
+    ROTATE("Wareeg joogto", "time * rotate"),
+    PULSE("Neef", "Pulse"),
+    ORBIT("Meeraha", "Orbit"),
+    FOCUS("Diirad", "Focus pull");
+
+    val label: String get() = L.t(so, en)
+}
+
+/** Keyframe interpolation curves (After Effects style). */
+enum class Easing(val so: String, val en: String) {
+    LINEAR("Toos", "Linear"),
+    EASE_IN("Tartiib bilow", "Ease in"),
+    EASE_OUT("Tartiib dhammee", "Ease out"),
+    EASE_IN_OUT("Tartiib labada", "Ease in-out"),
+    BACK("Dib-u-bood", "Back"),
+    BOUNCE("Booddo", "Bounce"),
+    ELASTIC("Laastig", "Elastic"),
+    HOLD("Joogso", "Hold"),
+    CUSTOM("Gaar ah", "Custom");
+
+    val label: String get() = L.t(so, en)
+}
+
+/** Speed curves (CapCut style). Values are speed multipliers at 5 evenly spaced points. */
+enum class SpeedCurve(val so: String, val en: String, val points: FloatArray) {
+    NONE("Midna", "None", floatArrayOf(1f, 1f, 1f, 1f, 1f)),
+    MONTAGE("Montage", "Montage", floatArrayOf(1f, 3f, 0.6f, 3f, 1f)),
+    HERO("Geesi", "Hero", floatArrayOf(2f, 2f, 0.3f, 2f, 2f)),
+    BULLET("Xabbad", "Bullet", floatArrayOf(3f, 0.3f, 0.3f, 0.3f, 3f)),
+    JUMP_CUT("Bood-goyn", "Jump cut", floatArrayOf(1f, 5f, 1f, 5f, 1f)),
+    FLASH_IN("Degdeg gal", "Flash in", floatArrayOf(5f, 3f, 1f, 1f, 1f)),
+    FLASH_OUT("Degdeg bax", "Flash out", floatArrayOf(1f, 1f, 1f, 3f, 5f)),
+    CUSTOM("Gaar ah", "Custom", floatArrayOf(1f, 1f, 1f, 1f, 1f));
+
+    val label: String get() = L.t(so, en)
+}
+
 fun newId(): String = UUID.randomUUID().toString().substring(0, 8)
+
+private val cloner = Gson()
+
+/** Deep copy through JSON (keeps every field, new ones included). */
+fun <T> gsonCopy(x: T, c: Class<T>): T = cloner.fromJson(cloner.toJson(x), c)
 
 class Adjust(
     var brightness: Float = 0f,   // -1..1
@@ -132,12 +257,15 @@ class Adjust(
     var temperature: Float = 0f,  // -1..1
     var tint: Float = 0f,         // -1..1
     var blur: Float = 0f,         // 0..1
-    var preset: FilterPreset = FilterPreset.NONE
+    var preset: FilterPreset = FilterPreset.NONE,
+    var lutUri: String? = null,   // .cube colour lookup table
+    var lutName: String = "",
+    var lutStrength: Float = 1f
 ) {
     fun isColorIdentity() = brightness == 0f && contrast == 0f && saturation == 0f &&
         temperature == 0f && tint == 0f && (preset == FilterPreset.NONE)
-    fun isIdentity() = isColorIdentity() && blur == 0f
-    fun copy() = Adjust(brightness, contrast, saturation, temperature, tint, blur, preset)
+    fun isIdentity() = isColorIdentity() && blur == 0f && lutUri == null
+    fun copy(): Adjust = gsonCopy(this, Adjust::class.java)
 }
 
 /** A clip on the main track. */
@@ -153,20 +281,28 @@ class Clip(
     var adjust: Adjust = Adjust(),
     var width: Int = 0,
     var height: Int = 0,
-    // position of the clip on the canvas (CapCut "canvas" transform)
     var tScale: Float = 1f,
     var tRot: Float = 0f,
-    var tX: Float = 0f,   // fraction of canvas width
-    var tY: Float = 0f,   // fraction of canvas height
+    var tX: Float = 0f,
+    var tY: Float = 0f,
     var mirror: Boolean = false,
     var transition: TransitionKind = TransitionKind.NONE,
-    var transitionMs: Long = 600
+    var transitionMs: Long = 600,
+    var curve: SpeedCurve = SpeedCurve.NONE,
+    var curvePoints: MutableList<Float> = mutableListOf(1f, 1f, 1f, 1f, 1f),
+    var reversed: Boolean = false,
+    var originalUri: String? = null
 ) {
     val trimmedMs: Long get() = (trimEndMs - trimStartMs).coerceAtLeast(1)
-    val outDurationMs: Long get() = if (kind == MediaKind.IMAGE) trimmedMs else (trimmedMs / speed).toLong().coerceAtLeast(1)
+    val hasCurve: Boolean get() = kind == MediaKind.VIDEO && curve != SpeedCurve.NONE
+    val outDurationMs: Long
+        get() = when {
+            kind == MediaKind.IMAGE -> trimmedMs
+            hasCurve -> so.ijarjar.app.render.SpeedMap.outDuration(this)
+            else -> (trimmedMs / speed).toLong().coerceAtLeast(1)
+        }
 
-    fun copy(): Clip = Clip(newId(), uri, kind, sourceDurationMs, trimStartMs, trimEndMs, speed, volume, adjust.copy(),
-        width, height, tScale, tRot, tX, tY, mirror, transition, transitionMs)
+    fun copy(): Clip = gsonCopy(this, Clip::class.java).also { it.id = newId() }
 }
 
 /** Snapshot of a layer's transform at a moment in time (relative to the layer start). */
@@ -176,12 +312,27 @@ class Keyframe(
     var cy: Float = 0.5f,
     var scale: Float = 1f,
     var rotation: Float = 0f,
-    var opacity: Float = 1f
+    var opacity: Float = 1f,
+    var sx: Float = 1f,
+    var sy: Float = 1f,
+    var ease: Easing = Easing.EASE_IN_OUT,  // curve towards the NEXT keyframe
+    var bx1: Float = 0.42f,
+    var by1: Float = 0f,
+    var bx2: Float = 0.58f,
+    var by2: Float = 1f
 ) {
-    fun copy() = Keyframe(t, cx, cy, scale, rotation, opacity)
+    fun copy(): Keyframe = gsonCopy(this, Keyframe::class.java)
 }
 
-/** A free layer on top of the main track (overlay video, image, text, sticker). */
+/** One brush stroke; points are x,y pairs in 0..1 of the layer box. */
+class Stroke(
+    var color: Int = 0xFFFFFFFF.toInt(),
+    var width: Float = 0.01f,
+    var points: MutableList<Float> = mutableListOf(),
+    var eraser: Boolean = false
+)
+
+/** A free layer on top of the main track. */
 class Layer(
     var id: String = newId(),
     var kind: LayerKind = LayerKind.TEXT,
@@ -194,11 +345,11 @@ class Layer(
     var textSizeFrac: Float = 0.07f,
     var bold: Boolean = true,
     var font: Int = 0,
-    var align: Int = 1, // 0 left, 1 center, 2 right
+    var align: Int = 1,
     var cx: Float = 0.5f,
     var cy: Float = 0.5f,
-    var baseW: Float = 0.5f,       // width as a fraction of canvas width (image/video)
-    var contentAspect: Float = 1f, // height / width of content
+    var baseW: Float = 0.5f,
+    var contentAspect: Float = 1f,
     var scale: Float = 1f,
     var rotation: Float = 0f,
     var opacity: Float = 1f,
@@ -222,23 +373,60 @@ class Layer(
     var effect: EffectKind = EffectKind.SHAKE,
     var isCaption: Boolean = false,
     var shape: ShapeKind = ShapeKind.RECT,
-    var textColor2: Int = 0,          // second colour = gradient fill (text & shapes)
-    var depth: Float = 0f,            // 3D extrusion 0..1
+    var textColor2: Int = 0,
+    var depth: Float = 0f,
     var depthColor: Int = 0xFF333333.toInt(),
-    var letterSpacing: Float = 0f,    // em
-    var strokeWidth: Float = 0.12f    // relative to text size / shape size
+    var letterSpacing: Float = 0f,
+    var strokeWidth: Float = 0.12f,
+    // letter / word animations
+    var textIn: TextAnim = TextAnim.NONE,
+    var textOut: TextAnim = TextAnim.NONE,
+    var textLoop: TextLoop = TextLoop.NONE,
+    var highlightColor: Int = 0xFFFFE600.toInt(),
+    // chroma key (green screen), After Effects Keylight style
+    var chroma: Boolean = false,
+    var chromaColor: Int = 0xFF00FF00.toInt(),
+    var chromaTol: Float = 0.3f,
+    var chromaSoft: Float = 0.1f,
+    var chromaSpill: Float = 0.5f,
+    var chromaChoke: Float = 0f,
+    var chromaMatte: Boolean = false,
+    // crop (fractions of the source picture)
+    var cropL: Float = 0f,
+    var cropT: Float = 0f,
+    var cropR: Float = 0f,
+    var cropB: Float = 0f,
+    var srcAspect: Float = 1f,
+    // picture outline / drop shadow (sticker look)
+    var outlineColor: Int = 0,
+    var outlineWidth: Float = 0.02f,
+    // animated overlays: PNG sequence frames or a single GIF in uri
+    var frames: MutableList<String> = mutableListOf(),
+    var fps: Float = 25f,
+    // brush drawing
+    var strokes: MutableList<Stroke> = mutableListOf(),
+    // width / height stretch (keyframable)
+    var stretchX: Float = 1f,
+    var stretchY: Float = 1f,
+    // expressions & motion blur
+    var expr: Expression = Expression.NONE,
+    var exprAmp: Float = 1f,
+    var exprFreq: Float = 2f,
+    var exprDecay: Float = 5f,
+    var motionBlur: Boolean = false,
+    // colour for pictures, and Lottie (After Effects / Bodymovin) animations
+    var adjust: Adjust = Adjust(),
+    var isLottie: Boolean = false,
+    var lottieText: String = ""
 ) {
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     fun isActive(t: Long) = t >= startMs && t < endMs
     fun isTextLike() = kind == LayerKind.TEXT || kind == LayerKind.STICKER
     fun isEffect() = kind == LayerKind.EFFECT
+    fun isPicture() = kind == LayerKind.IMAGE || kind == LayerKind.VIDEO || kind == LayerKind.ANIMATED
+    fun hasCrop() = cropL > 0f || cropT > 0f || cropR > 0f || cropB > 0f
 
-    fun copy(): Layer = Layer(
-        newId(), kind, name, uri, text, textColor, strokeColor, bgColor, textSizeFrac, bold, font, align,
-        cx, cy, baseW, contentAspect, scale, rotation, opacity, flipH, startMs, endMs, linkGroup,
-        sourceDurationMs, trimStartMs, keyframes.map { it.copy() }.toMutableList(), animIn, animOut,
-        animInMs, animOutMs, shadow, mask, maskSize, maskFeather, maskInvert, animLoop, effect, isCaption, shape, textColor2, depth, depthColor, letterSpacing, strokeWidth
-    )
+    fun copy(): Layer = gsonCopy(this, Layer::class.java).also { it.id = newId() }
 }
 
 /** Any extra audio: music, voice-over, audio taken from a clip, sound effects. */
@@ -247,16 +435,16 @@ class AudioTrack(
     var uri: String = "",
     var name: String = "",
     var kind: AudioKind = AudioKind.MUSIC,
-    var startMs: Long = 0,        // position on the timeline
-    var trimStartMs: Long = 0,    // where in the file it starts
-    var durationMs: Long = 0,     // how long it plays
+    var startMs: Long = 0,
+    var trimStartMs: Long = 0,
+    var durationMs: Long = 0,
     var sourceDurationMs: Long = 0,
     var volume: Float = 1f,
     var fromVideo: Boolean = false
 ) {
     val endMs: Long get() = startMs + durationMs
     fun isActive(t: Long) = t >= startMs && t < endMs
-    fun copy() = AudioTrack(newId(), uri, name, kind, startMs, trimStartMs, durationMs, sourceDurationMs, volume, fromVideo)
+    fun copy(): AudioTrack = gsonCopy(this, AudioTrack::class.java).also { it.id = newId() }
 }
 
 /** Old single music track (kept so older projects still load). */
@@ -277,8 +465,8 @@ class Project(
     var audios: MutableList<AudioTrack> = mutableListOf(),
     var music: Music? = null,
     var bgColor: Int = 0xFF000000.toInt(),
-    var bgColor2: Int = 0,           // gradient background (photo mode)
-    var bgImageUri: String? = null,  // background picture (photo mode)
+    var bgColor2: Int = 0,
+    var bgImageUri: String? = null,
     var bgAdjust: Adjust = Adjust(),
     var bgScale: Float = 1f,
     var bgRot: Float = 0f,
@@ -307,7 +495,7 @@ class Project(
 
     fun aspectRatio(): Float {
         val p = aspect.split(":")
-        return p[0].toFloat() / p[1].toFloat() // width / height
+        return p[0].toFloat() / p[1].toFloat()
     }
 
     /** Output size for export, short side = [shortSide]. Always even numbers. */

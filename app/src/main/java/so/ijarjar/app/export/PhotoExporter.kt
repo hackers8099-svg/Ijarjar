@@ -22,7 +22,7 @@ object PhotoExporter {
         BackgroundRenderer.draw(context, canvas, p, w, h, maxOf(w, h))
         for (l in LayerRenderer.drawOrder(p.layers)) {
             if (!l.isActive(0)) continue
-            LayerRenderer.draw(context, canvas, l, 0, w, h, null)
+            LayerRenderer.draw(context, canvas, l, 0, w, h, null, maxOf(w, h))
         }
         return bmp
     }

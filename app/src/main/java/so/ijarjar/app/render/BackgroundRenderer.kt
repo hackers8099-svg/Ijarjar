@@ -36,6 +36,13 @@ object BackgroundRenderer {
         return b
     }
 
+    private val lutCacheMap = LruCache<String, Bitmap>(3)
+    private fun lutCache(lut: Lut, b: Bitmap, strength: Float, key: String): Bitmap {
+        val k = "$key|${System.identityHashCode(lut)}|$strength|${b.width}"
+        lutCacheMap.get(k)?.let { return it }
+        return lut.apply(b, strength).also { lutCacheMap.put(k, it) }
+    }
+
     fun draw(context: Context, canvas: Canvas, p: Project, w: Int, h: Int, maxImageDim: Int) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         if (p.bgColor2 != 0) {
@@ -55,6 +62,7 @@ object BackgroundRenderer {
         m.postRotate(p.bgRot)
         m.postTranslate(w / 2f + p.bgX * w, h / 2f + p.bgY * h)
         Filters.colorFilter(p.bgAdjust)?.let { paint.colorFilter = it }
+        p.bgAdjust.lutUri?.let { u -> Lut.load(context, u)?.let { lut -> bmp = lutCache(lut, bmp, p.bgAdjust.lutStrength, "$uri@$maxImageDim") } }
         canvas.drawBitmap(bmp, m, paint)
     }
 
