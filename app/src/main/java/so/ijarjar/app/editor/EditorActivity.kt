@@ -571,6 +571,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_trim, tr("Gooy", "Trim")) { showTrim(c) }
                 if (c.kind == MediaKind.VIDEO) t(R.drawable.ic_speed, tr("Xawaare", "Speed"), c.hasCurve || c.speed != 1f) { showSpeed(c) }
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showVolume(c) }
+                if (c.kind == MediaKind.VIDEO) t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
                 t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceIndex = s.index; pickReplaceG.launch(media()) }
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { duplicateClip(s.index) }
                 t(R.drawable.ic_delete, tr("Tirtir", "Delete")) { deleteClip(s.index) }
@@ -585,7 +586,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     t(R.drawable.ic_freeze, tr("Qabooji", "Freeze")) { freezeFrame(s.index) }
                     t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), c.voice != VoiceFx.NONE || c.sfx.on) { showVoiceChanger(c.voice, project.clipStartMs(s.index), c.sfx) { c.voice = it } }
                     t(R.drawable.ic_voice, tr("Nadiifi codka", "Clean voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
-                    t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
                 }
                 group(tr("Habee", "Arrange"))
                 t(R.drawable.ic_left, tr("Bidix u dhaqaaji", "Move left")) { moveClip(s.index, -1) }
@@ -605,6 +605,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.kind == LayerKind.SHAPE) t(R.drawable.ic_pencil, tr("Qaabka", "Style")) { showShapeEditor(l) }
                     if (l.kind == LayerKind.DRAW) t(R.drawable.ic_brush, tr("Sawir", "Draw")) { showDraw(l) }
                     if (l.isLottie) t(R.drawable.ic_text, tr("Qoraalka", "Text")) { showLottieText(l) }
+                    if (l.kind == LayerKind.VIDEO) {
+                        t(R.drawable.ic_volume, tr("Cod", "Volume"), l.volume != 1f) { showLayerVolume(l) }
+                        t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractLayerAudio(l) }
+                    }
                     if (l.kind == LayerKind.IMAGE) {
                         t(R.drawable.ic_crop, tr("Jar", "Crop"), l.hasCrop()) { showCrop(l) }
                         t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceLayerImage(l) }
@@ -1643,6 +1647,30 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             }
         ))
         d.show()
+    }
+
+    private fun showLayerVolume(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Codka layer-ka", "Layer volume")) { commit() }
+        root.addView(Ui.sliderRow(this, tr("Cod", "Volume"), 0f, 1f, l.volume.coerceIn(0f, 1f)) { l.volume = it; live() })
+        buttonRow(root, tr("Aamusi", "Mute") to { l.volume = 0f; live(); d.dismiss() }, "100%" to { l.volume = 1f; live(); d.dismiss() })
+        d.show()
+    }
+
+    /** Puts the overlay video's sound on its own audio track (and mutes the layer). */
+    private fun extractLayerAudio(l: Layer) {
+        val uri = l.uri ?: return
+        io.execute {
+            val info = MediaUtils.probe(this, Uri.parse(uri))
+            main.post {
+                if (info == null || !info.hasAudio) { toast(tr("Muuqaalkan cod ma leh", "This video has no sound")); return@post }
+                val len = minOf(l.durationMs, (info.durationMs - l.trimStartMs).coerceAtLeast(100))
+                val a = AudioTrack(uri = uri, name = l.name, kind = AudioKind.EXTRACTED, startMs = l.startMs, trimStartMs = l.trimStartMs,
+                    durationMs = len, sourceDurationMs = info.durationMs, volume = l.volume.coerceIn(0f, 1f), fromVideo = true)
+                project.audios.add(a); l.volume = 0f
+                setSelection(TimelineView.Sel.AudioSel(a.id)); commit()
+                toast(tr("Codka waa la soo saaray ✓", "Audio extracted ✓"))
+            }
+        }
     }
 
     private fun showOpacity(l: Layer, title: String) {

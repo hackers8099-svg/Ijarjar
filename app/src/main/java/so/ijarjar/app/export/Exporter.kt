@@ -95,6 +95,15 @@ class Exporter(
             if (a.startMs >= total || a.durationMs <= 0) continue
             sequences.add(audioSequence(a, total))
         }
+        // the sound of overlay videos (picture-in-picture)
+        for (l in project.layers) {
+            if (l.kind != LayerKind.VIDEO || l.uri == null || l.volume <= 0f || l.startMs >= total) continue
+            val info = so.ijarjar.app.media.MediaUtils.probe(context, Uri.parse(l.uri)) ?: continue
+            if (!info.hasAudio) continue
+            val len = minOf(l.durationMs, (info.durationMs - l.trimStartMs).coerceAtLeast(100))
+            sequences.add(audioSequence(AudioTrack(uri = l.uri!!, startMs = l.startMs, trimStartMs = l.trimStartMs, durationMs = len,
+                sourceDurationMs = info.durationMs, volume = l.volume), total))
+        }
 
         val composition = Composition.Builder(sequences)
             .experimentalSetForceAudioTrack(true)
