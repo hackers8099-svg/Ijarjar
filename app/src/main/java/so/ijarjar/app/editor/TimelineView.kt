@@ -241,6 +241,7 @@ class TimelineView(context: Context) : View(context) {
         AudioKind.SOUND -> R.drawable.ic_sound
     }
 
+    private val nameShadow by lazy { Paint(labelPaint).apply { color = 0xAA000000.toInt() } }
     private val smallLabel by lazy { Paint(labelPaint).apply { textSize = labelPaint.textSize * 0.8f; color = 0xDDFFFFFF.toInt() } }
 
     private fun drawAudio(canvas: Canvas, p: Project) {
@@ -254,45 +255,52 @@ class TimelineView(context: Context) : View(context) {
             val top = audioTop(i)
             // a clear gap between pieces so every cut is easy to see
             val r = RectF(xOf(a.startMs) + dp(2f), top + dp(1f), xOf(a.endMs) - dp(2f), top + audioH - dp(1f))
+            // CapCut look: dark teal block, one smooth filled cyan wave mirrored around the middle
             val (bg, bar) = when (a.kind) {
-                AudioKind.MUSIC -> Pair(0xFF173A35.toInt(), 0xFF35D4B4.toInt())
-                AudioKind.VOICE -> Pair(0xFF3E2A17.toInt(), 0xFFFFA94D.toInt())
-                AudioKind.EXTRACTED -> Pair(0xFF15324A.toInt(), 0xFF4DB3FF.toInt())
-                AudioKind.SOUND -> Pair(0xFF33173E.toInt(), 0xFFD27BFF.toInt())
+                AudioKind.MUSIC -> Pair(0xFF173A3E.toInt(), 0xFF35D0DC.toInt())
+                AudioKind.VOICE -> Pair(0xFF3A2C17.toInt(), 0xFFFFB04D.toInt())
+                AudioKind.EXTRACTED -> Pair(0xFF173A3E.toInt(), 0xFF35D0DC.toInt())
+                AudioKind.SOUND -> Pair(0xFF2E1B3E.toInt(), 0xFFC98BFF.toInt())
             }
             paint.color = bg
-            canvas.drawRoundRect(r, dp(6f), dp(6f), paint)
-            // bright edges at the start and end of each piece
-            paint.color = 0x66FFFFFF
-            canvas.drawRoundRect(RectF(r.left, r.top + dp(4f), r.left + dp(2f), r.bottom - dp(4f)), dp(1f), dp(1f), paint)
-            canvas.drawRoundRect(RectF(r.right - dp(2f), r.top + dp(4f), r.right, r.bottom - dp(4f)), dp(1f), dp(1f), paint)
-            // real waveform (decoded in the background), bars mirrored around the middle like CapCut
+            canvas.drawRoundRect(r, dp(4f), dp(4f), paint)
             val wave = so.ijarjar.app.media.Waveform.get(context, a.uri) { invalidate() }
-            paint.color = bar
-            val step = dp(2.6f); val bw = dp(1.6f)
-            val msPerBar = (tOf(step) - tOf(0f)).coerceAtLeast(1L)
-            val mid = r.top + audioH * 0.58f
-            val maxH = audioH * 0.36f
-            var x = max(r.left + dp(1f), 0f)
-            canvas.save(); canvas.clipRect(r)
-            while (x < min(r.right, width.toFloat())) {
+            val step = dp(2f)
+            val msPer = (tOf(step) - tOf(0f)).coerceAtLeast(1L)
+            val mid = r.centerY()
+            val maxH = audioH * 0.44f
+            val x0 = max(r.left, 0f); val x1 = min(r.right, width.toFloat())
+            val tops = ArrayList<Float>()
+            var x = x0
+            while (x <= x1) {
                 val local = tOf(x) - a.startMs + a.trimStartMs
                 val v = if (wave != null && wave.isNotEmpty()) {
                     val i0 = (local / so.ijarjar.app.media.Waveform.BUCKET_MS).toInt().coerceAtLeast(0)
-                    val i1 = ((local + msPerBar) / so.ijarjar.app.media.Waveform.BUCKET_MS).toInt().coerceAtLeast(i0 + 1)
+                    val i1 = ((local + msPer) / so.ijarjar.app.media.Waveform.BUCKET_MS).toInt().coerceAtLeast(i0 + 1)
                     var m = 0f
                     for (k in i0 until minOf(i1, wave.size)) m = max(m, wave[k])
                     m * a.volume.coerceIn(0f, 2f)
-                } else 0.08f
-                val hh = (v.coerceIn(0f, 1f) * maxH).coerceAtLeast(dp(0.8f))
-                canvas.drawRoundRect(x, mid - hh, x + bw, mid + hh, bw / 2, bw / 2, paint)
+                } else 0.06f
+                tops.add((v.coerceIn(0f, 1f) * maxH).coerceAtLeast(dp(0.6f)))
                 x += step
             }
-            canvas.restore()
+            if (tops.isNotEmpty()) {
+                val path = android.graphics.Path()
+                path.moveTo(x0, mid)
+                for ((i, hh) in tops.withIndex()) path.lineTo(x0 + i * step, mid - hh)
+                for (i in tops.indices.reversed()) path.lineTo(x0 + i * step, mid + tops[i])
+                path.close()
+                canvas.save(); canvas.clipRect(r)
+                paint.color = bar
+                canvas.drawPath(path, paint)
+                canvas.restore()
+            }
             canvas.save(); canvas.clipRect(r)
             val lx = max(r.left, 0f) + dp(4f)
-            drawIcon(canvas, audioIcon(a), lx, top + dp(8f), dp(11f))
-            canvas.drawText(a.name, lx + dp(14f), top + dp(12f), smallLabel)
+            // name over the wave, like CapCut
+            drawIcon(canvas, audioIcon(a), lx + dp(4f), r.centerY(), dp(12f))
+            canvas.drawText(a.name, lx + dp(20f), r.centerY() + dp(4f), nameShadow)
+            canvas.drawText(a.name, lx + dp(19f), r.centerY() + dp(3.5f), labelPaint)
             canvas.restore()
             if ((selection as? Sel.AudioSel)?.id == a.id || a.id in multi) drawSelection(canvas, r, if (a.id in multi) 0xFF19D3C5.toInt() else Color.WHITE)
         }

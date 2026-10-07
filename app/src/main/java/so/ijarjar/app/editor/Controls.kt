@@ -54,6 +54,9 @@ class ScrubDial(
     private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.SURFACE2 }
     private val resetP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.TEXT2; textSize = 15f * d; textAlign = Paint.Align.CENTER }
     private var lastX = 0f
+    private var downX = 0f; private var downY = 0f
+    private var mine = false      // decided: this drag changes the value (horizontal), not a page scroll
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
     private var held = 0f        // drag distance spent waiting at a snap point
     private var resetRect = RectF()
 
@@ -76,8 +79,16 @@ class ScrubDial(
         if (e.actionMasked == MotionEvent.ACTION_DOWN && resetRect.contains(e.x, e.y)) { reset(); return true }
         gestures.onTouchEvent(e)
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { lastX = e.x; held = 0f; parent?.requestDisallowInterceptTouchEvent(true) }
+            MotionEvent.ACTION_DOWN -> { lastX = e.x; downX = e.x; downY = e.y; held = 0f; mine = false }
             MotionEvent.ACTION_MOVE -> {
+                if (!mine) {
+                    val ax = abs(e.x - downX); val ay = abs(e.y - downY)
+                    if (ax < slop && ay < slop) return true
+                    // up / down = scroll the list; left / right = change the value
+                    if (ay > ax) return false
+                    mine = true; lastX = e.x
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
                 val dx = (e.x - lastX) / d
                 lastX = e.x
                 val slow = if (e.pointerCount > 1) 0.2f else 1f
