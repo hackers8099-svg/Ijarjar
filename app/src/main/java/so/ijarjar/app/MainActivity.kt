@@ -12,6 +12,11 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.appcompat.app.AppCompatActivity
+import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
+import so.ijarjar.app.data.Template
+import so.ijarjar.app.data.Templates
+import so.ijarjar.app.model.Clip
 import androidx.media3.common.util.UnstableApi
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import so.ijarjar.app.data.ProjectStore
@@ -70,15 +75,20 @@ class MainActivity : AppCompatActivity() {
         lang.addView(Ui.text(this, if (L.english) "English" else "Soomaali", 13f).apply { setPadding(dp(6f), 0, 0, 0) })
         title.addView(lang)
         root.addView(title)
-        root.addView(Ui.text(this, tr("Muuqaal iyo sawir — layer-ada isku xir oo hal mar wada dhaqaaji",
-            "Video & photo editor — link layers and move them together"), 13f, Ui.TEXT2).apply { setPadding(0, dp(4f), 0, dp(18f)) })
+        root.addView(View(this), LinearLayout.LayoutParams(1, dp(18f)))
 
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        row.addView(bigButton(R.drawable.ic_video, tr("Muuqaal cusub", "New video"), tr("Sida CapCut", "Like CapCut"), Ui.ACCENT) { newProject(false) },
+        row.addView(bigButton(R.drawable.ic_video, tr("Muuqaal cusub", "New video"), Ui.ACCENT) { newProject(false) },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = dp(6f) })
-        row.addView(bigButton(R.drawable.ic_photo, tr("Sawir cusub", "New photo"), tr("Sida PixelLab", "Like PixelLab"), Ui.ACCENT2) { newProject(true) },
+        row.addView(bigButton(R.drawable.ic_photo, tr("Sawir cusub", "New photo"), Ui.ACCENT2) { newProject(true) },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = dp(6f) })
         root.addView(row)
+
+        // templates
+        root.addView(Ui.text(this, tr("Qaababka diyaarsan", "Templates"), 16f, Ui.TEXT, true).apply { setPadding(0, dp(22f), 0, dp(10f)) })
+        val (tsv, trow) = Ui.hrow(this)
+        for (t in Templates.all) trow.addView(templateTile(t), LinearLayout.LayoutParams(dp(110f), dp(150f)).apply { marginEnd = dp(8f) })
+        root.addView(tsv)
 
         root.addView(Ui.text(this, tr("Mashaariicdaada", "Your projects"), 16f, Ui.TEXT, true).apply { setPadding(0, dp(24f), 0, dp(10f)) })
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -86,7 +96,62 @@ class MainActivity : AppCompatActivity() {
         setContentView(scroll)
     }
 
-    private fun bigButton(icon: Int, title: String, sub: String, color: Int, onClick: () -> Unit): View {
+    private var pendingTemplate: Template? = null
+    private val pickTemplateMedia = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val t = pendingTemplate ?: return@registerForActivityResult
+        if (uris.isNotEmpty()) createFromTemplate(t, uris)
+    }
+
+    private fun templateTile(t: Template): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.BOTTOM
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR, intArrayOf(t.color1, t.color2)).apply {
+                cornerRadius = dp(16f).toFloat()
+            }
+            setPadding(dp(10f), dp(10f), dp(10f), dp(10f))
+            setOnClickListener { useTemplate(t) }
+        }
+        box.addView(ImageView(this).apply {
+            setImageResource(if (t.photo) R.drawable.ic_photo else R.drawable.ic_video)
+            imageTintList = ColorStateList.valueOf(0xCCFFFFFF.toInt())
+        }, LinearLayout.LayoutParams(dp(20f), dp(20f)))
+        box.addView(Ui.text(this, t.label, 14f, 0xFFFFFFFF.toInt(), true).apply { setPadding(0, dp(4f), 0, 0) })
+        box.addView(Ui.text(this, if (t.media > 0) tr("${t.media} sawir/muuqaal", "${t.media} clips") else t.aspect, 11f, 0xCCFFFFFF.toInt()))
+        return box
+    }
+
+    private fun useTemplate(t: Template) {
+        if (t.media == 0) { createFromTemplate(t, emptyList()); return }
+        pendingTemplate = t
+        Toast.makeText(this, tr("Dooro ilaa ${t.media} sawir ama muuqaal", "Pick up to ${t.media} photos or videos"), Toast.LENGTH_SHORT).show()
+        pickTemplateMedia.launch(if (t.photo) arrayOf("image/*") else arrayOf("video/*", "image/*"))
+    }
+
+    private fun createFromTemplate(t: Template, uris: List<Uri>) {
+        Toast.makeText(this, tr("Waa la diyaarinayaa…", "Preparing…"), Toast.LENGTH_SHORT).show()
+        io.execute {
+            val p = Project(name = t.label, isPhoto = t.photo, aspect = t.aspect)
+            for (u in uris) runCatching { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            if (t.photo) {
+                p.bgColor = 0xFFFFFFFF.toInt()
+                uris.firstOrNull()?.let { p.bgImageUri = it.toString() }
+            } else {
+                for (u in uris) {
+                    val info = MediaUtils.probe(this, u) ?: continue
+                    p.clips.add(if (info.isVideo) Clip(uri = u.toString(), kind = MediaKind.VIDEO, sourceDurationMs = info.durationMs,
+                        trimStartMs = 0, trimEndMs = info.durationMs, width = info.width, height = info.height)
+                    else Clip(uri = u.toString(), kind = MediaKind.IMAGE, sourceDurationMs = 3000, trimStartMs = 0, trimEndMs = 3000,
+                        width = info.width, height = info.height))
+                }
+            }
+            t.build(p)
+            ProjectStore.save(this, p)
+            runOnUiThread { open(p.id) }
+        }
+    }
+
+    private fun bigButton(icon: Int, title: String, color: Int, onClick: () -> Unit): View {
         val b = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -97,7 +162,6 @@ class MainActivity : AppCompatActivity() {
         b.addView(ImageView(this).apply { setImageResource(icon); imageTintList = ColorStateList.valueOf(0xFF101014.toInt()) },
             LinearLayout.LayoutParams(dp(34f), dp(34f)))
         b.addView(Ui.text(this, title, 16f, 0xFF101014.toInt(), true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8f), 0, 0) })
-        b.addView(Ui.text(this, sub, 12f, 0xAA101014.toInt()).apply { gravity = Gravity.CENTER })
         return b
     }
 

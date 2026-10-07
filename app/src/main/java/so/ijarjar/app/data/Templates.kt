@@ -28,7 +28,7 @@ class Template(
     val media: Int,
     val color1: Int,
     val color2: Int,
-    val apply: (Project) -> Unit
+    val build: (Project) -> Unit
 ) {
     val label: String get() = L.t(so, en)
 }
