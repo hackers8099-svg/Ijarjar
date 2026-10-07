@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- "i" + play: the ijarjar mark (stays inside the 66dp safe zone) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- shadow -->
+    <path android:fillColor="#33000000" android:pathData="M39.5,50.5h5a4,4 0 0,1 4,4v20a4,4 0 0,1 -4,4h-5a4,4 0 0,1 -4,-4v-20a4,4 0 0,1 4,-4z" />
+    <!-- i stem -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M39,48h5a4,4 0 0,1 4,4v20a4,4 0 0,1 -4,4h-5a4,4 0 0,1 -4,-4v-20a4,4 0 0,1 4,-4z" />
+    <!-- i dot -->
+    <path android:fillColor="#FFFFD166" android:pathData="M41.5,34m-6.5,0a6.5,6.5 0 1,1 13,0a6.5,6.5 0 1,1 -13,0" />
+    <!-- play -->
+    <path android:fillColor="#FFFFFFFF" android:strokeColor="#FFFFFFFF" android:strokeWidth="6" android:strokeLineJoin="round"
+        android:pathData="M57,40L57,72L79,56Z" />
+</vector>

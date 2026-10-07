@@ -149,9 +149,29 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
     private val playP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF3D7F.toInt(); strokeWidth = 1.5f * d }
     private val textP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.TEXT2; textSize = 10f * d }
     private val bg = Paint().apply { color = 0xFF202027.toInt() }
+    private val rulerP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88FFFFFF.toInt(); strokeWidth = 1f * d }
+    private val bubbleText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 10f * d; isFakeBoldText = true }
 
     private var vMin = 0f; private var vMax = 1f
-    private var dragging = -1   // 0 = out handle, 1 = in handle, 2 = scrub
+    /** Visible time range (zoom): ms inside the layer. */
+    private var viewStart = 0L
+    private var viewEnd = -1L
+    private fun vEnd() = if (viewEnd <= viewStart) layer.durationMs.coerceAtLeast(1) else viewEnd
+    private var pinchSpan = 0f
+
+    /** Zoom in (> 1) or out (< 1) around a time. */
+    fun zoom(f: Float, aroundMs: Long = (viewStart + vEnd()) / 2) {
+        val dur = layer.durationMs.coerceAtLeast(1)
+        val span = ((vEnd() - viewStart) / f).toLong().coerceIn(200L.coerceAtMost(dur), dur)
+        val frac = ((aroundMs - viewStart).toFloat() / (vEnd() - viewStart).coerceAtLeast(1)).coerceIn(0f, 1f)
+        var s0 = aroundMs - (span * frac).toLong()
+        s0 = s0.coerceIn(0, dur - span)
+        viewStart = s0; viewEnd = s0 + span
+        invalidate()
+    }
+    fun fit() { viewStart = 0; viewEnd = -1; invalidate() }
+    private var dragging = -1   // 0 = out handle, 1 = in handle, 2 = scrub, 3 = pinch
+    private var lastMid = 0f
 
     private fun v(p: Pose): Float = when (prop) {
         0 -> p.cx * 100; 1 -> p.cy * 100; 2 -> p.scale * 100; 3 -> p.rotation; 4 -> p.opacity * 100
@@ -164,11 +184,11 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
 
     private val padL get() = 34 * d
     private val padR get() = 12 * d
-    private val padT get() = 12 * d
+    private val padT get() = 24 * d
     private val padB get() = 18 * d
-    private fun tx(t: Long) = padL + (width - padL - padR) * (t.toFloat() / layer.durationMs.coerceAtLeast(1))
+    private fun tx(t: Long) = padL + (width - padL - padR) * ((t - viewStart).toFloat() / (vEnd() - viewStart).coerceAtLeast(1))
     private fun ty(v: Float) = padT + (height - padT - padB) * (1f - (v - vMin) / (vMax - vMin).coerceAtLeast(1e-4f))
-    private fun tOf(x: Float) = ((x - padL) / (width - padL - padR) * layer.durationMs).toLong().coerceIn(0, layer.durationMs)
+    private fun tOf(x: Float) = (viewStart + (x - padL) / (width - padL - padR) * (vEnd() - viewStart)).toLong().coerceIn(0, layer.durationMs)
     private fun vOf(y: Float) = vMin + (1f - (y - padT) / (height - padT - padB)) * (vMax - vMin)
 
     private fun sorted() = layer.keyframes.sortedBy { it.t }
@@ -197,7 +217,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         var lo = Float.MAX_VALUE; var hi = -Float.MAX_VALUE
         val n = 80
         for (i in 0..n) {
-            val t = layer.startMs + layer.durationMs * i / n
+            val t = layer.startMs + viewStart + (vEnd() - viewStart) * i / n
             val x = v(LayerRenderer.basePose(layer, t))
             lo = min(lo, x); hi = max(hi, x)
         }
@@ -208,6 +228,22 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        // two fingers: pinch = zoom time, move = pan
+        if (e.pointerCount >= 2) {
+            val sp = abs(e.getX(0) - e.getX(1)).coerceAtLeast(1f)
+            val mid = (e.getX(0) + e.getX(1)) / 2
+            when (e.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> { pinchSpan = sp; dragging = 3; lastMid = mid }
+                MotionEvent.ACTION_MOVE -> if (dragging == 3 && pinchSpan > 0f) {
+                    zoom(sp / pinchSpan, tOf(mid)); pinchSpan = sp
+                    val dt = ((lastMid - mid) / (width - padL - padR) * (vEnd() - viewStart)).toLong()
+                    val dur = layer.durationMs; val span = vEnd() - viewStart
+                    viewStart = (viewStart + dt).coerceIn(0, (dur - span).coerceAtLeast(0)); viewEnd = viewStart + span
+                    lastMid = mid; invalidate()
+                }
+            }
+            return true
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
@@ -225,6 +261,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
             }
             MotionEvent.ACTION_MOVE -> {
                 val a = selected
+                if (dragging == 3) return true
                 if (dragging == 2) onSeek(layer.startMs + tOf(e.x))
                 else if (a != null && (dragging == 0 || dragging == 1)) {
                     val b = nextOf(a) ?: return true
@@ -253,15 +290,28 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
             val v = vMax - (vMax - vMin) * i / 4f
             c.drawText(if (abs(v) >= 100) v.roundToInt().toString() else "%.1f".format(v), 4 * d, y + 4 * d, textP)
         }
-        val secs = layer.durationMs / 1000f
-        val stepS = if (secs > 20) 5f else if (secs > 6) 1f else 0.5f
-        var s = 0f
-        while (s <= secs) { val x = tx((s * 1000).toLong()); c.drawLine(x, padT, x, height - padB, grid); c.drawText("${"%.1f".format(s)}s", x + 2 * d, height - 4 * d, textP); s += stepS }
+        // time labels at least ~64 dp apart, whatever the zoom
+        val spanS = (vEnd() - viewStart) / 1000f
+        val usable = (width - padL - padR).coerceAtLeast(1f)
+        val steps = floatArrayOf(0.05f, 0.1f, 0.25f, 0.5f, 1f, 2f, 5f, 10f, 15f, 30f, 60f, 120f)
+        val stepS = steps.firstOrNull { usable * it / spanS >= 64 * d } ?: 300f
+        var s = (kotlin.math.floor(viewStart / 1000f / stepS) * stepS)
+        c.save(); c.clipRect(padL, 0f, width - padR, height.toFloat())
+        while (s <= vEnd() / 1000f + stepS) {
+            val x = tx((s * 1000).toLong())
+            c.drawLine(x, padT, x, height - padB, grid)
+            val lab = if (stepS >= 1f) { val m = (s / 60).toInt(); val sec = (s % 60).toInt(); if (m > 0) "%d:%02d".format(m, sec) else "${sec}s" } else "%.2fs".format(s)
+            c.drawText(lab, x + 2 * d, height - 4 * d, textP)
+            // ruler on top: big tick + small ticks (like the AE time ruler)
+            c.drawLine(x, padT - 10 * d, x, padT, rulerP)
+            for (k in 1 until 5) { val xs = tx(((s + stepS * k / 5f) * 1000).toLong()); c.drawLine(xs, padT - 5 * d, xs, padT, rulerP) }
+            s += stepS
+        }
         // keyframed curve and (dashed) result with expressions
         val path = Path(); val ex = Path()
-        val n = 120
+        val n = 140
         for (i in 0..n) {
-            val t = layer.startMs + layer.durationMs * i / n
+            val t = layer.startMs + viewStart + (vEnd() - viewStart) * i / n
             val x = tx(t - layer.startMs)
             val y = ty(v(LayerRenderer.basePose(layer, t)))
             if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
@@ -288,6 +338,14 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
             c.drawCircle(h2[0], h2[1], 6 * d, handleP)
         }
         val px = tx(playheadMs - layer.startMs)
-        c.drawLine(px, padT, px, height - padB, playP)
+        c.drawLine(px, padT - 10 * d, px, height - padB, playP)
+        c.restore()
+        // where you are: time bubble on the playhead
+        val local = (playheadMs - layer.startMs).coerceAtLeast(0)
+        val lab = "%d:%02d.%02d".format(local / 60000, (local / 1000) % 60, (local % 1000) / 10)
+        val tw = bubbleText.measureText(lab) + 12 * d
+        val bx = (px - tw / 2).coerceIn(padL, width - padR - tw)
+        c.drawRoundRect(RectF(bx, 2 * d, bx + tw, padT - 10 * d), 5 * d, 5 * d, playP)
+        c.drawText(lab, bx + 6 * d, padT - 14 * d, bubbleText)
     }
 }

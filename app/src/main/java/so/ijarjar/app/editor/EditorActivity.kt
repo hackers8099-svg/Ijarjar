@@ -247,6 +247,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             }
             stage.timeMs = if (photo) 0 else timeMs
             stage.refresh()
+            activeGraph?.let { g -> if (g.isAttachedToWindow) { if (g.playheadMs != timeMs) g.playheadMs = timeMs } else activeGraph = null }
             if (!photo) {
                 timeLabel.text = TimelineView.fmt(timeMs) + " / " + TimelineView.fmt(project.durationMs)
                 updateKeyButton()
@@ -269,7 +270,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
         top.addView(Ui.iconButton(this, R.drawable.ic_close) { save(); finish() })
         top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        if (!project.isPhoto) top.addView(Ui.iconButton(this, R.drawable.ic_background, 22f) { showVideoBackground() })
         aspectBtn = Ui.text(this, project.aspect, 13f).apply {
             background = Ui.roundBg(Ui.SURFACE2, dp(14f).toFloat())
             setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
@@ -632,17 +632,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         t(R.drawable.ic_animation, tr("Animation", "Animation"),
                             l.animIn != LayerAnim.NONE || l.animOut != LayerAnim.NONE || l.textIn != TextAnim.NONE || l.textOut != TextAnim.NONE ||
                                 l.animLoop != LoopAnim.NONE || l.textLoop != TextLoop.NONE) { showAnimation(l) }
-                        t(R.drawable.ic_keyframe, "Keyframe", l.keyframes.isNotEmpty()) { showKeyframes(l) }
-                        t(R.drawable.ic_preset, "Presets") { showPresets(l) }
-                        if (l.keyframes.isNotEmpty()) t(R.drawable.ic_curve, tr("Qalooc", "Curve")) { showCurve(l) }
-                        t(R.drawable.ic_expression, "Expression", l.expr != Expression.NONE || l.motionBlur) { showExpression(l) }
+                        t(R.drawable.ic_keyframe, tr("Keyframe & Presets", "Keyframes & presets"), l.keyframes.isNotEmpty() || l.exprCode.isNotEmpty()) { showKeyframes(l) }
+                        t(R.drawable.ic_expression, "Expression", l.expr != Expression.NONE || l.motionBlur || l.exprCode.isNotEmpty()) { showExpression(l) }
                         if (project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
                     }
                     group(tr("Muuqaal", "Look"))
                     if (l.isPicture()) t(R.drawable.ic_filter, tr("Filter", "Filters"), !l.adjust.isIdentity()) { showFilters(l.adjust, null) }
-                    t(R.drawable.ic_opacity, tr("Daahsoon", "Opacity")) { showOpacity(l, tr("Daahsoonaan", "Opacity")) }
-                    if (l.isPicture() || l.kind == LayerKind.SHAPE) t(R.drawable.ic_outline, tr("Xariiq & hadh", "Outline"), l.outlineColor != 0 || l.shadow) { showOutline(l) }
-                    t(R.drawable.ic_glow, "Glow", l.glowColor != 0) { showGlow(l) }
+                    t(R.drawable.ic_glow, tr("Qaab (opacity, xariiq, glow)", "Style"), l.outlineColor != 0 || l.shadow || l.glowColor != 0) { showStyle(l) }
                     if (l.isPicture()) {
                         t(R.drawable.ic_mask, tr("Maaskaro", "Mask"), l.mask != MaskKind.NONE) { showMask(l) }
                         t(R.drawable.ic_chroma, tr("Shaashad cagaar", "Chroma key"), l.chroma) { showChroma(l) }
@@ -661,15 +657,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.kind == LayerKind.VIDEO || l.kind == LayerKind.IMAGE) t(R.drawable.ic_bring_forward, tr("U dir track-ga weyn", "To main track")) { layerToClip(l) }
                     t(R.drawable.ic_link, tr("Isku xir", "Link"), l.linkGroup != null) { showLink(l) }
                     if (l.linkGroup != null) t(R.drawable.ic_unlink, tr("Kala fur", "Unlink")) { unlink(l) }
-                    t(R.drawable.ic_bring_forward, tr("Kor u qaad", "Bring up")) { moveLayerInStack(l, 1); commit() }
-                    t(R.drawable.ic_send_backward, tr("Hoos u dhig", "Send down")) { moveLayerInStack(l, -1); commit() }
-                    t(R.drawable.ic_bring_forward, tr("Ugu horreysii", "To front")) { project.layers.remove(l); project.layers.add(l); commit() }
-                    t(R.drawable.ic_send_backward, tr("Ugu dambeysii", "To back")) { project.layers.remove(l); project.layers.add(0, l); commit() }
+                    t(R.drawable.ic_layers, tr("Kor / hoos", "Order")) { showLayers() }
                     t(R.drawable.ic_flip, tr("Rog", "Flip")) { for (g in project.linkedWith(l)) g.flipH = !g.flipH; commit() }
                     t(R.drawable.ic_reset, tr("Dib u deji", "Reset")) {
                         l.scale = 1f; l.rotation = 0f; l.cx = 0.5f; l.cy = 0.5f; l.stretchX = 1f; l.stretchY = 1f; l.keyframes.clear(); commit()
                     }
-                    t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
                 }
             }
             s is TimelineView.Sel.AudioSel && selectedAudio() != null -> {
@@ -695,8 +687,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_text, tr("Qoraal", "Text")) { addText() }
                 t(R.drawable.ic_image_add, tr("Sawir", "Image")) { pickOverlayG.launch(imagesOnly()) }
                 t(R.drawable.ic_model3d, "3D") { pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream")) }
-                t(R.drawable.ic_sticker, "Sticker") { showStickers() }
-                t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
+                t(R.drawable.ic_sticker, tr("Walxo", "Elements")) { showElements() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
                 group(tr("Habee", "Arrange"))
                 t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(null) }
@@ -709,11 +700,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 group(tr("Ku dar", "Add"))
                 t(R.drawable.ic_text, tr("Qoraal", "Text")) { addText() }
                 t(R.drawable.ic_caption, tr("Qoraal-hoosaad", "Captions")) { showCaptions() }
-                t(R.drawable.ic_sticker, "Sticker") { showStickers() }
-                t(R.drawable.ic_overlay, "Overlay") { showOverlayMenu() }
-                t(R.drawable.ic_model3d, "3D") { pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream")) }
+                t(R.drawable.ic_overlay, tr("Media & 3D", "Media & 3D")) { showOverlayMenu() }
+                t(R.drawable.ic_sticker, tr("Walxo", "Elements")) { showElements() }
                 t(R.drawable.ic_effects, tr("Saameyn", "Effects")) { showEffects(null) }
-                t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
                 group(tr("Cod", "Audio"))
                 t(R.drawable.ic_music, tr("Muusik", "Music")) { addAudioKind = AudioKind.MUSIC; pickAudio.launch(arrayOf("audio/*")) }
@@ -734,10 +723,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() }
                     }
                 }
-                t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(null) }
                 t(R.drawable.ic_ratio, tr("Saami", "Ratio")) { showAspect() }
+                t(R.drawable.ic_background, tr("Gadaal", "Background")) { showVideoBackground() }
                 t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
-                t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
+                t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(null) }
             }
         }
         toolBack.visibility = if (multiMode || (s != null && !(photo && key == "photo"))) View.VISIBLE else View.GONE
@@ -1786,6 +1775,57 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
     }
 
+    /** Opacity, outline / shadow and glow together. */
+    private fun showStyle(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Qaab", "Style")) { commit() }
+        Ui.tabs(this, root, listOf(
+            tr("Daahsoon", "Opacity") to { body: LinearLayout ->
+                body.addView(Ui.sliderRow(this, tr("Daahsoon", "Opacity"), 0f, 1f, LayerRenderer.basePose(l, timeMs).opacity.coerceIn(0f, 1f)) {
+                    val p = LayerRenderer.basePose(l, timeMs); p.opacity = it; LayerRenderer.writePose(l, timeMs, p); live()
+                })
+            },
+            tr("Xariiq & hadh", "Outline & shadow") to { body: LinearLayout ->
+                body.addView(Ui.colorRow(this, l.outlineColor, true) { l.outlineColor = it; live() })
+                body.addView(Ui.sliderRow(this, tr("Ballac", "Width"), 0.005f, 0.08f, l.outlineWidth.coerceIn(0.005f, 0.08f)) { l.outlineWidth = it; live() })
+                body.addView(Ui.choiceRow(this, listOf(tr("Hadh: Maya", "Shadow off"), tr("Hadh: Haa", "Shadow on")), if (l.shadow) 1 else 0) { l.shadow = it == 1; live() })
+            },
+            "Glow" to { body: LinearLayout ->
+                body.addView(Ui.colorRow(this, l.glowColor, true) { l.glowColor = it; live() })
+                body.addView(Ui.sliderRow(this, tr("Cabbir", "Size"), 0.02f, 1f, l.glowSize.coerceIn(0.02f, 1f)) { l.glowSize = it; live() })
+            }
+        ))
+        d.show()
+    }
+
+    /** Stickers and shapes in one place. */
+    private fun showElements() {
+        val (d, root) = Ui.sheet(this, tr("Walxo", "Elements"))
+        Ui.tabs(this, root, listOf(
+            "Sticker" to { body: LinearLayout ->
+                val emojis = listOf("😀", "😂", "😍", "🥰", "😎", "🤩", "😭", "😡", "🫨", "👍", "👏", "🙏", "💪", "🔥", "✨", "💯", "❤️",
+                    "💔", "⭐", "🎉", "🎁", "🎵", "📌", "✅", "❌", "⚡", "🌙", "☀️", "🌸", "🇸🇴", "🕌", "📿", "🤲", "👀", "💥", "🚀", "🏆",
+                    "🎂", "🌹", "💎", "👑", "📢", "💡", "📍", "🎬", "📸", "🎤", "⚽", "🌍", "🤯", "🥳", "😴", "🤔", "👋", "🙌", "💫", "🌈")
+                val sv = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+                val grid = GridLayout(this).apply { rowCount = 3; orientation = GridLayout.VERTICAL }
+                for (e in emojis) grid.addView(Ui.text(this, e, 30f).apply {
+                    gravity = Gravity.CENTER; setPadding(dp(8f), dp(6f), dp(8f), dp(6f))
+                    setOnClickListener { val l = Layer(kind = LayerKind.STICKER, text = e, textSizeFrac = 0.18f, bold = false); newLayerTimes(l, 3000); addLayer(l) }
+                })
+                sv.addView(grid); body.addView(sv)
+            },
+            tr("Qaabab", "Shapes") to { body: LinearLayout ->
+                chipRow(body, ShapeKind.entries.map { R.drawable.ic_shape to it.label }) { k ->
+                    val kind = ShapeKind.entries[k]
+                    val l = Layer(kind = LayerKind.SHAPE, shape = kind, textColor = Ui.ACCENT, baseW = 0.4f)
+                    l.contentAspect = when (kind) { ShapeKind.LINE -> 0.05f; ShapeKind.ARROW -> 0.45f; ShapeKind.RECT, ShapeKind.ROUND_RECT -> 0.65f; ShapeKind.BUBBLE -> 0.8f; else -> 1f }
+                    if (kind == ShapeKind.LINE) l.textColor = 0xFFFFFFFF.toInt()
+                    newLayerTimes(l, 3000); d.dismiss(); addLayer(l)
+                }
+            }
+        ))
+        d.show()
+    }
+
     private fun showOpacity(l: Layer, title: String) {
         val (d, root) = Ui.sheet(this, title) { commit() }
         root.addView(Ui.slider(this, 0f, 1f, LayerRenderer.basePose(l, timeMs).opacity.coerceIn(0f, 1f)) {
@@ -2553,6 +2593,79 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     // ------------------------------------------------------------------ keyframes (Motion Tools style)
 
+    private var activeGraph: GraphView? = null
+
+    /** Adds keyframes from the playhead: each step is (ms after the playhead, change to the pose). */
+    private fun addMotion(l: Layer, steps: List<Pair<Long, (so.ijarjar.app.render.Pose) -> Unit>>, ease: FloatArray = floatArrayOf(0.333f, 0f, 0.667f, 1f)) {
+        val base = LayerRenderer.basePose(l, timeMs)
+        val start = (timeMs - l.startMs).coerceIn(0, l.durationMs)
+        if (l.keyframes.isEmpty()) LayerRenderer.writePose(l, timeMs, base)   // keep the current values outside the move
+        for ((dt, f) in steps) {
+            val t = (start + dt).coerceAtMost(l.durationMs)
+            val p = so.ijarjar.app.render.Pose(base.cx, base.cy, base.scale, base.rotation, base.opacity, sx = base.sx, sy = base.sy, rx = base.rx, ry = base.ry, z = base.z)
+            f(p)
+            l.keyframes.removeAll { kotlin.math.abs(it.t - t) < 40 }
+            l.keyframes.add(Keyframe(t, p.cx, p.cy, p.scale, p.rotation, p.opacity, p.sx, p.sy, Easing.CUSTOM, ease[0], ease[1], ease[2], ease[3], p.rx, p.ry, p.z))
+        }
+        live()
+    }
+
+    /** Quick tools like the Motion Tools plugin for After Effects. */
+    private fun motionTools(body: LinearLayout, l: Layer, after: () -> Unit) {
+        body.addView(Ui.label(this, tr("Qalooc (taabo: keyframe-ka hadda, ama dhammaan haddii midna aan la dooran)", "Ease (tap: the current keyframe, or all if none is under the playhead)")))
+        val eases = listOf("Linear" to floatArrayOf(0.333f, 0.333f, 0.667f, 0.667f), "Easy Ease" to floatArrayOf(0.333f, 0f, 0.667f, 1f),
+            "Ease In" to floatArrayOf(0.333f, 0f, 1f, 1f), "Ease Out" to floatArrayOf(0f, 0f, 0.667f, 1f), "Strong" to floatArrayOf(0.7f, 0f, 0.3f, 1f),
+            "Expo" to floatArrayOf(0.9f, 0f, 0.1f, 1f), "Smooth" to floatArrayOf(0.45f, 0f, 0.55f, 1f), "Overshoot" to floatArrayOf(0.3f, 0f, 0.3f, 1.35f),
+            "Anticipate" to floatArrayOf(0.4f, -0.35f, 0.6f, 1f))
+        val (sv, row) = Ui.hrow(this)
+        for ((name, b) in eases) {
+            val cv = CurveView(this).apply { easing = Easing.CUSTOM; this.b = b }
+            row.addView(tileWithLabel(this, cv, name, 64f) {
+                val k = LayerRenderer.keyframeAt(l, timeMs)
+                val targets = if (k != null) listOf(k) else l.keyframes
+                for (o in targets) { o.ease = Easing.CUSTOM; o.bx1 = b[0]; o.by1 = b[1]; o.bx2 = b[2]; o.by2 = b[3] }
+                live(); toast(name + " ✓"); after()
+            })
+        }
+        body.addView(sv)
+        body.addView(Ui.label(this, tr("Dhaqdhaqaaq diyaar ah (wuxuu ka bilaabmaa xariiqda)", "Ready moves (start at the playhead)")))
+        val moves = listOf<Pair<String, () -> Unit>>(
+            "Zoom in" to { addMotion(l, listOf(0L to { _ -> }, 1000L to { p -> p.scale *= 1.2f })) },
+            "Zoom out" to { addMotion(l, listOf(0L to { p -> p.scale *= 1.2f }, 1000L to { _ -> })) },
+            tr("Weyn-yar (punch)", "Punch zoom") to { addMotion(l, listOf(0L to { _ -> }, 120L to { p -> p.scale *= 1.25f }, 400L to { _ -> }), floatArrayOf(0.2f, 0f, 0.3f, 1f)) },
+            "Pop" to { addMotion(l, listOf(0L to { p -> p.scale = 0.01f; p.opacity = 0f }, 300L to { p -> p.scale *= 1.12f }, 500L to { _ -> }), floatArrayOf(0.2f, 0f, 0.3f, 1f)) },
+            tr("Bidix ka soo gal", "Slide in ←") to { addMotion(l, listOf(0L to { p -> p.cx -= 1f }, 600L to { _ -> }), floatArrayOf(0f, 0f, 0.2f, 1f)) },
+            tr("Midig ka soo gal", "Slide in →") to { addMotion(l, listOf(0L to { p -> p.cx += 1f }, 600L to { _ -> }), floatArrayOf(0f, 0f, 0.2f, 1f)) },
+            tr("Hoos ka soo kac", "Rise up") to { addMotion(l, listOf(0L to { p -> p.cy += 0.3f; p.opacity = 0f }, 600L to { _ -> }), floatArrayOf(0f, 0f, 0.2f, 1f)) },
+            tr("Soo bax", "Fade in") to { addMotion(l, listOf(0L to { p -> p.opacity = 0f }, 500L to { _ -> })) },
+            tr("Libdh", "Fade out") to { addMotion(l, listOf(0L to { _ -> }, 500L to { p -> p.opacity = 0f })) },
+            tr("Wareeg 360", "Spin 360") to { addMotion(l, listOf(0L to { _ -> }, 1000L to { p -> p.rotation += 360f })) },
+            tr("Wareeg 3D", "Flip 3D") to { addMotion(l, listOf(0L to { p -> p.ry -= 90f; p.opacity = 0f }, 700L to { _ -> })) },
+            tr("Gariir", "Shake") to { addMotion(l, (0..8).map { i -> (i * 60L) to { p: so.ijarjar.app.render.Pose -> if (i in 1..7) p.cx += (if (i % 2 == 0) 0.02f else -0.02f) * (8 - i) / 7f } }, floatArrayOf(0.333f, 0.333f, 0.667f, 0.667f)) })
+        val (sv2, row2) = Ui.hrow(this)
+        for ((name, f) in moves) row2.addView(Ui.button(this, name, false) { f(); after() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6f) })
+        body.addView(sv2)
+        body.addView(Ui.label(this, tr("Qalab", "Tools")))
+        val tools = listOf<Pair<String, () -> Unit>>(
+            "Excite" to { l.exprCode["position"] = "bounce(0.06, 2.5, 5)"; l.exprCode["scale"] = "bounce(0.08, 3, 6)"; live(); toast(tr("Keyframe kasta kadib wuu booddaa", "Overshoots after every keyframe")) },
+            tr("Rog keyframe-yada", "Reverse keys") to {
+                val ks = l.keyframes.sortedBy { it.t }
+                if (ks.size > 1) { val a = ks.first().t; val b = ks.last().t; for (k in ks) k.t = a + b - k.t }
+                live()
+            },
+            tr("Keys → xariiqda", "Keys to playhead") to {
+                val first = l.keyframes.minOfOrNull { it.t } ?: 0L
+                val d = (timeMs - l.startMs) - first
+                for (k in l.keyframes) k.t = (k.t + d).coerceIn(0, l.durationMs)
+                live()
+            },
+            tr("Dheereey ×2", "Slower ×2") to { val a = l.keyframes.minOfOrNull { it.t } ?: 0L; for (k in l.keyframes) k.t = (a + (k.t - a) * 2).coerceAtMost(l.durationMs); live() },
+            tr("Dedeji ×½", "Faster ×½") to { val a = l.keyframes.minOfOrNull { it.t } ?: 0L; for (k in l.keyframes) k.t = a + (k.t - a) / 2; live() })
+        val (sv3, row3) = Ui.hrow(this)
+        for ((name, f) in tools) row3.addView(Ui.button(this, name, false) { f(); after() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6f) })
+        body.addView(sv3)
+    }
+
     private val KEY_PROPS get() = listOf(tr("Booska X", "Position X"), tr("Booska Y", "Position Y"), tr("Cabbir", "Scale"), tr("Wareeg", "Rotation"),
         tr("Daahsoon", "Opacity"), tr("Wareeg X", "Rotate X"), tr("Wareeg Y", "Rotate Y"), tr("Fog Z", "Position Z"), tr("Ballac", "Width"), tr("Dherer", "Height"))
 
@@ -2627,11 +2740,18 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             },
             tr("Garaaf", "Graph") to { body: LinearLayout ->
                 val graph = GraphView(this, l, { live() }) { t -> onKeyframeTap(t); refreshNav() }
+                activeGraph = graph
                 graph.selected = LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.filter { it.t <= timeMs - l.startMs }.maxByOrNull { it.t } ?: l.keyframes.minByOrNull { it.t }
                 graph.playheadMs = timeMs
                 refreshBody = { graph.playheadMs = timeMs; graph.selected = LayerRenderer.keyframeAt(l, timeMs) ?: graph.selected; graph.invalidate() }
                 body.addView(Ui.choiceRow(this, KEY_PROPS, 0) { graph.prop = it })
-                body.addView(graph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(170f)).apply { topMargin = dp(6f) })
+                val zr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                zr.addView(Ui.text(this, tr("Zoom (laba farood ama):", "Zoom (two fingers, or):"), 12f, Ui.TEXT2), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                zr.addView(Ui.button(this, "−", false) { graph.zoom(0.5f, timeMs - l.startMs) })
+                zr.addView(Ui.button(this, "+", false) { graph.zoom(2f, timeMs - l.startMs) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
+                zr.addView(Ui.button(this, tr("Dhammaan", "Fit"), false) { graph.fit() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
+                body.addView(zr)
+                body.addView(graph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200f)).apply { topMargin = dp(6f) })
                 body.addView(Ui.label(this, tr("Taabo keyframe ◆, kadib jiid labada bar ee cad si aad u beddesho xawaaraha (sida AE Graph Editor).",
                     "Tap a keyframe ◆, then drag the two white handles to shape its speed (like the AE Graph Editor).")))
                 fun setEase(e: Easing, b: FloatArray?, all: Boolean) {
@@ -2678,6 +2798,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 }
                 buttonRow(body, tr("Keydi animation-kan", "Save this animation") to { d.dismiss(); showPresets(l) })
             },
+            "Motion Tools" to { body: LinearLayout -> motionTools(body, l) { refreshNav() } },
             "Expression" to { body: LinearLayout -> expressionEditor(body, l) }
         ), startTab)
         d.show()
