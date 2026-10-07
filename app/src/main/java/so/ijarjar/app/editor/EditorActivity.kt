@@ -104,6 +104,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private lateinit var tlBox: View
     private lateinit var panelBox: FrameLayout
     private lateinit var toolRow: LinearLayout
+    private var lastToolSig = ""
     private lateinit var toolScroll: HorizontalScrollView
     private lateinit var toolBox: LinearLayout
     private lateinit var catHolder: FrameLayout
@@ -238,19 +239,36 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         io.shutdown()
     }
 
+    // smooth playhead: the player's clock moves in steps, so we glide between them (no jitter in the timeline / waves)
+    private var smoothT = -1.0
+    private var lastFrameNs = 0L
+    private var lastDrawnT = -1L
+    private var lastRefreshNs = 0L
+    private var lastLabel = ""
+
     private val frame = object : Choreographer.FrameCallback {
         override fun doFrame(frameTimeNanos: Long) {
             if (!running) return
+            val dtMs = if (lastFrameNs == 0L) 16.0 else ((frameTimeNanos - lastFrameNs) / 1_000_000.0).coerceIn(0.0, 100.0)
+            lastFrameNs = frameTimeNanos
             if (engine.isPlaying) {
-                timeMs = engine.tick()
+                val raw = engine.tick().toDouble()
+                smoothT = if (smoothT < 0 || kotlin.math.abs(raw - smoothT) > 150) raw
+                    else maxOf(smoothT, smoothT + dtMs + (raw - (smoothT + dtMs)) * 0.12)
+                timeMs = smoothT.toLong().coerceIn(0L, maxOf(0L, project.durationMs))
                 timeline.timeMs = timeMs
+            } else smoothT = -1.0
+            val t = if (photo) 0 else timeMs
+            stage.timeMs = t
+            // redraw the preview only when something moves (saves battery, keeps scrolling smooth)
+            if (engine.isPlaying || t != lastDrawnT || frameTimeNanos - lastRefreshNs > 250_000_000L) {
+                stage.refresh(); lastDrawnT = t; lastRefreshNs = frameTimeNanos
+                miniTimeline?.let { m -> if (m.isAttachedToWindow) m.invalidate() else miniTimeline = null }
             }
-            stage.timeMs = if (photo) 0 else timeMs
-            stage.refresh()
-            miniTimeline?.let { m -> if (m.isAttachedToWindow) m.invalidate() else miniTimeline = null }
             activeGraph?.let { g -> if (g.isAttachedToWindow) { if (g.playheadMs != timeMs) g.playheadMs = timeMs } else activeGraph = null }
             if (!photo) {
-                timeLabel.text = TimelineView.fmt(timeMs) + " / " + TimelineView.fmt(project.durationMs)
+                val lbl = TimelineView.fmt(timeMs) + " / " + TimelineView.fmt(project.durationMs)
+                if (lbl != lastLabel) { timeLabel.text = lbl; lastLabel = lbl }
                 updateKeyButton()
             }
             Choreographer.getInstance().postFrameCallback(this)
@@ -390,6 +408,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     // ------------------------------------------------------------------ panels
 
     override fun attachPanel(panel: Panel) {
+        // closing the old panel resets the on-screen edit modes; keep the ones the new panel just set
         this.panel?.let { if (it !== panel) it.dismiss() }
         if (panel.snapshot == null) panel.snapshot = ProjectStore.toJson(project)
         // a slim time bar in every video panel: move the playhead without closing the panel
@@ -408,6 +427,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelBox.removeAllViews()
         val maxH = (resources.displayMetrics.heightPixels * 0.40f).toInt()
         panelBox.addView(panel.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        Ui.slideIn(panel.view, 60f, 340)
 
         panelBox.visibility = View.VISIBLE
         tlBox.visibility = View.GONE
@@ -446,13 +466,20 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelPlay?.setImageResource(if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
     }
 
+    private var keyState = -1
+
     private fun updateKeyButton() {
         val l = selectedLayer()
-        if (l == null || l.isEffect()) { keyBtn.visibility = View.INVISIBLE; return }
+        val st = if (l == null || l.isEffect()) 0 else {
+            val on = LayerRenderer.keyframeAt(l, timeMs) != null
+            if (on) 3 else if (l.keyframes.isNotEmpty()) 2 else 1
+        }
+        if (st == keyState) return   // only touch the button when it changes (no work every frame)
+        keyState = st
+        if (st == 0) { keyBtn.visibility = View.INVISIBLE; return }
         keyBtn.visibility = View.VISIBLE
-        val on = LayerRenderer.keyframeAt(l, timeMs) != null
-        keyBtn.setImageResource(if (on) R.drawable.ic_keyframe_on else R.drawable.ic_keyframe)
-        keyBtn.imageTintList = ColorStateList.valueOf(if (on || l.keyframes.isNotEmpty()) 0xFFFFCC00.toInt() else Ui.TEXT)
+        keyBtn.setImageResource(if (st == 3) R.drawable.ic_keyframe_on else R.drawable.ic_keyframe)
+        keyBtn.imageTintList = ColorStateList.valueOf(if (st >= 2) 0xFFFFCC00.toInt() else Ui.TEXT)
     }
 
     private fun togglePlay() {
@@ -497,6 +524,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         timeline.selection = s
         stage.selectedLayerId = (s as? TimelineView.Sel.LayerSel)?.id
         stage.canvasTarget = canvasTargetFor(s)
+        // like CapCut: picking a layer that isn't on screen now moves the playhead onto it, so its box shows
+        if (!photo && !engine.isPlaying) (s as? TimelineView.Sel.LayerSel)?.let { ls ->
+            project.layers.firstOrNull { it.id == ls.id }?.let { l ->
+                if (!l.hidden && (timeMs < l.startMs || timeMs >= l.endMs)) { val t = l.startMs.coerceAtLeast(0); timeMs = t; timeline.timeMs = t; engine.seekTo(t) }
+            }
+        }
         buildTools()
     }
 
@@ -763,8 +796,18 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         fun fill(i: Int) {
             toolTab[key] = i
             toolRow.removeAllViews()
-            for (ts in nonEmpty.getOrNull(i)?.second.orEmpty()) toolRow.addView(Ui.tool(this, ts.icon, ts.label, ts.active, ts.f))
-            toolScroll.scrollTo(0, 0)
+            val items = nonEmpty.getOrNull(i)?.second.orEmpty()
+            val sig = key + "|" + i + "|" + items.joinToString(",") { it.label }
+            val animate = sig != lastToolSig
+            lastToolSig = sig
+            for ((k, ts) in items.withIndex()) {
+                val v = Ui.tool(this, ts.icon, ts.label, ts.active, ts.f)
+                toolRow.addView(v)
+                // new set of tools: they glide in one after another (iOS feel)
+                if (animate) { v.alpha = 0f; v.translationX = dp(14f).toFloat()
+                    v.animate().alpha(1f).translationX(0f).setStartDelay(k * 18L).setDuration(260).setInterpolator(Ui.EASE).start() }
+            }
+            if (animate) toolScroll.scrollTo(0, 0)
         }
         catHolder.removeAllViews()
         if (nonEmpty.size > 1) catHolder.addView(Ui.tabBar(this, nonEmpty.map { it.first }, sel) { fill(it) })
@@ -934,6 +977,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             val tv = FilterTile(this, thumb, p)
             tv.selectedTile = isSel(p)
             tiles.add(tv)
+            Ui.press(tv, 0.94f)
             tv.setOnClickListener {
                 pick(p)
                 for ((k, x) in tiles.withIndex()) x.selectedTile = isSel(items[k])
@@ -2086,9 +2130,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         buttonRow(root,
             tr("Rog (invert)", "Invert") to { l.maskInvert = !l.maskInvert; live() },
             tr("Dib u deji", "Reset") to { l.maskX = 0.5f; l.maskY = 0.5f; l.maskSize = 0.8f; l.maskStretch = 1f; l.maskRot = 0f; l.maskFeather = 0.1f; l.maskRound = 0f; d.dismiss(); showMask(l) })
+        d.show()
+        // after show: opening this panel closes the old one, which resets the on-screen modes
         stage.editMask = l
         stage.onEditChanged = { live() }
-        d.show()
     }
 
     /** Green / blue screen keying, After Effects Keylight style. */
@@ -2132,13 +2177,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             apply()
         })
         root.addView(Ui.label(this, tr("Shaashadda: jiid barahaas cad ee dhinacyada si aad u jarto.", "On screen: drag the white dots on the sides to crop.")))
-        stage.editCrop = l
-        stage.onEditChanged = { live() }
         root.addView(Ui.sliderRow(this, tr("Bidix", "Left"), 0f, 0.45f, l.cropL.coerceIn(0f, 0.45f)) { l.cropL = it; apply() })
         root.addView(Ui.sliderRow(this, tr("Midig", "Right"), 0f, 0.45f, l.cropR.coerceIn(0f, 0.45f)) { l.cropR = it; apply() })
         root.addView(Ui.sliderRow(this, tr("Kor", "Top"), 0f, 0.45f, l.cropT.coerceIn(0f, 0.45f)) { l.cropT = it; apply() })
         root.addView(Ui.sliderRow(this, tr("Hoos", "Bottom"), 0f, 0.45f, l.cropB.coerceIn(0f, 0.45f)) { l.cropB = it; apply() })
         d.show()
+        stage.editCrop = l
+        stage.onEditChanged = { live() }
     }
 
     private fun showOutline(l: Layer) {

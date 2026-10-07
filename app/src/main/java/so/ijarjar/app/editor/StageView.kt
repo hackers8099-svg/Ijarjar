@@ -288,13 +288,15 @@ class StageView(context: Context) : FrameLayout(context) {
     @SuppressLint("ViewConstructor")
     private inner class OverlayView(context: Context) : View(context) {
         private val boxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(1.5f); color = Color.WHITE }
+        // dark edge under the white box so it shows on white / bright pictures too
+        private val boxShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(3.5f); color = 0x66000000 }
         private val clipBoxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(2f); color = 0xFFFF3D7F.toInt() }
         private val linkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE; strokeWidth = dp(1.5f); color = 0xFF19D3C5.toInt()
             pathEffect = DashPathEffect(floatArrayOf(dp(6f), dp(4f)), 0f)
         }
         private val guidePaint = Paint().apply { color = 0xFFFF3D7F.toInt(); strokeWidth = dp(1f) }
-        private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; setShadowLayer(dp(2.5f), 0f, dp(0.5f), 0x99000000.toInt()) }
         private val handleRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); style = Paint.Style.STROKE; strokeWidth = dp(1.5f) }
         private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
         private val linkLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); strokeWidth = dp(1.5f) }
@@ -437,6 +439,7 @@ class StageView(context: Context) : FrameLayout(context) {
         private fun drawBox(canvas: Canvas, c: FloatArray, paint: Paint) {
             val path = Path()
             path.moveTo(c[0], c[1]); path.lineTo(c[2], c[3]); path.lineTo(c[4], c[5]); path.lineTo(c[6], c[7]); path.close()
+            if (paint === boxPaint) canvas.drawPath(path, boxShadow)
             canvas.drawPath(path, paint)
         }
 

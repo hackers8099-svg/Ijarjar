@@ -30,6 +30,7 @@ import so.ijarjar.app.model.Project
 import so.ijarjar.app.model.TransitionKind
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.min
 
@@ -328,30 +329,38 @@ class TimelineView(context: Context) : View(context) {
             paint.color = bg
             canvas.drawRoundRect(r, dp(4f), dp(4f), paint)
             val wave = so.ijarjar.app.media.Waveform.get(context, a.uri) { invalidate() }
+            // samples sit on a fixed time grid (not on screen pixels), so the wave keeps its shape while it
+            // scrolls — no flicker / "blur" while playing
             val step = dp(2f)
-            val msPer = (tOf(step) - tOf(0f)).coerceAtLeast(1L)
+            val msPer = max(1L, (step / pxPerMs).toLong())
             val mid = r.centerY()
             val maxH = audioH * 0.44f
             val x0 = max(r.left, 0f); val x1 = min(r.right, width.toFloat())
             val tops = ArrayList<Float>()
-            var x = x0
-            while (x <= x1) {
-                val local = tOf(x) - a.startMs + a.trimStartMs
+            val xs = ArrayList<Float>()
+            var k = floor((tOf(x0) - a.startMs).toDouble() / msPer).toLong()
+            while (true) {
+                val tt = a.startMs + k * msPer
+                val x = xOf(tt)
+                if (x > x1 + step) break
+                k++
+                if (x < x0 - step) continue
+                val local = tt - a.startMs + a.trimStartMs
                 val v = if (wave != null && wave.isNotEmpty()) {
                     val i0 = (local / so.ijarjar.app.media.Waveform.BUCKET_MS).toInt().coerceAtLeast(0)
                     val i1 = ((local + msPer) / so.ijarjar.app.media.Waveform.BUCKET_MS).toInt().coerceAtLeast(i0 + 1)
                     var m = 0f
-                    for (k in i0 until minOf(i1, wave.size)) m = max(m, wave[k])
+                    for (q in i0 until minOf(i1, wave.size)) m = max(m, wave[q])
                     m * a.volume.coerceIn(0f, 2f)
                 } else 0.06f
                 tops.add((v.coerceIn(0f, 1f) * maxH).coerceAtLeast(dp(0.6f)))
-                x += step
+                xs.add(x)
             }
             if (tops.isNotEmpty()) {
                 val path = android.graphics.Path()
-                path.moveTo(x0, mid)
-                for ((i, hh) in tops.withIndex()) path.lineTo(x0 + i * step, mid - hh)
-                for (i in tops.indices.reversed()) path.lineTo(x0 + i * step, mid + tops[i])
+                path.moveTo(xs[0], mid)
+                for ((i, hh) in tops.withIndex()) path.lineTo(xs[i], mid - hh)
+                for (i in tops.indices.reversed()) path.lineTo(xs[i], mid + tops[i])
                 path.close()
                 canvas.save(); canvas.clipRect(r)
                 paint.color = bar
@@ -510,9 +519,49 @@ class TimelineView(context: Context) : View(context) {
         }
     })
 
+    // ------------------------------------------------------------------ smooth fling (keeps gliding after you let go)
+    private val scroller = android.widget.OverScroller(context, android.view.animation.DecelerateInterpolator(1.6f))
+    private var velocity: android.view.VelocityTracker? = null
+    private var flingKind = Drag.NONE
+
+    private fun startFling(p: Project) {
+        val vt = velocity ?: return
+        vt.computeCurrentVelocity(1000)
+        val vx = vt.xVelocity; val vy = vt.yVelocity
+        val minV = dp(260f)
+        when (drag) {
+            Drag.SCRUB -> if (abs(vx) > minV) {
+                flingKind = Drag.SCRUB
+                scroller.fling((timeMs * pxPerMs).toInt(), 0, (-vx).toInt(), 0, 0, (max(0L, p.durationMs - 1) * pxPerMs).toInt(), 0, 0)
+                postInvalidateOnAnimation()
+            }
+            Drag.VSCROLL -> if (abs(vy) > minV) {
+                flingKind = Drag.VSCROLL
+                scroller.fling(0, vScroll.toInt(), 0, (-vy).toInt(), 0, 0, 0, max(0f, contentHeight() - height).toInt())
+                postInvalidateOnAnimation()
+            }
+            else -> {}
+        }
+    }
+
+    override fun computeScroll() {
+        if (flingKind == Drag.NONE || !scroller.computeScrollOffset()) { flingKind = Drag.NONE; return }
+        val p = project ?: return
+        if (flingKind == Drag.SCRUB) {
+            timeMs = (scroller.currX / pxPerMs).toLong().coerceIn(0, max(0, p.durationMs - 1))
+            listener?.onScrub(timeMs)
+        } else vScroll = scroller.currY.toFloat()
+        postInvalidateOnAnimation()
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val p = project ?: return false
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            scroller.forceFinished(true); flingKind = Drag.NONE
+            velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
+        }
+        velocity?.addMovement(e)
         scaleDetector.onTouchEvent(e)
         if (e.pointerCount > 1) { drag = Drag.NONE; return true }
         when (e.actionMasked) {
@@ -551,7 +600,9 @@ class TimelineView(context: Context) : View(context) {
             MotionEvent.ACTION_UP -> {
                 if (!decided) onTap(p, e.x, e.y)
                 else if (drag != Drag.SCRUB && drag != Drag.VSCROLL && drag != Drag.NONE) listener?.onTimelineEdited()
+                else startFling(p)
                 drag = Drag.NONE
+                velocity?.recycle(); velocity = null
             }
             MotionEvent.ACTION_CANCEL -> drag = Drag.NONE
         }

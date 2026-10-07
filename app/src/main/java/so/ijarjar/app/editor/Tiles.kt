@@ -306,6 +306,7 @@ fun tileWithLabel(context: Context, tile: View, label: String, sizeDp: Float = 6
         setPadding(Ui.dp(context, 4f), 0, Ui.dp(context, 4f), 0)
         setOnClickListener { onClick() }
     }
+    Ui.press(box)
     box.addView(tile, LinearLayout.LayoutParams(Ui.dp(context, sizeDp), Ui.dp(context, sizeDp)))
     box.addView(Ui.text(context, label, 11f, Ui.TEXT2).apply {
         gravity = Gravity.CENTER; maxLines = 1

@@ -32,6 +32,29 @@ object Ui {
         0xFFA2845E.toInt(), 0xFF8E8E93.toInt()
     )
 
+    /** iOS-like ease (fast start, long soft stop) used for every motion in the app. */
+    val EASE: android.view.animation.Interpolator = android.view.animation.PathInterpolator(0.2f, 0.9f, 0.1f, 1f)
+
+    /** Apple-style touch feedback: shrinks a little under the finger and springs back. */
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    fun <V : View> press(v: V, scale: Float = 0.92f): V {
+        v.setOnTouchListener { view, e ->
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> view.animate().scaleX(scale).scaleY(scale).setDuration(90).setInterpolator(EASE).start()
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL ->
+                    view.animate().scaleX(1f).scaleY(1f).setDuration(320).setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).start()
+            }
+            false
+        }
+        return v
+    }
+
+    /** Slides a view in from below with a fade (sheets, tool rows). */
+    fun slideIn(v: View, fromDp: Float = 28f, ms: Long = 280) {
+        v.alpha = 0f; v.translationY = dp(v.context, fromDp).toFloat()
+        v.animate().alpha(1f).translationY(0f).setDuration(ms).setInterpolator(EASE).start()
+    }
+
     fun dp(c: Context, v: Float): Int = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, c.resources.displayMetrics).toInt()
 
     fun text(c: Context, s: String, size: Float = 14f, color: Int = TEXT, bold: Boolean = false): TextView =
@@ -58,6 +81,7 @@ object Ui {
             setBackgroundResource(tv.resourceId)
             setOnClickListener { onClick() }
         }
+        press(box)
         box.addView(ImageView(c).apply {
             setImageResource(icon)
             imageTintList = ColorStateList.valueOf(if (active) ACCENT else TEXT)
@@ -80,6 +104,7 @@ object Ui {
             setBackgroundResource(tv.resourceId)
             layoutParams = LinearLayout.LayoutParams(dp(c, sizeDp + 16f), dp(c, sizeDp + 16f))
             setOnClickListener { onClick() }
+            press(this, 0.85f)
         }
 
     /** A row with an icon and a label, used in pickers. */
@@ -90,6 +115,7 @@ object Ui {
             background = roundBg(SURFACE2, dp(c, 14f).toFloat())
             setPadding(dp(c, 8f), dp(c, 12f), dp(c, 8f), dp(c, 10f))
             setOnClickListener { onClick() }
+            press(this)
         }
         box.addView(ImageView(c).apply { setImageResource(icon); imageTintList = ColorStateList.valueOf(ACCENT) },
             LinearLayout.LayoutParams(dp(c, 26f), dp(c, 26f)))
@@ -152,6 +178,7 @@ object Ui {
             val v = text(c, n, 14f).apply {
                 setPadding(dp(c, 12f), dp(c, 8f), dp(c, 12f), dp(c, 10f))
                 setOnClickListener { paint(i); onPick(i) }
+                press(this, 0.93f)
             }
             row.addView(v)
             views.add(v)
@@ -190,6 +217,7 @@ object Ui {
                 setTextColor(TEXT)
             }
             setOnClickListener { onClick() }
+            press(this, 0.95f)
         }
 
     /** A horizontal row of selectable chips. */
