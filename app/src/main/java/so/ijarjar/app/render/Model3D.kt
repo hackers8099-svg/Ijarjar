@@ -53,6 +53,27 @@ object Model3D {
     private var failed = false
     private var appliedLook = ""
     private val textures = HashMap<String, Texture>()
+    private var assetLen = -1L
+    /** UV set used by each material's colour / glow picture in the file (so a new picture lines up the same way). */
+    private var matUv: Map<String, Int> = emptyMap()
+
+    private fun sizeOf(context: Context, uri: String): Long = runCatching {
+        context.contentResolver.openAssetFileDescriptor(Uri.parse(uri), "r")?.use { it.length } ?: -1L
+    }.getOrDefault(-1L)
+
+    private fun readUvSets(bytes: ByteArray): Map<String, Int> = runCatching {
+        val g = so.ijarjar.app.media.GlbEdit.read(bytes) ?: return emptyMap()
+        val mats = g.json.optJSONArray("materials") ?: return emptyMap()
+        val out = HashMap<String, Int>()
+        for (i in 0 until mats.length()) {
+            val m = mats.getJSONObject(i)
+            val name = m.optString("name", "")
+            val base = m.optJSONObject("pbrMetallicRoughness")?.optJSONObject("baseColorTexture")?.optInt("texCoord", 0)
+            val glow = m.optJSONObject("emissiveTexture")?.optInt("texCoord", 0)
+            out[name] = base ?: glow ?: 0
+        }
+        out
+    }.getOrDefault(emptyMap())
 
     /** Names of the model's materials (to pick which one gets a new picture). */
     fun materials(context: Context, uri: String): List<String> {
@@ -149,15 +170,16 @@ object Model3D {
      */
     private fun setPicture(mi: com.google.android.filament.MaterialInstance, tex: Texture, keepColor: Boolean) {
         val m = mi.material
+        val uv = matUv[mi.name ?: ""] ?: 0
         if (m.hasParameter("baseColorMap")) runCatching { mi.setParameter("baseColorMap", tex, sampler()) }
-        if (m.hasParameter("baseColorIndex")) runCatching { mi.setParameter("baseColorIndex", 0) }
+        if (m.hasParameter("baseColorIndex")) runCatching { mi.setParameter("baseColorIndex", uv) }
         if (m.hasParameter("baseColorUvMatrix")) runCatching {
             mi.setParameter("baseColorUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
         }
         if (!keepColor) factor(mi, 1f, 1f, 1f)
         if (m.hasParameter("emissiveMap")) runCatching {
             mi.setParameter("emissiveMap", tex, sampler())
-            if (m.hasParameter("emissiveIndex")) mi.setParameter("emissiveIndex", 0)
+            if (m.hasParameter("emissiveIndex")) mi.setParameter("emissiveIndex", uv)
             if (m.hasParameter("emissiveUvMatrix")) mi.setParameter("emissiveUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
             // emissive is measured in light units: make it bright enough to read like a lit screen
             if (m.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", 1f, 1f, 1f)
@@ -268,11 +290,16 @@ object Model3D {
     }
 
     private fun load(context: Context, uri: String): Boolean {
-        if (assetUri == uri && asset != null) return true
+        if (assetUri == uri && asset != null) {
+            val len = sizeOf(context, uri)
+            if (len < 0 || len == assetLen) return true
+        }
         val e = engine ?: return false
         asset?.let { scene?.removeEntities(it.entities); loader?.destroyAsset(it) }
         asset = null; assetUri = null
         val bytes = context.contentResolver.openInputStream(Uri.parse(uri))?.use { it.readBytes() } ?: return false
+        assetLen = sizeOf(context, uri).let { if (it >= 0) it else bytes.size.toLong() }
+        matUv = readUvSets(bytes)
         val buf = ByteBuffer.allocateDirect(bytes.size).order(ByteOrder.nativeOrder()).put(bytes)
         buf.flip()
         val a = loader?.createAsset(buf) ?: return false

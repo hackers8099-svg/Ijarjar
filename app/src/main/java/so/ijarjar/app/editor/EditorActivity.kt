@@ -775,7 +775,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun reload() {
         for (l in project.layers) {
             val st = l.phoneStyle ?: continue
-            if (l.uri?.contains("_v3.glb") == true) continue
+            if (l.uri?.contains("_v4.glb") == true) continue
+            // v4 turned the screen picture the right way up: undo a flip people did by hand on v3
+            if (l.uri?.contains("_v3.glb") == true) l.parts["Screen"]?.let { it.flipV = !it.flipV }
             runCatching { l.uri = Uri.fromFile(so.ijarjar.app.render.PhoneGlb.file(this, so.ijarjar.app.render.PhoneGlb.Style.valueOf(st))).toString() }
         }
         project.outputSize(1080).let { so.ijarjar.app.render.ExprEngine.compW = it.first.toDouble(); so.ijarjar.app.render.ExprEngine.compH = it.second.toDouble() }
@@ -2575,7 +2577,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         io.execute {
             val reps = l.modelImages.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }.toMap()
             val newUri = if (reps.isEmpty()) src else {
-                val f = File(File(filesDir, "models").apply { mkdirs() }, "${l.id}_${reps.hashCode().toUInt()}.glb")
+                val dir = File(filesDir, "models").apply { mkdirs() }
+                // keep only the last few versions of this layer's model (undo may still need them)
+                dir.listFiles { x -> x.name.startsWith("${l.id}_") }?.sortedByDescending { it.lastModified() }?.drop(3)?.forEach { it.delete() }
+                val f = File(dir, "${l.id}_${System.currentTimeMillis()}.glb")
                 if (so.ijarjar.app.media.GlbEdit.build(this, src, reps, f)) Uri.fromFile(f).toString() else null
             }
             main.post {

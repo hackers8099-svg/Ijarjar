@@ -34,7 +34,7 @@ object PhoneGlb {
 
     /** The .glb file for a style (made once, then reused). */
     fun file(context: Context, style: Style): File {
-        val f = File(File(context.filesDir, "phones").apply { mkdirs() }, "phone_${style.name.lowercase()}_v3.glb")
+        val f = File(File(context.filesDir, "phones").apply { mkdirs() }, "phone_${style.name.lowercase()}_v4.glb")
         if (!f.exists()) f.writeBytes(build(style))
         return f
     }
@@ -73,7 +73,7 @@ object PhoneGlb {
         val cx = o.map { it[0] }.average().toFloat(); val cy = o.map { it[1] }.average().toFloat()
         val nz = if (front) 1f else -1f
         fun uvOf(x: Float, y: Float): Pair<Float, Float> = if (uvBox == null) Pair(0f, 0f)
-            else Pair((uvBox[2] - x) / (uvBox[2] - uvBox[0]), (y - uvBox[1]) / (uvBox[3] - uvBox[1]))
+            else Pair((uvBox[2] - x) / (uvBox[2] - uvBox[0]), (uvBox[3] - y) / (uvBox[3] - uvBox[1]))
         val (cu, cv) = uvOf(cx, cy)
         val c = p.v(cx, cy, z, 0f, 0f, nz, cu, cv)
         val first = p.pos.size / 3
