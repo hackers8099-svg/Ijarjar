@@ -86,6 +86,7 @@ class History(private val limit: Int = 60) {
         redo.clear()
     }
 
+    fun current(): String? = undo.lastOrNull()
     fun canUndo() = undo.size > 1
     fun canRedo() = redo.isNotEmpty()
 
@@ -99,5 +100,36 @@ class History(private val limit: Int = 60) {
         val s = redo.removeLastOrNull() ?: return null
         undo.addLast(s)
         return s
+    }
+}
+
+/**
+ * Copies [src] into [dst] keeping the same objects (layers, clips, audio found by id), so open
+ * panels keep working after undo / redo.
+ */
+object InPlace {
+    private fun copyFields(dst: Any, src: Any) {
+        var c: Class<*>? = src.javaClass
+        while (c != null && c != Any::class.java) {
+            for (f in c.declaredFields) {
+                if (java.lang.reflect.Modifier.isStatic(f.modifiers)) continue
+                f.isAccessible = true
+                f.set(dst, f.get(src))
+            }
+            c = c.superclass
+        }
+    }
+
+    private fun <T : Any> mergeList(old: MutableList<T>, new: List<T>, id: (T) -> String): MutableList<T> {
+        val byId = old.associateBy(id)
+        return new.map { n -> byId[id(n)]?.also { o -> copyFields(o, n) } ?: n }.toMutableList()
+    }
+
+    fun merge(dst: so.ijarjar.app.model.Project, src: so.ijarjar.app.model.Project) {
+        val layers = mergeList(dst.layers, src.layers) { it.id }
+        val clips = mergeList(dst.clips, src.clips) { it.id }
+        val audios = mergeList(dst.audios, src.audios) { it.id }
+        copyFields(dst, src)
+        dst.layers = layers; dst.clips = clips; dst.audios = audios
     }
 }

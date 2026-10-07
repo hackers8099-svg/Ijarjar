@@ -322,7 +322,15 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         root.addView(tb, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(220f)))
 
         // panels open here, in place of the timeline + tools (the preview stays visible)
-        panelBox = FrameLayout(this).apply { visibility = View.GONE }
+        panelBox = object : FrameLayout(this) {
+            // the panel never takes more than ~38% of the screen, so the preview stays big
+            override fun onMeasure(w: Int, h: Int) {
+                val maxH = (resources.displayMetrics.heightPixels * 0.38f).toInt()
+                val mode = MeasureSpec.getMode(h)
+                val limit = if (mode == MeasureSpec.UNSPECIFIED) maxH else minOf(maxH, MeasureSpec.getSize(h))
+                super.onMeasure(w, MeasureSpec.makeMeasureSpec(limit, MeasureSpec.AT_MOST))
+            }
+        }.apply { visibility = View.GONE }
         root.addView(panelBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
         // bottom tool bar: category tabs on top, the tools of that category below
@@ -365,9 +373,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelBox.removeAllViews()
         val maxH = (resources.displayMetrics.heightPixels * 0.40f).toInt()
         panelBox.addView(panel.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        panel.view.post {
-            if (panel.view.height > maxH) panel.view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxH)
-        }
+
         panelBox.visibility = View.VISIBLE
         tlBox.visibility = View.GONE
         toolBox.visibility = View.GONE
@@ -483,11 +489,16 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             multiMode -> {
                 key = "multi"
                 val picked = project.layers.filter { it.id in MultiSelect.ids }
-                group(tr("La doortay: ${picked.size}", "Selected: ${picked.size}"))
+                val pickedAudio = project.audios.filter { it.id in MultiSelect.ids }
+                val pickedClips = project.clips.filter { it.id in MultiSelect.ids }
+                val total = picked.size + pickedAudio.size + pickedClips.size
+                group(tr("La doortay: $total", "Selected: $total"))
                 t(R.drawable.ic_layers, tr("Dooro dhammaan", "Select all")) {
                     MultiSelect.ids.clear()
-                    for (l in project.layers) if (!l.isEffect() && (photo || l.isActive(timeMs))) MultiSelect.ids.add(l.id)
-                    stage.selectedLayerId = MultiSelect.ids.lastOrNull(); onMultiChanged()
+                    project.layers.forEach { MultiSelect.ids.add(it.id) }
+                    project.audios.forEach { MultiSelect.ids.add(it.id) }
+                    project.clips.forEach { MultiSelect.ids.add(it.id) }
+                    stage.selectedLayerId = project.layers.lastOrNull { !it.isEffect() }?.id; onMultiChanged()
                 }
                 t(R.drawable.ic_close, tr("Ka saar dhammaan", "Clear")) { MultiSelect.ids.clear(); stage.selectedLayerId = null; onMultiChanged() }
                 if (picked.size > 1) {
@@ -505,16 +516,26 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         commit(); toast(tr("Animation-ka “${layerTitle(src)}” waa lagu dabaqay", "Animation of “${layerTitle(src)}” applied"))
                     }
                 }
-                if (picked.isNotEmpty()) {
-                    t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) {
+                if (!photo && (picked.isNotEmpty() || pickedAudio.isNotEmpty())) t(R.drawable.ic_start_here, tr("Bilow halkan", "Start here")) {
+                    val first = (picked.map { it.startMs } + pickedAudio.map { it.startMs }).minOrNull() ?: 0L
+                    val d = timeMs - first
+                    for (l in picked) { l.startMs += d; l.endMs += d }
+                    for (a in pickedAudio) a.startMs = (a.startMs + d).coerceAtLeast(0)
+                    commit()
+                }
+                if (total > 0) {
+                    if (picked.isNotEmpty() || pickedAudio.isNotEmpty()) t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) {
                         val copies = picked.map { l -> l.copy().also { b -> b.linkGroup = null } }
-                        project.layers.addAll(copies)
-                        MultiSelect.ids.clear(); copies.forEach { MultiSelect.ids.add(it.id) }
-                        stage.selectedLayerId = copies.last().id
+                        val aCopies = pickedAudio.map { a -> a.copy().also { b -> b.startMs = a.endMs } }
+                        project.layers.addAll(copies); project.audios.addAll(aCopies)
+                        MultiSelect.ids.clear(); copies.forEach { MultiSelect.ids.add(it.id) }; aCopies.forEach { MultiSelect.ids.add(it.id) }
+                        stage.selectedLayerId = copies.lastOrNull()?.id
                         commit()
                     }
                     t(R.drawable.ic_delete, tr("Tirtir", "Delete")) {
                         project.layers.removeAll { it.id in MultiSelect.ids }
+                        project.audios.removeAll { it.id in MultiSelect.ids }
+                        project.clips.removeAll { it.id in MultiSelect.ids }
                         MultiSelect.ids.clear(); stage.selectedLayerId = null
                         cleanupGroups(); commit()
                     }
@@ -663,7 +684,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
                     else askMic.launch(Manifest.permission.RECORD_AUDIO)
                 }
-                t(R.drawable.ic_tts, tr("Qoraal → cod", "Text to speech")) { showTts() }
                 t(R.drawable.ic_audio, tr("Kale", "More")) { showAudioMenu() }
                 group(tr("Mashruuc", "Project"))
                 t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit clip")) {
@@ -709,7 +729,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         if (selection is TimelineView.Sel.LayerSel && selectedLayer() == null) selection = null
         if (selection is TimelineView.Sel.AudioSel && selectedAudio() == null) selection = null
         if (multiMode) {
-            MultiSelect.ids.retainAll(project.layers.map { it.id }.toSet())
+            MultiSelect.ids.retainAll((project.layers.map { it.id } + project.audios.map { it.id } + project.clips.map { it.id }).toSet())
+            timeline.multi = MultiSelect.ids.toSet()
             if (stage.selectedLayerId !in MultiSelect.ids) stage.selectedLayerId = MultiSelect.ids.lastOrNull()
             buildTools()
         } else setSelection(selection)
@@ -732,16 +753,29 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         io.execute { ProjectStore.save(applicationContext, copy) }
     }
 
+    /** Undo / redo keep an open panel open: the old state is copied into the same objects. */
+    private fun restore(json: String) {
+        val p = panel
+        if (p != null) {
+            so.ijarjar.app.data.InPlace.merge(project, ProjectStore.fromJson(json))
+            p.snapshot = null
+            live(); stage.requestLayout(); engine.load(project, timeMs); updateUndo(); timeline.invalidate()
+        } else {
+            project = ProjectStore.fromJson(json); reload()
+        }
+        scheduleSave()
+    }
+
     private fun undo() {
-        panel?.dismiss()
+        // changes made inside the open panel are saved as a step first, so undo removes them
+        if (panel != null) { val cur = ProjectStore.toJson(project); if (cur != history.current()) history.push(cur) }
         val s = history.undo() ?: return
-        project = ProjectStore.fromJson(s); reload(); scheduleSave()
+        restore(s)
     }
 
     private fun redo() {
-        panel?.dismiss()
         val s = history.redo() ?: return
-        project = ProjectStore.fromJson(s); reload(); scheduleSave()
+        restore(s)
     }
 
     /** Re-apply the project to the preview without adding an undo step. */
@@ -770,11 +804,15 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     override fun onSelect(sel: TimelineView.Sel?) {
         if (multiMode) {
-            if (sel is TimelineView.Sel.LayerSel) {
-                if (!MultiSelect.ids.remove(sel.id)) MultiSelect.ids.add(sel.id)
-                stage.selectedLayerId = if (sel.id in MultiSelect.ids) sel.id else MultiSelect.ids.lastOrNull()
-                onMultiChanged()
-            }
+            val id = when (sel) {
+                is TimelineView.Sel.LayerSel -> sel.id
+                is TimelineView.Sel.AudioSel -> sel.id
+                is TimelineView.Sel.ClipSel -> project.clips.getOrNull(sel.index)?.id
+                null -> null
+            } ?: return
+            if (!MultiSelect.ids.remove(id)) MultiSelect.ids.add(id)
+            if (sel is TimelineView.Sel.LayerSel) stage.selectedLayerId = if (id in MultiSelect.ids) id else project.layers.lastOrNull { it.id in MultiSelect.ids }?.id
+            onMultiChanged()
             return
         }
         setSelection(sel)
@@ -1837,21 +1875,24 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         first?.let { MultiSelect.ids.add(it.id) }
         stage.multiMode = true
         stage.selectedLayerId = first?.id
-        timeline.selection = first?.let { TimelineView.Sel.LayerSel(it.id) }
+        timeline.selection = null
+        timeline.multi = MultiSelect.ids.toSet()
         buildTools()
-        toast(tr("Taabo layer-ada aad rabto (mar kale taabo si aad uga saarto). Jiid si ay u wada dhaqaaqaan.",
-            "Tap the layers you want (tap again to remove). Drag to move them together."))
+        toast(tr("Taabo wax kasta oo aad rabto — layer, cod, muuqaal (shaashadda ama timeline-ka). Mar kale taabo si aad uga saarto.",
+            "Tap anything you want — layers, audio, clips (on screen or in the timeline). Tap again to remove it."))
     }
 
     private fun endMulti() {
         multiMode = false
         MultiSelect.ids.clear()
+        timeline.multi = emptySet()
         stage.multiMode = false
         setSelection(null)
     }
 
     override fun onMultiChanged() {
-        timeline.selection = stage.selectedLayerId?.let { TimelineView.Sel.LayerSel(it) }
+        timeline.multi = MultiSelect.ids.toSet()
+        timeline.selection = null
         timeline.invalidate()
         buildTools()
     }
@@ -2921,7 +2962,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             R.drawable.ic_music to tr("Muusik", "Music"),
             R.drawable.ic_sfx to tr("Dhawaaqyo", "Sound FX"),
             R.drawable.ic_mic to tr("Cod-duub", "Voiceover"),
-            R.drawable.ic_tts to tr("Qoraal → cod", "Text to speech"),
             R.drawable.ic_waveform to tr("Ka soo saar", "Extract"),
             R.drawable.ic_sound to tr("Fayl cod", "Audio file"))) { k ->
             d.dismiss()
@@ -2930,8 +2970,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 1 -> showSfx()
                 2 -> if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
                      else askMic.launch(Manifest.permission.RECORD_AUDIO)
-                3 -> showTts()
-                4 -> { addAudioKind = AudioKind.EXTRACTED; pickAudio.launch(arrayOf("video/*")) }
+                3 -> { addAudioKind = AudioKind.EXTRACTED; pickAudio.launch(arrayOf("video/*")) }
                 else -> { addAudioKind = AudioKind.SOUND; pickAudio.launch(arrayOf("audio/*")) }
             }
         }

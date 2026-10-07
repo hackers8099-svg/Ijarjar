@@ -59,6 +59,9 @@ class TimelineView(context: Context) : View(context) {
     var timeMs: Long = 0
         set(v) { field = v; invalidate() }
     var selection: Sel? = null
+    /** "Select" mode: ids of clips, audio and layers that are picked. */
+    var multi: Set<String> = emptySet()
+        set(v) { field = v; invalidate() }
         set(v) { field = v; invalidate() }
     var listener: Listener? = null
 
@@ -173,7 +176,7 @@ class TimelineView(context: Context) : View(context) {
             if (c.reversed) { drawIcon(canvas, R.drawable.ic_reverse, bx, by, dp(13f)); bx += dp(16f) }
             if (!c.adjust.isIdentity()) { drawIcon(canvas, R.drawable.ic_filter, bx, by, dp(13f)); bx += dp(16f) }
             if (c.tScale != 1f || c.tRot != 0f || c.tX != 0f || c.tY != 0f || c.mirror) drawIcon(canvas, R.drawable.ic_canvas, bx, by, dp(13f))
-            if ((selection as? Sel.ClipSel)?.index == i) drawSelection(canvas, r, Color.WHITE)
+            if ((selection as? Sel.ClipSel)?.index == i || c.id in multi) drawSelection(canvas, r, if (c.id in multi) 0xFF19D3C5.toInt() else Color.WHITE)
         }
         // transition buttons between clips
         var acc = 0L
@@ -270,7 +273,7 @@ class TimelineView(context: Context) : View(context) {
             drawIcon(canvas, audioIcon(a), lx, r.centerY(), dp(14f))
             canvas.drawText(a.name, lx + dp(18f), top + audioH * 0.68f, labelPaint)
             canvas.restore()
-            if ((selection as? Sel.AudioSel)?.id == a.id) drawSelection(canvas, r, Color.WHITE)
+            if ((selection as? Sel.AudioSel)?.id == a.id || a.id in multi) drawSelection(canvas, r, if (a.id in multi) 0xFF19D3C5.toInt() else Color.WHITE)
         }
     }
 
@@ -327,7 +330,8 @@ class TimelineView(context: Context) : View(context) {
                 canvas.drawPath(d, paint)
             }
             canvas.restore()
-            if (selLayer?.id == l.id) drawSelection(canvas, r, Color.WHITE)
+            if (l.id in multi) drawSelection(canvas, r, 0xFF19D3C5.toInt())
+            else if (selLayer?.id == l.id) drawSelection(canvas, r, Color.WHITE)
             else if (g != null && selLayer?.linkGroup == g) {
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1.5f); paint.color = 0xFF19D3C5.toInt()
                 canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
