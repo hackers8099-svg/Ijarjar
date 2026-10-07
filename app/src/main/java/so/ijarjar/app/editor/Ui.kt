@@ -87,11 +87,11 @@ object Ui {
         val box = LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            background = roundBg(SURFACE2, dp(c, 12f).toFloat())
-            setPadding(dp(c, 8f), dp(c, 10f), dp(c, 8f), dp(c, 8f))
+            background = roundBg(SURFACE2, dp(c, 14f).toFloat())
+            setPadding(dp(c, 8f), dp(c, 12f), dp(c, 8f), dp(c, 10f))
             setOnClickListener { onClick() }
         }
-        box.addView(ImageView(c).apply { setImageResource(icon); imageTintList = ColorStateList.valueOf(TEXT) },
+        box.addView(ImageView(c).apply { setImageResource(icon); imageTintList = ColorStateList.valueOf(ACCENT) },
             LinearLayout.LayoutParams(dp(c, 26f), dp(c, 26f)))
         box.addView(text(c, label, 11f, TEXT).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, dp(c, 4f), 0, 0) })
         return box
@@ -123,16 +123,49 @@ object Ui {
         return Pair(sv, row)
     }
 
-    /** Tabs on top of a panel; each tab fills the body when chosen. */
+    /** Tabs on top of a panel (underlined text, like CapCut); each tab fills the body when chosen. */
     fun tabs(c: Context, root: LinearLayout, tabs: List<Pair<String, (LinearLayout) -> Unit>>, selected: Int = 0) {
-        val body = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
+        val body = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(c, 6f), 0, 0) }
         fun show(i: Int) { body.removeAllViews(); tabs[i].second(body) }
-        root.addView(choiceRow(c, tabs.map { it.first }, selected) { show(it) })
+        root.addView(tabBar(c, tabs.map { it.first }, selected) { show(it) })
         root.addView(body)
         show(selected)
     }
 
-    fun label(c: Context, s: String) = text(c, s, 13f, TEXT2).apply { setPadding(0, dp(c, 10f), 0, dp(c, 2f)) }
+    /** Text tabs with an accent underline under the chosen one. */
+    fun tabBar(c: Context, names: List<String>, selected: Int, onPick: (Int) -> Unit): HorizontalScrollView {
+        val sv = HorizontalScrollView(c).apply { isHorizontalScrollBarEnabled = false }
+        val row = LinearLayout(c).apply { orientation = LinearLayout.HORIZONTAL }
+        sv.addView(row)
+        val views = ArrayList<TextView>()
+        fun paint(sel: Int) {
+            views.forEachIndexed { i, v ->
+                v.setTextColor(if (i == sel) TEXT else TEXT2)
+                v.setTypeface(null, if (i == sel) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                v.background = if (i == sel) underline(c) else null
+            }
+        }
+        names.forEachIndexed { i, n ->
+            val v = text(c, n, 14f).apply {
+                setPadding(dp(c, 12f), dp(c, 8f), dp(c, 12f), dp(c, 10f))
+                setOnClickListener { paint(i); onPick(i) }
+            }
+            row.addView(v)
+            views.add(v)
+        }
+        paint(selected)
+        return sv
+    }
+
+    private fun underline(c: Context): android.graphics.drawable.Drawable {
+        val line = GradientDrawable().apply { setColor(ACCENT); cornerRadius = dp(c, 2f).toFloat() }
+        return android.graphics.drawable.LayerDrawable(arrayOf(line)).apply {
+            setLayerGravity(0, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            setLayerSize(0, dp(c, 18f), dp(c, 3f))
+        }
+    }
+
+    fun label(c: Context, s: String) = text(c, s, 12f, TEXT2).apply { setPadding(dp(c, 2f), dp(c, 10f), 0, dp(c, 4f)) }
 
     fun slider(c: Context, from: Float, to: Float, value: Float, step: Float = 0f, onChange: (Float) -> Unit): Slider =
         Slider(c).apply {
@@ -164,17 +197,18 @@ object Ui {
         val views = ArrayList<TextView>()
         fun paint(sel: Int) {
             views.forEachIndexed { i, v ->
-                v.background = roundBg(if (i == sel) ACCENT else SURFACE2, dp(c, 16f).toFloat())
-                v.setTextColor(if (i == sel) 0xFF00201E.toInt() else TEXT)
+                v.background = roundBg(if (i == sel) 0x2219D3C5 else SURFACE2, dp(c, 10f).toFloat(),
+                    dp(c, 1.5f), if (i == sel) ACCENT else SURFACE2)
+                v.setTextColor(if (i == sel) ACCENT else TEXT)
             }
         }
         options.forEachIndexed { i, o ->
             val v = text(c, o, 13f).apply {
-                setPadding(dp(c, 14f), dp(c, 8f), dp(c, 14f), dp(c, 8f))
+                setPadding(dp(c, 14f), dp(c, 7f), dp(c, 14f), dp(c, 7f))
                 setOnClickListener { paint(i); onPick(i) }
             }
             val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-            lp.marginEnd = dp(c, 8f)
+            lp.marginEnd = dp(c, 6f); lp.topMargin = dp(c, 4f); lp.bottomMargin = dp(c, 4f)
             row.addView(v, lp)
             views.add(v)
         }
@@ -217,32 +251,55 @@ object Ui {
 interface PanelHost {
     fun attachPanel(panel: Panel)
     fun detachPanel(panel: Panel)
+    /** Puts the project back the way it was when the panel opened. */
+    fun cancelPanel(panel: Panel)
 }
 
-/** An inline bottom panel with a title and a done button. */
+/**
+ * An inline bottom panel: [X] cancels (undoes everything changed in it), the title, [✓] keeps the changes.
+ * Views added to [top] stay visible while the keyboard is open (the rest hides, so the preview stays big).
+ */
 class Panel(val context: Context, title: String) {
     val view: LinearLayout
+    val top: LinearLayout
     val root: LinearLayout
+    private val scroll: NestedScrollView
     private var onDismiss: (() -> Unit)? = null
     private var dismissed = false
+    /** Project as JSON when the panel opened (set by the host). */
+    var snapshot: String? = null
 
     init {
         view = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Ui.SURFACE)
+            background = GradientDrawable().apply {
+                setColor(Ui.SURFACE)
+                val r = Ui.dp(context, 18f).toFloat()
+                cornerRadii = floatArrayOf(r, r, r, r, 0f, 0f, 0f, 0f)
+            }
         }
+        // grab bar
+        view.addView(View(context).apply { background = Ui.roundBg(0x55FFFFFF, Ui.dp(context, 2f).toFloat()) },
+            LinearLayout.LayoutParams(Ui.dp(context, 36f), Ui.dp(context, 4f)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = Ui.dp(context, 6f) })
         val head = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(Ui.dp(context, 16f), Ui.dp(context, 4f), Ui.dp(context, 4f), 0)
+            setPadding(Ui.dp(context, 4f), 0, Ui.dp(context, 4f), 0)
         }
-        head.addView(Ui.text(context, title, 15f, Ui.TEXT, true), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_close, 22f, Ui.TEXT2) { cancel() })
+        head.addView(Ui.text(context, title, 15f, Ui.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 1 },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_check, 24f, Ui.ACCENT) { dismiss() })
         view.addView(head)
-        val scroll = NestedScrollView(context)
+        top = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(Ui.dp(context, 14f), 0, Ui.dp(context, 14f), 0)
+        }
+        view.addView(top)
+        scroll = NestedScrollView(context)
         root = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(Ui.dp(context, 14f), 0, Ui.dp(context, 14f), Ui.dp(context, 10f))
+            setPadding(Ui.dp(context, 14f), 0, Ui.dp(context, 14f), Ui.dp(context, 12f))
         }
         scroll.addView(root)
         view.addView(scroll)
@@ -252,11 +309,23 @@ class Panel(val context: Context, title: String) {
 
     fun show() { (context as? PanelHost)?.attachPanel(this) }
 
-    /** Closes without running the dismiss action twice. */
+    /** Keyboard open: only the header and [top] stay, so the preview isn't squeezed. */
+    fun onKeyboard(open: Boolean) {
+        if (top.childCount > 0) scroll.visibility = if (open) View.GONE else View.VISIBLE
+    }
+
+    /** Closes and keeps the changes (runs the dismiss action once). */
     fun dismiss() {
         if (dismissed) return
         dismissed = true
         (context as? PanelHost)?.detachPanel(this)
         onDismiss?.invoke()
+    }
+
+    /** Closes and throws away what was changed while the panel was open. */
+    fun cancel() {
+        if (dismissed) return
+        dismiss()
+        (context as? PanelHost)?.cancelPanel(this)
     }
 }

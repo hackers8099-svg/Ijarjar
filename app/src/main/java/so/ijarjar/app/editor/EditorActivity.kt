@@ -98,6 +98,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private lateinit var panelBox: FrameLayout
     private lateinit var toolRow: LinearLayout
     private lateinit var toolScroll: HorizontalScrollView
+    private lateinit var toolBox: LinearLayout
+    private lateinit var catHolder: FrameLayout
+    private lateinit var toolBack: View
+    private lateinit var notice: TextView
+    private val toolTab = HashMap<String, Int>()
     private lateinit var undoBtn: View
     private lateinit var redoBtn: View
     private lateinit var aspectBtn: TextView
@@ -258,6 +263,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         stage.listener = this
         stageBox.addView(stage, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER))
         stageBox.setPadding(dp(12f), dp(4f), dp(12f), dp(4f))
+        // short messages appear on top of the preview (they never cover the panel)
+        notice = Ui.text(this, "", 13f, Ui.TEXT).apply {
+            background = Ui.roundBg(0xE6202027.toInt(), dp(18f).toFloat(), dp(1f), 0x33FFFFFF)
+            setPadding(dp(14f), dp(8f), dp(14f), dp(8f))
+            gravity = Gravity.CENTER; maxLines = 3; visibility = View.GONE; elevation = dp(6f).toFloat()
+        }
+        stageBox.addView(notice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(10f); leftMargin = dp(24f); rightMargin = dp(24f) })
         root.addView(stageBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
         val pr = FrameLayout(this).apply { setPadding(dp(14f), 0, dp(6f), 0) }
@@ -301,13 +313,29 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelBox = FrameLayout(this).apply { visibility = View.GONE }
         root.addView(panelBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 
-        toolScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            setBackgroundColor(Ui.SURFACE)
+        // bottom tool bar: category tabs on top, the tools of that category below
+        toolBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Ui.SURFACE) }
+        catHolder = FrameLayout(this).apply { setPadding(dp(4f), dp(2f), dp(4f), 0) }
+        toolBox.addView(catHolder)
+        val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        toolBack = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(Ui.tool(this@EditorActivity, R.drawable.ic_back, tr("Dib", "Back")) { setSelection(null) })
+            addView(View(this@EditorActivity).apply { setBackgroundColor(0x22FFFFFF) }, LinearLayout.LayoutParams(dp(1f), dp(36f)))
         }
-        toolRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(4f), dp(4f), dp(4f), dp(8f)) }
+        line.addView(toolBack)
+        toolScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        toolRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(dp(4f), dp(2f), dp(4f), dp(8f)) }
         toolScroll.addView(toolRow)
-        root.addView(toolScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        line.addView(toolScroll, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        toolBox.addView(line)
+        root.addView(toolBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+
+        // keyboard open → the panel keeps only its text box, so the preview stays visible
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            panel?.onKeyboard(insets.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()))
+            insets
+        }
 
         if (project.isPhoto) {
             playRow.visibility = View.GONE
@@ -320,16 +348,25 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     override fun attachPanel(panel: Panel) {
         this.panel?.let { if (it !== panel) it.dismiss() }
+        if (panel.snapshot == null) panel.snapshot = ProjectStore.toJson(project)
         this.panel = panel
         panelBox.removeAllViews()
-        val maxH = (resources.displayMetrics.heightPixels * 0.42f).toInt()
+        val maxH = (resources.displayMetrics.heightPixels * 0.40f).toInt()
         panelBox.addView(panel.view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         panel.view.post {
             if (panel.view.height > maxH) panel.view.layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, maxH)
         }
         panelBox.visibility = View.VISIBLE
         tlBox.visibility = View.GONE
-        toolScroll.visibility = View.GONE
+        toolBox.visibility = View.GONE
+    }
+
+    override fun cancelPanel(panel: Panel) {
+        val snap = panel.snapshot ?: return
+        if (snap == ProjectStore.toJson(project)) return
+        project = ProjectStore.fromJson(snap)
+        commit()
+        toast(tr("Isbeddelka waa la tuuray", "Changes discarded"))
     }
 
     override fun detachPanel(panel: Panel) {
@@ -339,7 +376,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelBox.visibility = View.GONE
         if (!fullscreen) {
             if (!photo) tlBox.visibility = View.VISIBLE
-            toolScroll.visibility = View.VISIBLE
+            toolBox.visibility = View.VISIBLE
         }
         stage.brush = null
         stage.colorPicker = null
@@ -367,7 +404,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         fullscreen = !fullscreen
         panel?.dismiss()
         tlBox.visibility = if (fullscreen) View.GONE else View.VISIBLE
-        toolScroll.visibility = if (fullscreen) View.GONE else View.VISIBLE
+        toolBox.visibility = if (fullscreen) View.GONE else View.VISIBLE
         fullBtn.setImageResource(if (fullscreen) R.drawable.ic_fullscreen_exit else R.drawable.ic_fullscreen)
         stage.requestLayout()
     }
@@ -421,39 +458,48 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun selectedLayer(): Layer? = (selection as? TimelineView.Sel.LayerSel)?.let { s -> project.layers.firstOrNull { it.id == s.id } }
     private fun selectedAudio(): AudioTrack? = (selection as? TimelineView.Sel.AudioSel)?.let { s -> project.audios.firstOrNull { it.id == s.id } }
 
+    private class ToolSpec(val icon: Int, val label: String, val active: Boolean, val f: () -> Unit)
+
+    /** Tools grouped in categories, so the bar stays short and easy to read. */
     private fun buildTools() {
-        toolRow.removeAllViews()
-        fun t(icon: Int, label: String, active: Boolean = false, f: () -> Unit) = toolRow.addView(Ui.tool(this, icon, label, active, f))
+        val groups = ArrayList<Pair<String, ArrayList<ToolSpec>>>()
+        fun group(name: String) { groups.add(Pair(name, ArrayList())) }
+        fun t(icon: Int, label: String, active: Boolean = false, f: () -> Unit) { groups.last().second.add(ToolSpec(icon, label, active, f)) }
         val s = selection
-        val back = { t(R.drawable.ic_back, tr("Dib", "Back")) { setSelection(null) } }
+        var key = "none"
         when {
             s is TimelineView.Sel.ClipSel && project.clips.getOrNull(s.index) != null -> {
+                key = "clip"
                 val c = project.clips[s.index]
-                back()
+                group(tr("Wax ka beddel", "Edit"))
                 t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitClip(s.index) }
+                t(R.drawable.ic_trim, tr("Gooy", "Trim")) { showTrim(c) }
                 if (c.kind == MediaKind.VIDEO) t(R.drawable.ic_speed, tr("Xawaare", "Speed"), c.hasCurve || c.speed != 1f) { showSpeed(c) }
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showVolume(c) }
-                t(R.drawable.ic_filter, tr("Filter", "Filters"), !c.adjust.isIdentity()) { showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() } }
-                t(R.drawable.ic_trim, tr("Gooy", "Trim")) { showTrim(c) }
-                t(R.drawable.ic_canvas, tr("Shaashad", "Canvas")) { showCanvas(c) }
-                if (s.index > 0) t(R.drawable.ic_transition, tr("Isbeddel", "Transition"), c.transition != TransitionKind.NONE) { showTransition(s.index) }
-                if (c.kind == MediaKind.VIDEO) {
-                    t(R.drawable.ic_reverse, tr("Dib u celi", "Reverse"), c.reversed) { reverseClip(s.index) }
-                    t(R.drawable.ic_stabilize, tr("Deji gariirka", "Stabilize"), c.stab) { showStabilize(s.index) }
-                    t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
-                    t(R.drawable.ic_freeze, tr("Qabooji", "Freeze")) { freezeFrame(s.index) }
-                    t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
-                }
                 t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceIndex = s.index; pickReplace.launch(arrayOf("video/*", "image/*")) }
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { duplicateClip(s.index) }
-                t(R.drawable.ic_left, tr("Bidix", "Move left")) { moveClip(s.index, -1) }
-                t(R.drawable.ic_right, tr("Midig", "Move right")) { moveClip(s.index, 1) }
-                t(R.drawable.ic_add, tr("Ku dar", "Add")) { insertAfter = s.index; pickClips.launch(arrayOf("video/*", "image/*")) }
                 t(R.drawable.ic_delete, tr("Tirtir", "Delete")) { deleteClip(s.index) }
+                group(tr("Muuqaal", "Look"))
+                t(R.drawable.ic_filter, tr("Filter", "Filters"), !c.adjust.isIdentity()) { showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() } }
+                t(R.drawable.ic_canvas, tr("Shaashad", "Canvas")) { showCanvas(c) }
+                if (s.index > 0) t(R.drawable.ic_transition, tr("Isbeddel", "Transition"), c.transition != TransitionKind.NONE) { showTransition(s.index) }
+                if (c.kind == MediaKind.VIDEO) t(R.drawable.ic_stabilize, tr("Deji gariirka", "Stabilize"), c.stab) { showStabilize(s.index) }
+                if (c.kind == MediaKind.VIDEO) {
+                    group(tr("Dheeraad", "More"))
+                    t(R.drawable.ic_reverse, tr("Dib u celi", "Reverse"), c.reversed) { reverseClip(s.index) }
+                    t(R.drawable.ic_freeze, tr("Qabooji", "Freeze")) { freezeFrame(s.index) }
+                    t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
+                    t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
+                }
+                group(tr("Habee", "Arrange"))
+                t(R.drawable.ic_left, tr("Bidix u dhaqaaji", "Move left")) { moveClip(s.index, -1) }
+                t(R.drawable.ic_right, tr("Midig u dhaqaaji", "Move right")) { moveClip(s.index, 1) }
+                t(R.drawable.ic_add, tr("Ku dar ka dib", "Add after")) { insertAfter = s.index; pickClips.launch(arrayOf("video/*", "image/*")) }
             }
             s is TimelineView.Sel.LayerSel && selectedLayer() != null -> {
                 val l = selectedLayer()!!
-                back()
+                key = if (l.isEffect()) "effect" else "layer"
+                group(tr("Wax ka beddel", "Edit"))
                 if (l.isEffect()) {
                     t(R.drawable.ic_effects, tr("Beddel", "Change")) { showEffects(l) }
                     t(R.drawable.ic_opacity, tr("Xoog", "Strength")) { showOpacity(l, tr("Xoogga saameynta", "Effect strength")) }
@@ -463,52 +509,60 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.kind == LayerKind.SHAPE) t(R.drawable.ic_pencil, tr("Qaabka", "Style")) { showShapeEditor(l) }
                     if (l.kind == LayerKind.DRAW) t(R.drawable.ic_brush, tr("Sawir", "Draw")) { showDraw(l) }
                     if (l.isLottie) t(R.drawable.ic_text, tr("Qoraalka", "Text")) { showLottieText(l) }
-                    t(R.drawable.ic_link, tr("Isku xir", "Link"), l.linkGroup != null) { showLink(l) }
-                    if (l.linkGroup != null) t(R.drawable.ic_unlink, tr("Kala fur", "Unlink")) { unlink(l) }
-                    if (!photo) t(R.drawable.ic_animation, tr("Dhaqdhaqaaq", "Animation"),
-                        l.animIn != LayerAnim.NONE || l.animOut != LayerAnim.NONE || l.textIn != TextAnim.NONE || l.textOut != TextAnim.NONE ||
-                            l.animLoop != LoopAnim.NONE || l.textLoop != TextLoop.NONE) { showAnimation(l) }
-                    if (!photo) t(R.drawable.ic_keyframe, "Keyframe", l.keyframes.isNotEmpty()) { showKeyframes(l) }
-                    if (!photo) t(R.drawable.ic_preset, "Presets") { showPresets(l) }
-                    if (!photo && l.keyframes.isNotEmpty()) t(R.drawable.ic_curve, tr("Qalooc", "Curve")) { showCurve(l) }
-                    if (!photo) t(R.drawable.ic_expression, tr("Expression", "Expression"), l.expr != Expression.NONE || l.motionBlur) { showExpression(l) }
-                    if (l.isPicture()) {
-                        t(R.drawable.ic_filter, tr("Filter", "Filters"), !l.adjust.isIdentity()) { showFilters(l.adjust, null) }
-                        t(R.drawable.ic_chroma, tr("Shaashad cagaar", "Chroma key"), l.chroma) { showChroma(l) }
-                        t(R.drawable.ic_mask, tr("Maaskaro", "Mask"), l.mask != MaskKind.NONE) { showMask(l) }
-                    }
                     if (l.kind == LayerKind.IMAGE) {
-                        t(R.drawable.ic_ai, "AI") { showAiForLayer(l) }
                         t(R.drawable.ic_crop, tr("Jar", "Crop"), l.hasCrop()) { showCrop(l) }
                         t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceLayerImage(l) }
                     }
-                    if (l.isPicture() || l.kind == LayerKind.SHAPE) t(R.drawable.ic_outline, tr("Xariiq & hadh", "Outline"), l.outlineColor != 0 || l.shadow) { showOutline(l) }
-                    t(R.drawable.ic_glow, "Glow", l.glowColor != 0) { showGlow(l) }
-                    t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
-                    if (l.kind == LayerKind.MODEL3D) t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
-                    if (l.isPicture()) t(R.drawable.ic_mockup, "Mockup", l.mockup != so.ijarjar.app.model.MockupKind.NONE) { showMockup(l) }
-                    if (!photo && project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
-                    t(R.drawable.ic_opacity, tr("Daahsoon", "Opacity")) { showOpacity(l, tr("Daahsoonaan", "Opacity")) }
-                    t(R.drawable.ic_flip, tr("Rog", "Flip")) { for (g in project.linkedWith(l)) g.flipH = !g.flipH; commit() }
                 }
                 if (!photo) {
                     t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitLayer(l) }
                     t(R.drawable.ic_start_here, tr("Bilow halkan", "Start here")) { moveLayerStart(l) }
                     t(R.drawable.ic_end_here, tr("Dhamee halkan", "End here")) { if (timeMs > l.startMs) { l.endMs = timeMs; commit() } }
                 }
-                if (!l.isEffect()) {
-                    t(R.drawable.ic_bring_forward, tr("Kor", "Forward")) { reorderLayer(l, 1) }
-                    t(R.drawable.ic_send_backward, tr("Hoos", "Backward")) { reorderLayer(l, -1) }
-                    t(R.drawable.ic_reset, tr("Dib u celi", "Reset")) {
-                        l.scale = 1f; l.rotation = 0f; l.cx = 0.5f; l.cy = 0.5f; l.stretchX = 1f; l.stretchY = 1f; l.keyframes.clear(); commit()
-                    }
-                }
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { duplicateLayer(l) }
                 t(R.drawable.ic_delete, tr("Tirtir", "Delete")) { deleteLayer(l) }
+                if (!l.isEffect()) {
+                    if (!photo) {
+                        group(tr("Dhaqdhaqaaq", "Motion"))
+                        t(R.drawable.ic_animation, tr("Animation", "Animation"),
+                            l.animIn != LayerAnim.NONE || l.animOut != LayerAnim.NONE || l.textIn != TextAnim.NONE || l.textOut != TextAnim.NONE ||
+                                l.animLoop != LoopAnim.NONE || l.textLoop != TextLoop.NONE) { showAnimation(l) }
+                        t(R.drawable.ic_keyframe, "Keyframe", l.keyframes.isNotEmpty()) { showKeyframes(l) }
+                        t(R.drawable.ic_preset, "Presets") { showPresets(l) }
+                        if (l.keyframes.isNotEmpty()) t(R.drawable.ic_curve, tr("Qalooc", "Curve")) { showCurve(l) }
+                        t(R.drawable.ic_expression, "Expression", l.expr != Expression.NONE || l.motionBlur) { showExpression(l) }
+                        if (project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
+                    }
+                    group(tr("Muuqaal", "Look"))
+                    if (l.isPicture()) t(R.drawable.ic_filter, tr("Filter", "Filters"), !l.adjust.isIdentity()) { showFilters(l.adjust, null) }
+                    t(R.drawable.ic_opacity, tr("Daahsoon", "Opacity")) { showOpacity(l, tr("Daahsoonaan", "Opacity")) }
+                    if (l.isPicture() || l.kind == LayerKind.SHAPE) t(R.drawable.ic_outline, tr("Xariiq & hadh", "Outline"), l.outlineColor != 0 || l.shadow) { showOutline(l) }
+                    t(R.drawable.ic_glow, "Glow", l.glowColor != 0) { showGlow(l) }
+                    if (l.isPicture()) {
+                        t(R.drawable.ic_mask, tr("Maaskaro", "Mask"), l.mask != MaskKind.NONE) { showMask(l) }
+                        t(R.drawable.ic_chroma, tr("Shaashad cagaar", "Chroma key"), l.chroma) { showChroma(l) }
+                    }
+                    if (l.kind == LayerKind.IMAGE) t(R.drawable.ic_ai, "AI") { showAiForLayer(l) }
+                    group("3D")
+                    t(R.drawable.ic_cube, tr("Wareeji 3D", "3D rotate"), l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
+                    if (l.isPicture()) t(R.drawable.ic_mockup, "Mockup", l.mockup != so.ijarjar.app.model.MockupKind.NONE) { showMockup(l) }
+                    if (l.kind == LayerKind.MODEL3D) t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
+                    group(tr("Habee", "Arrange"))
+                    t(R.drawable.ic_link, tr("Isku xir", "Link"), l.linkGroup != null) { showLink(l) }
+                    if (l.linkGroup != null) t(R.drawable.ic_unlink, tr("Kala fur", "Unlink")) { unlink(l) }
+                    t(R.drawable.ic_bring_forward, tr("Kor u qaad", "Forward")) { reorderLayer(l, 1) }
+                    t(R.drawable.ic_send_backward, tr("Hoos u dhig", "Backward")) { reorderLayer(l, -1) }
+                    t(R.drawable.ic_flip, tr("Rog", "Flip")) { for (g in project.linkedWith(l)) g.flipH = !g.flipH; commit() }
+                    t(R.drawable.ic_reset, tr("Dib u deji", "Reset")) {
+                        l.scale = 1f; l.rotation = 0f; l.cx = 0.5f; l.cy = 0.5f; l.stretchX = 1f; l.stretchY = 1f; l.keyframes.clear(); commit()
+                    }
+                    t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
+                }
             }
             s is TimelineView.Sel.AudioSel && selectedAudio() != null -> {
+                key = "audio"
                 val a = selectedAudio()!!
-                back()
+                group(tr("Cod", "Audio"))
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showAudioVolume(a) }
                 t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), a.denoise > 0f || a.enhanceVoice) { showVoiceFx(a.denoise, a.enhanceVoice) { d, e -> a.denoise = d; a.enhanceVoice = e } }
                 t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitAudio(a) }
@@ -517,26 +571,26 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_delete, tr("Tirtir", "Delete")) { project.audios.remove(a); setSelection(null); commit() }
             }
             photo -> {
+                key = "photo"
+                group(tr("Sawirka", "Photo"))
                 t(R.drawable.ic_background, tr("Gadaal", "Background")) { showBackground() }
-                t(R.drawable.ic_ai, "AI") { showAiForBackground() }
                 t(R.drawable.ic_filter, tr("Filter", "Filters"), !project.bgAdjust.isIdentity()) { showFilters(project.bgAdjust, null) }
+                t(R.drawable.ic_ai, "AI") { showAiForBackground() }
+                t(R.drawable.ic_ratio, tr("Cabbir", "Size")) { showAspect() }
+                group(tr("Ku dar", "Add"))
                 t(R.drawable.ic_text, tr("Qoraal", "Text")) { addText() }
-                t(R.drawable.ic_sticker, "Sticker") { showStickers() }
                 t(R.drawable.ic_image_add, tr("Sawir", "Image")) { pickOverlay.launch(arrayOf("image/*", "application/json", "application/octet-stream")) }
+                t(R.drawable.ic_sticker, "Sticker") { showStickers() }
                 t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
-                t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
+                group(tr("Habee", "Arrange"))
                 t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
-                t(R.drawable.ic_ratio, tr("Cabbir", "Size")) { showAspect() }
+                t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
                 t(R.drawable.ic_grid, tr("Shabag", "Grid"), stage.showGrid) { stage.showGrid = !stage.showGrid; buildTools() }
                 t(R.drawable.ic_send, tr("U dir muuqaal", "Send to video")) { sendToVideo() }
             }
             else -> {
-                t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit")) {
-                    if (project.clips.isNotEmpty()) setSelection(TimelineView.Sel.ClipSel(project.clipIndexAt(timeMs)))
-                }
-                t(R.drawable.ic_audio, tr("Cod", "Audio")) { showAudioMenu() }
-                t(R.drawable.ic_sfx, tr("Dhawaaqyo", "Sound FX")) { showSfx() }
+                group(tr("Ku dar", "Add"))
                 t(R.drawable.ic_text, tr("Qoraal", "Text")) { addText() }
                 t(R.drawable.ic_caption, tr("Qoraal-hoosaad", "Captions")) { showCaptions() }
                 t(R.drawable.ic_sticker, "Sticker") { showStickers() }
@@ -544,18 +598,41 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_effects, tr("Saameyn", "Effects")) { showEffects(null) }
                 t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
+                group(tr("Cod", "Audio"))
+                t(R.drawable.ic_music, tr("Muusik", "Music")) { addAudioKind = AudioKind.MUSIC; pickAudio.launch(arrayOf("audio/*")) }
+                t(R.drawable.ic_sfx, tr("Dhawaaqyo", "Sound FX")) { showSfx() }
+                t(R.drawable.ic_mic, tr("Cod-duub", "Voiceover")) {
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
+                    else askMic.launch(Manifest.permission.RECORD_AUDIO)
+                }
+                t(R.drawable.ic_audio, tr("Kale", "More")) { showAudioMenu() }
+                group(tr("Mashruuc", "Project"))
+                t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit clip")) {
+                    if (project.clips.isNotEmpty()) setSelection(TimelineView.Sel.ClipSel(project.clipIndexAt(timeMs)))
+                }
                 t(R.drawable.ic_filter, tr("Filter", "Filters")) {
                     if (project.clips.isNotEmpty()) {
                         val c = project.clips[project.clipIndexAt(timeMs)]
                         showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() }
                     }
                 }
-                t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
-                t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
                 t(R.drawable.ic_ratio, tr("Saami", "Ratio")) { showAspect() }
+                t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
+                t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
             }
         }
-        toolScroll.scrollTo(0, 0)
+        toolBack.visibility = if (s != null && !(photo && key == "photo")) View.VISIBLE else View.GONE
+        val nonEmpty = groups.filter { it.second.isNotEmpty() }
+        val sel = (toolTab[key] ?: 0).coerceIn(0, (nonEmpty.size - 1).coerceAtLeast(0))
+        fun fill(i: Int) {
+            toolTab[key] = i
+            toolRow.removeAllViews()
+            for (ts in nonEmpty.getOrNull(i)?.second.orEmpty()) toolRow.addView(Ui.tool(this, ts.icon, ts.label, ts.active, ts.f))
+            toolScroll.scrollTo(0, 0)
+        }
+        catHolder.removeAllViews()
+        if (nonEmpty.size > 1) catHolder.addView(Ui.tabBar(this, nonEmpty.map { it.first }, sel) { fill(it) })
+        fill(sel)
     }
 
     // ------------------------------------------------------------------ commit / undo
@@ -1292,7 +1369,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun showTextEditor(l: Layer) {
         val (d, root) = Ui.sheet(this, if (l.kind == LayerKind.STICKER) "Sticker" else tr("Qoraal", "Text")) { commit() }
-        root.addView(editText(l.text, tr("Qor halkan…", "Type here…")) { l.text = it; live() })
+        d.top.addView(editText(l.text, tr("Qor halkan…", "Type here…")) { l.text = it; live() }.apply { maxLines = 3 },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4f) })
         if (l.kind == LayerKind.STICKER) {
             root.addView(Ui.sliderRow(this, tr("Cabbirka", "Size"), 0.02f, 0.4f, l.textSizeFrac.coerceIn(0.02f, 0.4f)) { l.textSizeFrac = it; live() })
             d.show(); return
@@ -2385,27 +2463,46 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
-    /** Built-in sound effects: tap to hear it and add it at the playhead. */
+    /** Built-in sound effects: tap one to hear it, then "Add" puts it at the playhead. */
     private fun showSfx() {
-        val (d, root) = Ui.sheet(this, tr("Dhawaaqyo (sound effects)", "Sound effects"))
-        root.addView(Ui.label(this, tr("Taabo si aad u maqasho oo u darto meesha xariiqdu taagan tahay.", "Tap to hear it and add it at the playhead.")))
-        val sv = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+        val (d, root) = Ui.sheet(this, tr("Dhawaaqyo", "Sound effects")) { sfxPlayer?.release(); sfxPlayer = null }
+        var chosen: Sfx.Sound? = null
+        val addBtn = Ui.button(this, tr("Dooro dhawaaq si aad u maqasho", "Pick a sound to hear it")) {}.apply { isEnabled = false; alpha = 0.5f }
+        addBtn.setOnClickListener {
+            val s = chosen ?: return@setOnClickListener
+            io.execute {
+                val f = Sfx.file(this, s)
+                main.post {
+                    val len = Sfx.durationMs(f)
+                    project.audios.add(AudioTrack(uri = Uri.fromFile(f).toString(), name = s.label, kind = AudioKind.SOUND,
+                        startMs = timeMs, durationMs = len, sourceDurationMs = len))
+                    commit()
+                    toast(tr("“${s.label}” waa lagu daray ", "“${s.label}” added at ") + TimelineView.fmt(timeMs))
+                }
+            }
+        }
+        d.top.addView(addBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        val sv = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false }
         val grid = GridLayout(this).apply { rowCount = 2; orientation = GridLayout.VERTICAL }
+        val chips = ArrayList<View>()
         for (s in Sfx.all) {
-            grid.addView(Ui.iconChip(this, R.drawable.ic_sfx, s.label) {
+            val chip = Ui.iconChip(this, R.drawable.ic_play, s.label) {}
+            chip.setOnClickListener {
+                chosen = s
+                for (c in chips) c.background = Ui.roundBg(Ui.SURFACE2, dp(14f).toFloat())
+                chip.background = Ui.roundBg(0x2219D3C5, dp(14f).toFloat(), dp(2f), Ui.ACCENT)
+                addBtn.isEnabled = true; addBtn.alpha = 1f
+                addBtn.text = tr("+ Ku dar “${s.label}”", "+ Add “${s.label}”")
                 io.execute {
                     val f = Sfx.file(this, s)
                     main.post {
                         sfxPlayer?.release()
                         sfxPlayer = runCatching { MediaPlayer.create(this, Uri.fromFile(f))?.also { it.start() } }.getOrNull()
-                        val len = Sfx.durationMs(f)
-                        project.audios.add(AudioTrack(uri = Uri.fromFile(f).toString(), name = s.label, kind = AudioKind.SOUND,
-                            startMs = timeMs, durationMs = len, sourceDurationMs = len))
-                        commit()
-                        toast("+ ${s.label}")
                     }
                 }
-            }, GridLayout.LayoutParams().apply { width = dp(84f); setMargins(dp(3f), dp(3f), dp(3f), dp(3f)) })
+            }
+            chips.add(chip)
+            grid.addView(chip, GridLayout.LayoutParams().apply { width = dp(84f); setMargins(dp(3f), dp(3f), dp(3f), dp(3f)) })
         }
         sv.addView(grid)
         root.addView(sv)
@@ -2661,5 +2758,15 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         startActivity(Intent.createChooser(i, tr("Wadaag", "Share")))
     }
 
-    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+    private val hideNotice = Runnable { notice.animate().alpha(0f).setDuration(200).withEndAction { notice.visibility = View.GONE }.start() }
+
+    /** A short message on top of the preview. */
+    private fun toast(s: String) {
+        main.removeCallbacks(hideNotice)
+        notice.text = s
+        notice.animate().cancel()
+        notice.alpha = 0f; notice.visibility = View.VISIBLE
+        notice.animate().alpha(1f).setDuration(150).start()
+        main.postDelayed(hideNotice, (1800L + s.length * 35L).coerceAtMost(5000L))
+    }
 }

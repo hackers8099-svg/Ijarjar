@@ -10,6 +10,7 @@ import android.graphics.ColorMatrixColorFilter
 import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.net.Uri
@@ -263,7 +264,7 @@ class StageView(context: Context) : FrameLayout(context) {
         }
         private val guidePaint = Paint().apply { color = 0xFFFF3D7F.toInt(); strokeWidth = dp(1f) }
         private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
-        private val handleRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); style = Paint.Style.STROKE; strokeWidth = dp(2f) }
+        private val handleRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); style = Paint.Style.STROKE; strokeWidth = dp(1.5f) }
         private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
         private val linkLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); strokeWidth = dp(1.5f) }
         private val frameCache = HashMap<String, Bitmap>()
@@ -322,10 +323,25 @@ class StageView(context: Context) : FrameLayout(context) {
             val c = LayerRenderer.corners(sel, selPose, w, h)
             drawBox(canvas, c, boxPaint)
             if (sel.kind != LayerKind.DRAW) {
-                for (hd in handles(sel, w, h)) {
-                    canvas.drawCircle(hd[0], hd[1], dp(7f), handlePaint)
-                    canvas.drawCircle(hd[0], hd[1], dp(7f), handleRing)
+                val hs = handles(sel, w, h)
+                val edgeW = hypot(c[2] - c[0], c[3] - c[1]); val edgeH = hypot(c[6] - c[0], c[7] - c[1])
+                // rotate handle: a line from the top edge and a round accent knob
+                val tx = (c[0] + c[2]) / 2f; val ty = (c[1] + c[3]) / 2f
+                canvas.drawLine(tx, ty, hs[6][0], hs[6][1], boxPaint)
+                handlePaint.color = 0xFF19D3C5.toInt()
+                canvas.drawCircle(hs[6][0], hs[6][1], dp(9f), handlePaint)
+                handlePaint.color = Color.WHITE
+                rotArc.set(hs[6][0] - dp(4.5f), hs[6][1] - dp(4.5f), hs[6][0] + dp(4.5f), hs[6][1] + dp(4.5f))
+                canvas.drawArc(rotArc, -60f, 280f, false, rotPaint)
+                // corners (resize): small white dots
+                for (i in 0 until 4) {
+                    canvas.drawCircle(hs[i][0], hs[i][1], dp(6f), handlePaint)
+                    canvas.drawCircle(hs[i][0], hs[i][1], dp(6f), handleRing)
                 }
+                // sides (stretch): short bars, only when the box is big enough to tell them apart
+                val ang = Math.toDegrees(atan2((c[3] - c[1]).toDouble(), (c[2] - c[0]).toDouble())).toFloat()
+                if (edgeH > dp(56f)) drawBar(canvas, hs[4][0], hs[4][1], ang + 90f)
+                if (edgeW > dp(56f)) drawBar(canvas, hs[5][0], hs[5][1], ang)
             }
             if (sel.keyframes.isNotEmpty()) {
                 val on = LayerRenderer.keyframeAt(sel, timeMs) != null
@@ -337,6 +353,18 @@ class StageView(context: Context) : FrameLayout(context) {
             }
             if (showVGuide) canvas.drawLine(w / 2f, 0f, w / 2f, h.toFloat(), guidePaint)
             if (showHGuide) canvas.drawLine(0f, h / 2f, w.toFloat(), h / 2f, guidePaint)
+        }
+
+        private val rotArc = RectF()
+        private val rotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(1.8f); color = Color.WHITE; strokeCap = Paint.Cap.ROUND }
+        private val barRect = RectF()
+
+        private fun drawBar(canvas: Canvas, x: Float, y: Float, deg: Float) {
+            canvas.save(); canvas.rotate(deg, x, y)
+            barRect.set(x - dp(9f), y - dp(3.5f), x + dp(9f), y + dp(3.5f))
+            canvas.drawRoundRect(barRect, dp(3.5f), dp(3.5f), handlePaint)
+            canvas.drawRoundRect(barRect, dp(3.5f), dp(3.5f), handleRing)
+            canvas.restore()
         }
 
         /** Handle positions: 0-3 corners (scale), 4 right side (width), 5 bottom side (height), 6 rotate. */
