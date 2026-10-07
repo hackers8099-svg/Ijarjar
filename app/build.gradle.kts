@@ -14,7 +14,7 @@ android {
         versionCode = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1)
         versionName = "1.0." + (System.getenv("GITHUB_RUN_NUMBER") ?: "0")
         // phones only need these two; keeps the APK much smaller
-        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
+        ndk { abiFilters += listOf("arm64-v8a") }
     }
 
     signingConfigs {
