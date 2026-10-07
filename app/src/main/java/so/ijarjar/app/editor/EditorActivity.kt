@@ -1923,15 +1923,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
-    private fun captionLayer(text: String, start: Long, end: Long): Layer {
-        val template = project.layers.firstOrNull { it.isCaption }
-        val l = Layer(kind = LayerKind.TEXT, text = text, isCaption = true, textSizeFrac = 0.055f, cy = 0.82f,
-            textColor = 0xFFFFFFFF.toInt(), strokeColor = 0xFF000000.toInt(), strokeWidth = 0.14f, textIn = TextAnim.WORD_POP, animInMs = 400, animOutMs = 250)
-        if (template != null) copyTextStyle(template, l)
-        l.startMs = start; l.endMs = end
-        return l
-    }
-
     /** Caption templates (Brevidy style): font, colours, box, highlight and animation in one tap. */
     private class CapTemplate(val name: String, val fn: (Layer) -> Unit)
 
