@@ -419,6 +419,8 @@ class Layer(
     var maskX: Float = 0.5f,            // mask centre inside the layer (0..1)
     var maskY: Float = 0.5f,
     var maskStretch: Float = 1f,        // mask width / height factor
+    var maskRot: Float = 0f,            // mask rotation (degrees)
+    var maskRound: Float = 0f,          // rectangle mask corner roundness 0..1
     var animLoop: LoopAnim = LoopAnim.NONE,
     var effect: EffectKind = EffectKind.SHAKE,
     var isCaption: Boolean = false,
@@ -536,8 +538,18 @@ class AudioTrack(
     var denoise: Float = 0f,
     var enhanceVoice: Boolean = false,
     var voice: VoiceFx = VoiceFx.NONE,
-    var sfx: SoundFx = SoundFx()
+    var sfx: SoundFx = SoundFx(),
+    var fadeInMs: Long = 0,
+    var fadeOutMs: Long = 0,
+    var beats: MutableList<Long> = mutableListOf()   // beat times inside the source (ms)
 ) {
+    /** Volume factor for fades at timeline time [t]. */
+    fun fadeGain(t: Long): Float {
+        var g = 1f
+        if (fadeInMs > 0) g = minOf(g, ((t - startMs).toFloat() / fadeInMs).coerceIn(0f, 1f))
+        if (fadeOutMs > 0) g = minOf(g, ((endMs - t).toFloat() / fadeOutMs).coerceIn(0f, 1f))
+        return g
+    }
     val endMs: Long get() = startMs + durationMs
     fun isActive(t: Long) = t >= startMs && t < endMs
     fun copy(): AudioTrack = gsonCopy(this, AudioTrack::class.java).also { it.id = newId() }

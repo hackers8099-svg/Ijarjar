@@ -39,6 +39,27 @@ object Waveform {
         return null
     }
 
+    /** Beat times (ms in the file) found from sudden rises in loudness. Null while the sound is still being read. */
+    fun beats(context: Context, uri: String, onReady: () -> Unit): List<Long>? {
+        val w = get(context, uri, onReady) ?: return null
+        if (w.size < 10) return emptyList()
+        val flux = FloatArray(w.size)
+        for (i in 1 until w.size) flux[i] = max(0f, w[i] - w[i - 1])
+        val out = ArrayList<Long>()
+        val win = 25   // ~0.5 s around each point
+        var last = -100000L
+        for (i in 1 until w.size - 1) {
+            var sum = 0f; var n = 0
+            for (k in maxOf(0, i - win) until minOf(w.size, i + win)) { sum += flux[k]; n++ }
+            val mean = sum / n
+            if (flux[i] > mean * 1.8f + 0.04f && flux[i] >= flux[i - 1] && flux[i] >= flux[i + 1]) {
+                val t = i * BUCKET_MS
+                if (t - last >= 240) { out.add(t); last = t }
+            }
+        }
+        return out
+    }
+
     private fun cacheFile(c: Context, uri: String) = File(File(c.cacheDir, "waves").apply { mkdirs() }, Integer.toHexString(uri.hashCode()) + ".w")
 
     private fun load(c: Context, uri: String): FloatArray {

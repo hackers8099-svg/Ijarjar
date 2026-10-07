@@ -297,6 +297,16 @@ class TimelineView(context: Context) : View(context) {
             }
             canvas.save(); canvas.clipRect(r)
             val lx = max(r.left, 0f) + dp(4f)
+            // beat markers
+            if (a.beats.isNotEmpty()) {
+                paint.color = 0xFFFFCC00.toInt()
+                for (bt in a.beats) {
+                    val tt = a.startMs + bt - a.trimStartMs
+                    if (tt < a.startMs || tt > a.endMs) continue
+                    val bx = xOf(tt); if (bx < r.left || bx > r.right) continue
+                    canvas.drawCircle(bx, r.bottom - dp(4f), dp(2.5f), paint)
+                }
+            }
             // name over the wave, like CapCut
             drawIcon(canvas, audioIcon(a), lx + dp(4f), r.centerY(), dp(12f))
             canvas.drawText(a.name, lx + dp(20f), r.centerY() + dp(4f), nameShadow)

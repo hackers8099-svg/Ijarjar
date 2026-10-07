@@ -463,13 +463,39 @@ class StageView(context: Context) : FrameLayout(context) {
         private var editSpan = 0f
         private var cropEdge = -1
 
+        private var maskHandle = 0      // 0 move, 1 height, 2 width, 3 round, 4 feather
+        private var editAngle = 0f
+
+        /** Mask handle positions in layer-content pixels: centre, ↕ top, ↔ right, ◜ round, ≈ feather. */
+        private fun maskHandles(m: Layer, cw: Float, ch: Float): List<FloatArray> {
+            val b = LayerRenderer.maskBox(m, cw, ch)
+            val off = minOf(cw, ch) * 0.07f
+            val rad = Math.toRadians(m.maskRot.toDouble())
+            fun at(x: Float, y: Float): FloatArray {   // rotate around the mask centre
+                val c = kotlin.math.cos(rad).toFloat(); val s = kotlin.math.sin(rad).toFloat()
+                return floatArrayOf(b[0] + x * c - y * s, b[1] + x * s + y * c)
+            }
+            return listOf(at(0f, 0f), at(0f, -b[3] - off), at(b[2] + off, 0f), at(-b[2] - off * 0.7f, -b[3] - off * 0.7f), at(0f, b[3] + off))
+        }
+
         private fun editTouch(e: MotionEvent, w: Int, h: Int) {
             val m = editMask
             val c = editCrop
             val l = m ?: c ?: return
+            val (cw, ch) = LayerRenderer.contentSize(l, w)
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     editLast = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y)
+                    if (m != null) {
+                        val mat = LayerRenderer.matrix(m, LayerRenderer.basePose(m, timeMs), w, h)
+                        val hs = maskHandles(m, cw, ch).map { p -> floatArrayOf(p[0], p[1]).also { mat.mapPoints(it) } }
+                        maskHandle = 0
+                        var best = dp(30f)
+                        for (i in 1 until hs.size) {
+                            if (i == 3 && m.mask != MaskKind.RECT) continue
+                            val d = hypot(e.x - hs[i][0], e.y - hs[i][1]); if (d < best) { best = d; maskHandle = i }
+                        }
+                    }
                     if (c != null) {
                         val k = LayerRenderer.corners(l, LayerRenderer.basePose(l, timeMs), w, h)
                         val mids = listOf(floatArrayOf((k[0] + k[6]) / 2, (k[1] + k[7]) / 2), floatArrayOf((k[0] + k[2]) / 2, (k[1] + k[3]) / 2),
@@ -477,26 +503,39 @@ class StageView(context: Context) : FrameLayout(context) {
                         cropEdge = mids.indices.minByOrNull { hypot(e.x - mids[it][0], e.y - mids[it][1]) } ?: -1
                     }
                 }
-                MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount >= 2) editSpan = span(e)
+                MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount >= 2) { editSpan = span(e); editAngle = angle(e) }
                 MotionEvent.ACTION_MOVE -> {
                     if (m != null && e.pointerCount >= 2) {
-                        val sp = span(e)
-                        if (editSpan > 0f) { m.maskSize = (m.maskSize * sp / editSpan).coerceIn(0.05f, 3f) }
-                        editSpan = sp
+                        // pinch = size, twist = rotate (like CapCut)
+                        val sp = span(e); val an = angle(e)
+                        if (editSpan > 0f) { m.maskSize = (m.maskSize * sp / editSpan).coerceIn(0.02f, 4f); m.maskRot += an - editAngle }
+                        editSpan = sp; editAngle = an
                         onEditChanged?.invoke(); invalidate(); return
                     }
                     val cur = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y) ?: return
                     val last = editLast ?: cur
-                    val dx = cur[0] - last[0]; val dy = cur[1] - last[1]
                     if (m != null) {
-                        m.maskX = (m.maskX + dx).coerceIn(-0.5f, 1.5f); m.maskY = (m.maskY + dy).coerceIn(-0.5f, 1.5f)
+                        val b = LayerRenderer.maskBox(m, cw, ch)
+                        val rad = Math.toRadians(-m.maskRot.toDouble())
+                        val px = cur[0] * cw - b[0]; val py = cur[1] * ch - b[1]
+                        val rx = (px * kotlin.math.cos(rad) - py * kotlin.math.sin(rad)).toFloat()
+                        val ry = (px * kotlin.math.sin(rad) + py * kotlin.math.cos(rad)).toFloat()
+                        val minSide = minOf(cw, ch); val off = minSide * 0.07f
+                        when (maskHandle) {
+                            1 -> { val oldW = b[2]; val hh = (abs(ry) - off).coerceAtLeast(minSide * 0.01f); m.maskSize = (hh * 2 / minSide).coerceIn(0.02f, 4f); m.maskStretch = (oldW / hh).coerceIn(0.05f, 20f) }
+                            2 -> { val hw = (abs(rx) - off).coerceAtLeast(minSide * 0.01f); m.maskStretch = (hw / b[3]).coerceIn(0.05f, 20f) }
+                            3 -> { m.maskRound = ((rx + b[2]) / minOf(b[2], b[3])).coerceIn(0f, 1f) }
+                            4 -> { m.maskFeather = ((ry - b[3]) / (minSide * 0.3f)).coerceIn(0f, 1f) }
+                            else -> { m.maskX = (m.maskX + cur[0] - last[0]).coerceIn(-0.5f, 1.5f); m.maskY = (m.maskY + cur[1] - last[1]).coerceIn(-0.5f, 1.5f) }
+                        }
                     } else if (c != null) {
-                        val cw = (1f - c.cropL - c.cropR).coerceAtLeast(0.05f); val ch = (1f - c.cropT - c.cropB).coerceAtLeast(0.05f)
+                        val dx = cur[0] - last[0]; val dy = cur[1] - last[1]
+                        val cwF = (1f - c.cropL - c.cropR).coerceAtLeast(0.05f); val chF = (1f - c.cropT - c.cropB).coerceAtLeast(0.05f)
                         when (cropEdge) {
-                            0 -> c.cropL = (c.cropL + dx * cw).coerceIn(0f, 0.9f - c.cropR)
-                            1 -> c.cropT = (c.cropT + dy * ch).coerceIn(0f, 0.9f - c.cropB)
-                            2 -> c.cropR = (c.cropR - dx * cw).coerceIn(0f, 0.9f - c.cropL)
-                            3 -> c.cropB = (c.cropB - dy * ch).coerceIn(0f, 0.9f - c.cropT)
+                            0 -> c.cropL = (c.cropL + dx * cwF).coerceIn(0f, 0.9f - c.cropR)
+                            1 -> c.cropT = (c.cropT + dy * chF).coerceIn(0f, 0.9f - c.cropB)
+                            2 -> c.cropR = (c.cropR - dx * cwF).coerceIn(0f, 0.9f - c.cropL)
+                            3 -> c.cropB = (c.cropB - dy * chF).coerceIn(0f, 0.9f - c.cropT)
                         }
                         val nw = (1f - c.cropL - c.cropR).coerceAtLeast(0.05f); val nh = (1f - c.cropT - c.cropB).coerceAtLeast(0.05f)
                         c.contentAspect = c.srcAspect * nh / nw
@@ -504,28 +543,46 @@ class StageView(context: Context) : FrameLayout(context) {
                     editLast = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y)
                     onEditChanged?.invoke(); invalidate()
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { editLast = null; editSpan = 0f; cropEdge = -1 }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { editLast = null; editSpan = 0f; cropEdge = -1; maskHandle = 0 }
             }
         }
 
         private val editPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE; color = 0xFF19D3C5.toInt(); strokeWidth = dp(2f); pathEffect = DashPathEffect(floatArrayOf(dp(8f), dp(5f)), 0f)
+            style = Paint.Style.STROKE; color = 0xFFFFCC00.toInt(); strokeWidth = dp(2f)
         }
         private val editDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+        private val editGlyph = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF202027.toInt(); textAlign = Paint.Align.CENTER; textSize = dp(13f); isFakeBoldText = true }
+        private val editShadow = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x55000000 }
+
+        private fun knob(canvas: Canvas, x: Float, y: Float, glyph: String) {
+            canvas.drawCircle(x, y + dp(1f), dp(13f), editShadow)
+            canvas.drawCircle(x, y, dp(12f), editDot)
+            canvas.drawText(glyph, x, y + dp(4.5f), editGlyph)
+        }
 
         private fun drawEdit(canvas: Canvas, w: Int, h: Int) {
             val m = editMask
             if (m != null && m.mask != MaskKind.NONE) {
                 val (cw, ch) = LayerRenderer.contentSize(m, w)
                 val mat = LayerRenderer.matrix(m, LayerRenderer.basePose(m, timeMs), w, h)
+                val b = LayerRenderer.maskBox(m, cw, ch)
                 canvas.save(); canvas.concat(mat)
-                val cx = cw * m.maskX; val cy = ch * m.maskY; val st = m.maskStretch.coerceIn(0.1f, 10f)
-                val r = minOf(cw, ch) * m.maskSize / 2f
-                val rect = if (m.mask == MaskKind.RECT) RectF(cx - cw * m.maskSize / 2f * st, cy - ch * m.maskSize / 2f, cx + cw * m.maskSize / 2f * st, cy + ch * m.maskSize / 2f)
-                else RectF(cx - r * st, cy - r, cx + r * st, cy + r)
-                if (m.mask == MaskKind.RECT) canvas.drawRect(rect, editPaint) else canvas.drawOval(rect, editPaint)
-                canvas.drawCircle(cx, cy, dp(5f), editDot)
-                canvas.restore()
+                canvas.save(); canvas.rotate(m.maskRot, b[0], b[1])
+                val rect = RectF(b[0] - b[2], b[1] - b[3], b[0] + b[2], b[1] + b[3])
+                when (m.mask) {
+                    MaskKind.RECT -> { val r = minOf(b[2], b[3]) * m.maskRound; canvas.drawRoundRect(rect, r, r, editPaint) }
+                    MaskKind.LINEAR -> canvas.drawLine(b[0] - cw * 2, b[1], b[0] + cw * 2, b[1], editPaint)
+                    MaskKind.MIRROR -> { canvas.drawLine(b[0] - cw * 2, b[1] - b[3], b[0] + cw * 2, b[1] - b[3], editPaint); canvas.drawLine(b[0] - cw * 2, b[1] + b[3], b[0] + cw * 2, b[1] + b[3], editPaint) }
+                    else -> canvas.drawOval(rect, editPaint)
+                }
+                canvas.restore(); canvas.restore()
+                // handles in screen space so they stay the same size
+                val hs = maskHandles(m, cw, ch).map { p -> floatArrayOf(p[0], p[1]).also { mat.mapPoints(it) } }
+                canvas.drawCircle(hs[0][0], hs[0][1], dp(7f), editPaint)
+                knob(canvas, hs[1][0], hs[1][1], "↕")
+                if (m.mask != MaskKind.LINEAR) knob(canvas, hs[2][0], hs[2][1], "↔")
+                if (m.mask == MaskKind.RECT) knob(canvas, hs[3][0], hs[3][1], "◜")
+                knob(canvas, hs[4][0], hs[4][1], "≈")
             }
             val c = editCrop
             if (c != null) {

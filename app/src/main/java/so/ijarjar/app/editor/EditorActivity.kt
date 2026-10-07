@@ -302,7 +302,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         timeLabel = Ui.text(this, "00:00 / 00:00", 12f, Ui.TEXT2)
         left.addView(timeLabel)
-        keyBtn = Ui.iconButton(this, R.drawable.ic_keyframe, 20f) { toggleKeyframe() }
+        keyBtn = Ui.iconButton(this, R.drawable.ic_keyframe, 20f) { selectedLayer()?.let { showKeyframes(it) } }
+        keyBtn.setOnLongClickListener { toggleKeyframe(); true }
         left.addView(keyBtn)
         pr.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         playBtn = Ui.iconButton(this, R.drawable.ic_play, 28f) { togglePlay() }
@@ -648,7 +649,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
                     if (l.kind == LayerKind.MODEL3D) {
                         t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
-                        if (l.phoneStyle != null) t(R.drawable.ic_mockup, tr("Shaashadda", "Screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
+                        if (l.phoneStyle != null) {
+                            t(R.drawable.ic_image_add, tr("Beddel shaashadda", "Replace screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
+                            t(R.drawable.ic_mockup, tr("Beddel taleefanka", "Replace phone")) { showPhoneStyle(l) }
+                        }
                         t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
                     }
                     if (l.isPicture()) t(R.drawable.ic_mockup, tr("Taleefan 3D", "3D phone")) { putInPhone(l) }
@@ -669,6 +673,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 val a = selectedAudio()!!
                 group(tr("Cod", "Audio"))
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showAudioVolume(a) }
+                t(R.drawable.ic_opacity, "Fade", a.fadeInMs > 0 || a.fadeOutMs > 0) { showAudioFade(a) }
+                t(R.drawable.ic_waveform, tr("Garaaca (beat)", "Beats"), a.beats.isNotEmpty()) { detectBeats(a) }
                 t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), a.voice != VoiceFx.NONE || a.sfx.on) { showVoiceChanger(a.voice, a.startMs, a.sfx) { a.voice = it } }
                 t(R.drawable.ic_voice, tr("Nadiifi codka", "Clean voice"), a.denoise > 0f || a.enhanceVoice) { showVoiceFx(a.denoise, a.enhanceVoice) { d, e -> a.denoise = d; a.enhanceVoice = e } }
                 t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitAudio(a) }
@@ -866,6 +872,26 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     // ------------------------------------------------------------------ helpers for panels
 
     /** Adds a horizontal row of looping preview tiles. */
+    /** Tiles in a grid of 4 columns (CapCut style), filling the panel width. */
+    private fun <T> tileGrid(root: LinearLayout, items: List<T>, isSel: (T) -> Boolean, label: (T) -> String,
+                             tile: (T) -> LoopTile, pick: (T) -> Unit) {
+        val cols = 4
+        val widthDp = resources.displayMetrics.widthPixels / resources.displayMetrics.density - 28f
+        val size = (widthDp / cols - 10f).coerceIn(56f, 110f)
+        val grid = GridLayout(this).apply { columnCount = cols }
+        val tiles = ArrayList<LoopTile>()
+        for (it in items) {
+            val tv = tile(it)
+            tv.selectedTile = isSel(it)
+            tiles.add(tv)
+            grid.addView(tileWithLabel(this, tv, label(it), size) {
+                pick(it)
+                for ((i, x) in tiles.withIndex()) x.selectedTile = isSel(items[i])
+            }, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0 })
+        }
+        root.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+    }
+
     private fun <T> tileRow(root: LinearLayout, items: List<T>, isSel: (T) -> Boolean, label: (T) -> String,
                             tile: (T) -> LoopTile, size: Float = 64f, pick: (T) -> Unit) {
         val (sv, row) = Ui.hrow(this)
@@ -1115,7 +1141,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val thumb = currentThumb()
         Ui.tabs(this, root, listOf(
             tr("Filter", "Filters") to { body: LinearLayout ->
-                tileRow(body, FilterPreset.entries, { it == a.preset }, { it.label }, { FilterTile(this, thumb, it) }, 60f) { p -> a.preset = p; live() }
+                tileGrid(body, FilterPreset.entries, { it == a.preset }, { it.label }, { FilterTile(this, thumb, it) }) { p -> a.preset = p; live() }
                 if (applyAll != null) buttonRow(body, tr("Ku dabaq dhammaan", "Apply to all") to { applyAll(); d.dismiss() })
             },
             tr("Hagaaji", "Adjust") to { body: LinearLayout ->
@@ -1937,18 +1963,41 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     /** Keyframe curves (After Effects graph presets + custom bezier). */
     private fun showCurve(l: Layer) = showKeyframes(l, 1)
 
+    /** Mask like CapCut: shapes, then position / size / rotate / feather / round corner — on screen or with dials. */
     private fun showMask(l: Layer) {
         val (d, root) = Ui.sheet(this, tr("Maaskaro", "Mask")) { commit() }
-        chipRow(root, MaskKind.entries.map { (when (it) { MaskKind.NONE -> R.drawable.ic_close; MaskKind.CIRCLE -> R.drawable.ic_circle; else -> R.drawable.ic_mask }) to it.label }) { i ->
-            l.mask = MaskKind.entries[i]; live()
-        }
-        root.addView(Ui.label(this, tr("Shaashadda: farta ku jiid si aad maaskarada u dhaqaajiso, laba farood ku weyneey/yaree.",
-            "On screen: drag to move the mask, pinch with two fingers to resize.")))
-        root.addView(Ui.sliderRow(this, "Feather", 0f, 1f, l.maskFeather) { l.maskFeather = it; live() })
-        root.addView(Ui.sliderRow(this, tr("Ballac / dherer", "Width / height"), 0.3f, 3f, l.maskStretch.coerceIn(0.3f, 3f)) { l.maskStretch = it; live() })
-        root.addView(Ui.choiceRow(this, listOf(tr("Caadi", "Normal"), tr("Rogan", "Invert")), if (l.maskInvert) 1 else 0) { l.maskInvert = it == 1; live() })
-        buttonRow(root, tr("Dhexda ku celi", "Re-centre") to { l.maskX = 0.5f; l.maskY = 0.5f; l.maskStretch = 1f; live() })
-        if (l.mask == MaskKind.NONE) { l.mask = MaskKind.CIRCLE }
+        if (l.mask == MaskKind.NONE) l.mask = MaskKind.RECT
+        val shapes = MaskKind.entries
+        d.top.addView(Ui.choiceRow(this, shapes.map { it.label }, shapes.indexOf(l.mask)) { i -> l.mask = shapes[i]; live(); stage.invalidate() })
+        fun dial(body: LinearLayout, label: String, v: Float, def: Float, perDp: Float, fmt: (Float) -> String, min: Float = -Float.MAX_VALUE, max: Float = Float.MAX_VALUE, set: (Float) -> Unit) =
+            body.addView(ScrubDial(this, label, v, def, perDp, fmt, min, max) { set(it); live(); stage.invalidate() },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4f) })
+        val pct = { v: Float -> "%.0f".format(v) }
+        Ui.tabs(this, root, listOf(
+            tr("Boos", "Position") to { body: LinearLayout ->
+                dial(body, tr("Dhidibka X", "X axis"), (l.maskX - 0.5f) * 100, 0f, 0.25f, pct) { l.maskX = 0.5f + it / 100f }
+                dial(body, tr("Dhidibka Y", "Y axis"), (l.maskY - 0.5f) * 100, 0f, 0.25f, pct) { l.maskY = 0.5f + it / 100f }
+            },
+            tr("Cabbir", "Size") to { body: LinearLayout ->
+                dial(body, tr("Dherer", "Height"), l.maskSize * 100, 80f, 0.4f, pct, 2f) { v -> val w = l.maskSize * l.maskStretch; l.maskSize = v / 100f; l.maskStretch = (w / l.maskSize).coerceIn(0.05f, 20f) }
+                dial(body, tr("Ballac", "Width"), l.maskSize * l.maskStretch * 100, 80f, 0.4f, pct, 2f) { v -> l.maskStretch = (v / 100f / l.maskSize).coerceIn(0.05f, 20f) }
+            },
+            tr("Wareeg", "Rotate") to { body: LinearLayout ->
+                dial(body, tr("Wareeg", "Rotate"), l.maskRot, 0f, 0.6f, { "%.0f°".format(it) }) { l.maskRot = it }
+            },
+            "Feather" to { body: LinearLayout ->
+                dial(body, "Feather", l.maskFeather * 100, 0f, 0.4f, pct, 0f, 100f) { l.maskFeather = it / 100f }
+            },
+            tr("Geesaha", "Round corner") to { body: LinearLayout ->
+                if (l.mask != MaskKind.RECT) body.addView(Ui.label(this, tr("Kaliya afargeeska (Rectangle).", "Only for Rectangle.")))
+                dial(body, tr("Wareegsanaan", "Round corner"), l.maskRound * 100, 0f, 0.4f, pct, 0f, 100f) { l.maskRound = it / 100f }
+            }
+        ))
+        root.addView(Ui.label(this, tr("Shaashadda: dhexda jiid = dhaqaaji · ↕ dherer · ↔ ballac · ◜ geesaha · ≈ feather · laba farood = weyneyn & wareeji",
+            "On screen: drag inside = move · ↕ height · ↔ width · ◜ round corner · ≈ feather · two fingers = size & rotate")))
+        buttonRow(root,
+            tr("Rog (invert)", "Invert") to { l.maskInvert = !l.maskInvert; live() },
+            tr("Dib u deji", "Reset") to { l.maskX = 0.5f; l.maskY = 0.5f; l.maskSize = 0.8f; l.maskStretch = 1f; l.maskRot = 0f; l.maskFeather = 0.1f; l.maskRound = 0f; d.dismiss(); showMask(l) })
         stage.editMask = l
         stage.onEditChanged = { live() }
         d.show()
@@ -2377,6 +2426,25 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
+    /** Swap the phone model (keeps the screen, position and animation). */
+    private fun showPhoneStyle(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Beddel taleefanka", "Replace phone")) { commit() }
+        chipRow(root, so.ijarjar.app.render.PhoneGlb.Style.entries.map { R.drawable.ic_mockup to it.label }) { i ->
+            val style = so.ijarjar.app.render.PhoneGlb.Style.entries[i]
+            io.execute {
+                val f = so.ijarjar.app.render.PhoneGlb.file(this, style)
+                main.post { l.uri = Uri.fromFile(f).toString(); l.phoneStyle = style.name; l.name = tr("Taleefan 3D", "3D phone") + " · " + style.label; live() }
+            }
+        }
+        root.addView(Ui.label(this, tr("Midabka jirka", "Body colour")))
+        root.addView(Ui.colorRow(this, l.parts["Body"]?.color ?: 0, true) { c ->
+            for (m in listOf("Body", "Island", "Frame")) l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }.color = c
+            live()
+        })
+        buttonRow(root, tr("Beddel shaashadda", "Replace screen") to { d.dismiss(); partTarget = l to "Screen"; pickPartMedia.launch(media()) })
+        d.show()
+    }
+
     /** Puts an existing picture / video layer onto the screen of a 3D phone. */
     private fun putInPhone(src: Layer) {
         val uri = src.uri ?: return
@@ -2499,7 +2567,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 l.keyframes.add(Keyframe(l.durationMs, b.cx, b.cy, b.scale, b.rotation, b.opacity, b.sx, b.sy, Easing.EASE_IN_OUT, rx = b.rx, ry = 360f, z = b.z))
                 live(); build()
             },
-            "◆ Keyframe" to { toggleKeyframe(false); build() })
+            "◆ Keyframe" to { d.dismiss(); showKeyframes(l) })
         if (l.kind == LayerKind.MODEL3D) buttonRow(root, tr("Qaybaha (sawir, video, midab)", "Parts (picture, video, colour)") to { d.dismiss(); showModelParts(l) })
         if (p0.rx == 0f && p0.ry == 0f && l.keyframes.isEmpty()) root.addView(Ui.label(this, tr("Talo: ◆ Keyframe ku dar si 3D-gu u dhaqaaqo.", "Tip: add ◆ keyframes to animate in 3D.")))
         d.show()
@@ -3233,7 +3301,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val groups = listOf(tr("Dhaqdhaqaaq", "Motion"), tr("Iftiin", "Light"), tr("Midab", "Colour"), tr("Qurxin", "Overlay"))
         Ui.tabs(this, root, groups.mapIndexed { gi, name ->
             name to { body: LinearLayout ->
-                tileRow(body, EffectKind.entries.filter { it.group == gi }, { it == replace?.effect }, { it.label }, { EffectTile(this, thumb, it) }, 70f) { e ->
+                tileGrid(body, EffectKind.entries.filter { it.group == gi }, { it == replace?.effect }, { it.label }, { EffectTile(this, thumb, it) }) { e ->
                     d.dismiss()
                     if (replace != null) { replace.effect = e; commit() }
                     else {
@@ -3511,6 +3579,30 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 commit()
             }
         }
+    }
+
+    private fun showAudioFade(a: AudioTrack) {
+        val (d, root) = Ui.sheet(this, "Fade") { commit() }
+        val maxS = (a.durationMs / 2000f).coerceIn(0.2f, 10f)
+        root.addView(Ui.sliderRow(this, tr("Soo gal (s)", "Fade in (s)"), 0f, maxS, (a.fadeInMs / 1000f).coerceIn(0f, maxS)) { a.fadeInMs = (it * 1000).toLong(); live() })
+        root.addView(Ui.sliderRow(this, tr("Ka bax (s)", "Fade out (s)"), 0f, maxS, (a.fadeOutMs / 1000f).coerceIn(0f, maxS)) { a.fadeOutMs = (it * 1000).toLong(); live() })
+        d.show()
+    }
+
+    /** Finds the beats of a song and marks them on its track (to cut clips on the beat). */
+    private fun detectBeats(a: AudioTrack) {
+        if (a.beats.isNotEmpty()) {
+            MaterialAlertDialogBuilder(this).setMessage(tr("${a.beats.size} garaac ayaa calaamadsan. Ka saar?", "${a.beats.size} beats are marked. Remove them?"))
+                .setPositiveButton(tr("Ka saar", "Remove")) { _, _ -> a.beats.clear(); commit() }.setNegativeButton(tr("Maya", "No"), null).show()
+            return
+        }
+        toast(tr("Garaacyada waa la raadinayaa…", "Finding the beats…"))
+        fun run() {
+            val b = so.ijarjar.app.media.Waveform.beats(this, a.uri) { run() } ?: return
+            a.beats.clear(); a.beats.addAll(b); commit()
+            toast(tr("${b.size} garaac ayaa la helay — dhibcaha jaalaha ah ee codka ku jira", "${b.size} beats found — the yellow dots on the track"))
+        }
+        run()
     }
 
     private fun showAudioVolume(a: AudioTrack) {

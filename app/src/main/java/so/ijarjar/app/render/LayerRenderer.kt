@@ -834,15 +834,22 @@ object LayerRenderer {
 
     private val maskCache = LruCache<String, Bitmap>(24)
 
+    /** Mask box in content pixels: centre, half width, half height (shape masks). */
+    fun maskBox(l: Layer, cw: Float, ch: Float): FloatArray {
+        val minSide = minOf(cw, ch)
+        val hh = minSide * l.maskSize.coerceIn(0.02f, 4f) / 2f
+        val hw = hh * l.maskStretch.coerceIn(0.05f, 20f)
+        return floatArrayOf(cw * l.maskX, ch * l.maskY, hw, hh)
+    }
+
     fun maskBitmap(l: Layer, cw: Float, ch: Float): Bitmap {
         val aspect = (ch / cw.coerceAtLeast(1f)).coerceIn(0.05f, 20f)
         val mw = if (aspect <= 1f) 384 else (384 / aspect).toInt().coerceAtLeast(8)
         val mh = (mw * aspect).toInt().coerceAtLeast(8)
-        val key = "${l.mask}|${l.maskSize}|${l.maskFeather}|${l.maskInvert}|${l.maskX}|${l.maskY}|${l.maskStretch}|$mw|$mh"
+        val key = "${l.mask}|${l.maskSize}|${l.maskFeather}|${l.maskInvert}|${l.maskX}|${l.maskY}|${l.maskStretch}|${l.maskRot}|${l.maskRound}|$mw|$mh"
         maskCache.get(key)?.let { return it }
         val b = Bitmap.createBitmap(mw, mh, Bitmap.Config.ARGB_8888)
         val c = Canvas(b)
-        val size = l.maskSize.coerceIn(0.05f, 1.5f)
         val minSide = minOf(mw, mh).toFloat()
         val featherPx = l.maskFeather.coerceIn(0f, 1f) * minSide * 0.25f
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -855,36 +862,37 @@ object LayerRenderer {
             c.drawColor(Color.WHITE)
             paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
         }
-        val cx = mw * l.maskX; val cy = mh * l.maskY
-        val st = l.maskStretch.coerceIn(0.1f, 10f)
+        val box = maskBox(l, mw.toFloat(), mh.toFloat())
+        val cx = box[0]; val cy = box[1]; val hw = box[2]; val hh = box[3]
+        val big = (mw + mh) * 2f
+        c.save()
+        c.rotate(l.maskRot, cx, cy)
         when (l.mask) {
             MaskKind.NONE -> c.drawColor(Color.WHITE)
-            MaskKind.CIRCLE -> { val r = minSide * size / 2f; c.drawOval(RectF(cx - r * st, cy - r, cx + r * st, cy + r), paint) }
+            MaskKind.CIRCLE -> c.drawOval(RectF(cx - hw, cy - hh, cx + hw, cy + hh), paint)
             MaskKind.RECT -> {
-                val hw = mw * size / 2f * st; val hh = mh * size / 2f
-                c.drawRoundRect(RectF(cx - hw, cy - hh, cx + hw, cy + hh), minSide * 0.06f, minSide * 0.06f, paint)
+                val r = minOf(hw, hh) * l.maskRound.coerceIn(0f, 1f)
+                c.drawRoundRect(RectF(cx - hw, cy - hh, cx + hw, cy + hh), r, r, paint)
             }
-            MaskKind.HEART -> c.drawPath(shapePath(ShapeKind.HEART,
-                RectF(cx - minSide * size / 2f, cy - minSide * size * 0.45f, cx + minSide * size / 2f, cy + minSide * size * 0.45f)), paint)
-            MaskKind.STAR -> c.drawPath(shapePath(ShapeKind.STAR,
-                RectF(cx - minSide * size / 2f, cy - minSide * size / 2f, cx + minSide * size / 2f, cy + minSide * size / 2f)), paint)
+            MaskKind.HEART -> c.drawPath(shapePath(ShapeKind.HEART, RectF(cx - hw, cy - hh, cx + hw, cy + hh)), paint)
+            MaskKind.STAR -> c.drawPath(shapePath(ShapeKind.STAR, RectF(cx - hw, cy - hh, cx + hw, cy + hh)), paint)
             MaskKind.LINEAR -> {
-                val edge = mh * (size / 1.5f).coerceIn(0f, 1f)
+                // everything above the line shows (CapCut "linear"); rotate to tilt it
                 val f = featherPx.coerceAtLeast(1f)
-                paint.shader = LinearGradient(0f, edge - f, 0f, edge + f, Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP)
-                c.drawRect(0f, 0f, mw.toFloat(), mh.toFloat(), paint)
+                paint.shader = LinearGradient(0f, cy - f, 0f, cy + f, Color.WHITE, Color.TRANSPARENT, Shader.TileMode.CLAMP)
+                c.drawRect(cx - big, cy - big, cx + big, cy + big, paint)
             }
             MaskKind.MIRROR -> {
-                val half = mh * (size / 1.5f).coerceIn(0.01f, 1f) / 2f
                 val f = featherPx.coerceAtLeast(1f)
-                val total = 2 * half + 2 * f
-                paint.shader = LinearGradient(0f, cy - half - f, 0f, cy + half + f,
+                val total = 2 * hh + 2 * f
+                paint.shader = LinearGradient(0f, cy - hh - f, 0f, cy + hh + f,
                     intArrayOf(Color.TRANSPARENT, Color.WHITE, Color.WHITE, Color.TRANSPARENT),
                     floatArrayOf(0f, (2 * f / total).coerceIn(0f, 0.49f), (1f - 2 * f / total).coerceIn(0.51f, 1f), 1f),
                     Shader.TileMode.CLAMP)
-                c.drawRect(0f, 0f, mw.toFloat(), mh.toFloat(), paint)
+                c.drawRect(cx - big, cy - big, cx + big, cy + big, paint)
             }
         }
+        c.restore()
         maskCache.put(key, b)
         return b
     }

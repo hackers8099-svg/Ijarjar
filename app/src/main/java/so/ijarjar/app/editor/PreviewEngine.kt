@@ -252,6 +252,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         for (a in project.audios) {
             val pl = audioPlayers[a.id] ?: continue
             if (!a.isActive(t)) { if (pl.isPlaying) pl.pause(); continue }
+            if (a.fadeInMs > 0 || a.fadeOutMs > 0) pl.volume = (a.volume * a.fadeGain(t)).coerceIn(0f, 1f)
             val expect = a.trimStartMs + (t - a.startMs)
             if (isPlaying) {
                 if (force || abs(pl.currentPosition - expect) > 300) pl.seekTo(expect)

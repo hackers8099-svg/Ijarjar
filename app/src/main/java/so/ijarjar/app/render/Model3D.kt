@@ -85,11 +85,17 @@ object Model3D {
         return list
     }
 
+    /** Filament reads texture rows bottom-up: flip pictures so they are the right way up on the model. */
+    private fun upright(b: Bitmap): Bitmap {
+        val src = if (b.config == Bitmap.Config.ARGB_8888) b else b.copy(Bitmap.Config.ARGB_8888, false)
+        return Bitmap.createBitmap(src, 0, 0, src.width, src.height, Matrix().apply { preScale(1f, -1f) }, false)
+    }
+
     private fun textureFor(context: Context, uri: String): Texture? {
         textures[uri]?.let { return it }
         val e = engine ?: return null
         val bmp = so.ijarjar.app.media.MediaUtils.loadBitmap(context, Uri.parse(uri), 1024) ?: return null
-        val src = if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false)
+        val src = upright(bmp)
         val tex = Texture.Builder().width(src.width).height(src.height).levels(1)
             .sampler(Texture.Sampler.SAMPLER_2D).format(Texture.InternalFormat.SRGB8_A8).build(e)
         com.google.android.filament.android.TextureHelper.setBitmap(e, tex, 0, src)
@@ -111,7 +117,7 @@ object Model3D {
 
     private fun uploadDyn(material: String, bmp: Bitmap): Texture? {
         val e = engine ?: return null
-        val src = if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false)
+        val src = upright(bmp)
         var tex = dynTex[material]
         if (tex == null || tex.getWidth(0) != src.width || tex.getHeight(0) != src.height) {
             tex?.let { e.destroyTexture(it) }

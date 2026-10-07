@@ -174,6 +174,7 @@ class Exporter(
             ).build()
         val audio = mutableListOf<AudioProcessor>()
         if (a.volume != 1f) audio.add(volumeProcessor(a.volume))
+        if (a.fadeInMs > 0 || a.fadeOutMs > 0) audio.add(so.ijarjar.app.media.FadeProcessor(a.fadeInMs, a.fadeOutMs, len))
         if (a.voice.pitch != 1f) audio.add(androidx.media3.common.audio.SonicAudioProcessor().apply { setPitch(a.voice.pitch) })
         if (a.denoise > 0f || a.enhanceVoice || a.voice.mode != 0 || a.sfx.on) { val d = a.denoise; val e = a.enhanceVoice; val v = a.voice; val r = a.sfx; audio.add(AudioFx({ Pair(d, e) }, { v }, { r })) }
         list.add(EditedMediaItem.Builder(item).setRemoveVideo(true).setEffects(Effects(audio, emptyList())).build())
