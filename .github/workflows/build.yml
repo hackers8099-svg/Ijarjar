@@ -29,6 +29,18 @@ jobs:
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle :app:assembleRelease --console=plain 2>&1 | tee build.log
 
+      - name: Check 3D phone models
+        continue-on-error: true
+        run: |
+          gradle :app:testReleaseUnitTest --tests '*PhoneGlbTest*' --console=plain -q
+          cd app/build/phones && npm i -s gltf-validator >/dev/null 2>&1
+          node -e "
+            const v=require('gltf-validator'),fs=require('fs');
+            (async()=>{let out=[];for(const f of fs.readdirSync('.').filter(x=>x.endsWith('.glb'))){
+              const r=await v.validateBytes(new Uint8Array(fs.readFileSync(f)));
+              out.push(f+': errors='+r.issues.numErrors+' warnings='+r.issues.numWarnings+' '+r.issues.messages.filter(m=>m.severity<=1).slice(0,6).map(m=>m.code+'@'+m.pointer).join(' '));}
+              console.log('::warning title=GLB check::'+out.join(' | '));})();"
+
       - name: Show build errors
         if: failure()
         run: |

@@ -1,8 +1,6 @@
 package so.ijarjar.app.render
 
 import android.content.Context
-import android.graphics.Bitmap
-import android.graphics.Color
 import so.ijarjar.app.L
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -108,7 +106,7 @@ object PhoneGlb {
 
     private fun shrink(o: List<FloatArray>, d: Float) = o.map { floatArrayOf(it[0] - it[2] * d, it[1] - it[3] * d, it[2], it[3]) }
 
-    private fun build(style: Style): ByteArray {
+    fun build(style: Style): ByteArray {
         // materials: 0 Body, 1 Frame, 2 Glass, 3 Screen, 4 Island, 5 Lens, 6 LensRing, 7 Flash
         val prims = Array(8) { Prim(it) }
         val w = 0.74f; val h = 1.56f; val t = 0.082f
@@ -185,12 +183,9 @@ object PhoneGlb {
 
     // ------------------------------------------------------------------ glTF binary writer
 
-    private fun placeholderPng(): ByteArray {
-        val b = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888)
-        b.eraseColor(Color.rgb(20, 22, 30))
-        val out = ByteArrayOutputStream(); b.compress(Bitmap.CompressFormat.PNG, 100, out)
-        return out.toByteArray()
-    }
+    /** 4×4 dark PNG shown until a picture is put on the screen. */
+    private fun placeholderPng(): ByteArray = java.util.Base64.getDecoder()
+        .decode("iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGMQEZODIwbiOAB0lASBlgScggAAAABJRU5ErkJggg==")
 
     private fun write(prims: List<Prim>): ByteArray {
         val bin = ByteArrayOutputStream()
