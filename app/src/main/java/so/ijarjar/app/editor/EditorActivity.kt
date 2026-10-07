@@ -605,6 +605,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.kind == LayerKind.SHAPE) t(R.drawable.ic_pencil, tr("Qaabka", "Style")) { showShapeEditor(l) }
                     if (l.kind == LayerKind.DRAW) t(R.drawable.ic_brush, tr("Sawir", "Draw")) { showDraw(l) }
                     if (l.isLottie) t(R.drawable.ic_text, tr("Qoraalka", "Text")) { showLottieText(l) }
+                    if (l.linkGroup != null && project.linkedWith(l).size > 1) t(R.drawable.ic_preset, tr("Wax ka beddel template", "Edit template")) { showTemplateEditor(l) }
                     if (l.kind == LayerKind.VIDEO) {
                         t(R.drawable.ic_volume, tr("Cod", "Volume"), l.volume != 1f) { showLayerVolume(l) }
                         t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractLayerAudio(l) }
@@ -1235,7 +1236,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     setSelection(TimelineView.Sel.LayerSel(layers.first { it.kind == LayerKind.TEXT }.id))
                     commit()
                     previewAnim(layers.first(), true)
-                    toast(tr("Layer-adu waa isku xiran yihiin — qoraalka taabo si aad u beddesho", "The layers are linked — tap the text to edit it"))
+                    showTemplateEditor(layers.first { it.kind == LayerKind.TEXT })
                 }
             }
         })
@@ -1532,6 +1533,30 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 showTextEditor(l)
             }
         }
+    }
+
+    /** Every part of a title template in one place: its texts and the colours of its shapes. */
+    private fun showTemplateEditor(l: Layer) {
+        val group = project.layers.filter { it.linkGroup != null && it.linkGroup == l.linkGroup }
+        val (d, root) = Ui.sheet(this, tr("Template", "Template")) { commit() }
+        val texts = group.filter { it.kind == LayerKind.TEXT }
+        val shapes = group.filter { it.kind == LayerKind.SHAPE }
+        for ((i, t) in texts.withIndex()) {
+            root.addView(Ui.label(this, tr("Qoraal ${i + 1}", "Text ${i + 1}")))
+            root.addView(editText(t.text, tr("Qor halkan…", "Type here…")) { t.text = it; live() })
+            root.addView(Ui.colorRow(this, t.textColor, false) { t.textColor = it; live() })
+        }
+        for ((i, sh) in shapes.withIndex()) {
+            root.addView(Ui.label(this, tr("Midabka qaabka ${i + 1} (${sh.shape.label})", "Shape ${i + 1} colour (${sh.shape.label})")))
+            root.addView(Ui.colorRow(this, sh.textColor, false) { sh.textColor = it; sh.textColor2 = 0; live() })
+        }
+        if (shapes.isNotEmpty()) {
+            root.addView(Ui.label(this, tr("Hal midab dhammaan qaababka", "One colour for all shapes")))
+            root.addView(Ui.colorRow(this, shapes.first().textColor, false) { c -> for (sh in shapes) { sh.textColor = c; sh.textColor2 = 0 }; live() })
+        }
+        root.addView(Ui.label(this, tr("Wax kale (font, animation, keyframe): layer-ka gaarka ah taabo, ama Layer-ada ka dooro.",
+            "Anything else (font, animation, keyframes): tap that layer, or pick it in Layers.")))
+        d.show()
     }
 
     private fun showTextEditor(l: Layer) {
