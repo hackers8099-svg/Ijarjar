@@ -53,7 +53,7 @@ class TimelineView(context: Context) : View(context) {
     var listener: Listener? = null
 
     private var pxPerMs = dp(60f) / 1000f // 60dp per second
-    private var scrollY = 0f
+    private var vScroll = 0f
 
     private val rulerH = dp(22f)
     private val clipH = dp(56f)
@@ -77,7 +77,7 @@ class TimelineView(context: Context) : View(context) {
     private fun xOf(t: Long) = width / 2f + (t - timeMs) * pxPerMs
     private fun tOf(x: Float) = timeMs + ((x - width / 2f) / pxPerMs).toLong()
 
-    private fun clipTop() = rulerH + gap - scrollY
+    private fun clipTop() = rulerH + gap - vScroll
     private fun musicTop() = clipTop() + clipH + gap
     private fun layersTop() = musicTop() + musicH + gap
     private fun layerTop(i: Int) = layersTop() + i * (layerH + gap * 0.6f)
@@ -324,7 +324,7 @@ class TimelineView(context: Context) : View(context) {
                         listener?.onScrub(timeMs)
                     }
                     Drag.VSCROLL -> {
-                        scrollY = (scrollY - dy).coerceIn(0f, max(0f, contentHeight() - height))
+                        vScroll = (vScroll - dy).coerceIn(0f, max(0f, contentHeight() - height))
                         invalidate()
                     }
                     else -> { applyEdit(p, e.x - downX); listener?.onTimelineEditing(); invalidate() }
@@ -447,8 +447,8 @@ class TimelineView(context: Context) : View(context) {
 
     /** Make sure a layer row is visible (after adding a layer). */
     fun revealLayer(index: Int) {
-        val top = layerTop(index) + scrollY
-        if (top + layerH > scrollY + height) scrollY = (top + layerH - height + gap).coerceAtLeast(0f)
+        val top = layerTop(index) + vScroll
+        if (top + layerH > vScroll + height) vScroll = (top + layerH - height + gap).coerceAtLeast(0f)
         invalidate()
     }
 

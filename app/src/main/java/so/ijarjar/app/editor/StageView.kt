@@ -83,7 +83,10 @@ class StageView(context: Context) : FrameLayout(context) {
         val vr = videoW.toFloat() / videoH
         val sr = sw.toFloat() / sh
         val lp = mainTexture.layoutParams as LayoutParams
-        if (vr > sr) { lp.width = sw; lp.height = (sw / vr).toInt() } else { lp.height = sh; lp.width = (sh * vr).toInt() }
+        val nw: Int; val nh: Int
+        if (vr > sr) { nw = sw; nh = (sw / vr).toInt() } else { nh = sh; nw = (sh * vr).toInt() }
+        if (lp.width == nw && lp.height == nh && lp.gravity == android.view.Gravity.CENTER) return
+        lp.width = nw; lp.height = nh
         lp.gravity = android.view.Gravity.CENTER
         mainTexture.layoutParams = lp
     }

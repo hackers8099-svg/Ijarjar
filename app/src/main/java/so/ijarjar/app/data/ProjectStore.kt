@@ -43,9 +43,7 @@ object ProjectStore {
     fun fromJson(s: String): Project {
         val p = gson.fromJson(s, Project::class.java)
         // Gson can leave nulls for missing fields; repair them.
-        @Suppress("SENSELESS_COMPARISON")
         if (p.clips == null) p.clips = mutableListOf()
-        @Suppress("SENSELESS_COMPARISON")
         if (p.layers == null) p.layers = mutableListOf()
         return p
     }
