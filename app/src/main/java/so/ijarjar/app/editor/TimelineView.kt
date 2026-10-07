@@ -62,7 +62,6 @@ class TimelineView(context: Context) : View(context) {
     /** "Select" mode: ids of clips, audio and layers that are picked. */
     var multi: Set<String> = emptySet()
         set(v) { field = v; invalidate() }
-        set(v) { field = v; invalidate() }
     var listener: Listener? = null
 
     private var pxPerMs = dp(60f) / 1000f
