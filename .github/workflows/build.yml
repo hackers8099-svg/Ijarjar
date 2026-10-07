@@ -31,6 +31,7 @@ jobs:
 
       - name: Check 3D phone models
         continue-on-error: true
+        timeout-minutes: 4
         run: |
           gradle :app:testReleaseUnitTest --tests '*PhoneGlbTest*' --console=plain -q
           cd app/build/phones && npm i -s gltf-validator >/dev/null 2>&1
@@ -43,9 +44,10 @@ jobs:
 
       - name: Check transparent MOV writer
         continue-on-error: true
+        timeout-minutes: 4
         run: |
           gradle :app:testReleaseUnitTest --tests '*AlphaMovTest*' --console=plain > alphatest.log 2>&1 || { msg=$(grep -E "e: |error|FAILED|Exception|What went wrong|Caused" alphatest.log | head -15 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g'); echo "::warning title=Alpha test failed::$msg"; exit 1; }
-          which ffprobe || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null)
+          which ffprobe || timeout 150 sudo apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null || true
           info=$(ffprobe -v error -show_entries stream=codec_name,pix_fmt,width,height,nb_frames -of compact app/build/alpha/test.mov 2>&1)
           dec=$(ffmpeg -v error -i app/build/alpha/test.mov -f null - 2>&1 | head -3)
           echo "::warning title=Alpha MOV check::$info decode-errors=[$dec]"
@@ -66,6 +68,7 @@ jobs:
 
       - name: Verify APK can be installed
         continue-on-error: true
+        timeout-minutes: 3
         run: |
           BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
           sig=$($BT/apksigner verify --verbose --min-sdk-version 26 out/ijarjar.apk 2>&1 | grep -E "Verifie|ERROR|WARNING|DOES NOT" | tr '\n' ' ')
