@@ -394,8 +394,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         if (panel.snapshot == null) panel.snapshot = ProjectStore.toJson(project)
         // a slim time bar in every video panel: move the playhead without closing the panel
         if (!photo && project.durationMs > 0 && panel.view.findViewWithTag<View>("mini") == null) {
-            val mt = MiniTimeline(this, { project.durationMs }, { selectedLayer() }, { timeMs }) { t -> onKeyframeTap(t) }.apply { tag = "mini"; onKeyMoved = { live() } }
-            panel.view.addView(mt, 2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6f); rightMargin = dp(6f) })
+            val mt = MiniTimeline(this, { project.durationMs }, { selectedLayer() }, { timeMs }) { t -> onKeyframeTap(t) }.apply { onKeyMoved = { live() } }
+            // play / pause right inside the panel
+            val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; tag = "mini" }
+            val pb = Ui.iconButton(this, if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play, 24f) { togglePlay() }
+            panelPlay = pb
+            bar.addView(pb)
+            bar.addView(mt, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            panel.view.addView(bar, 2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(2f); rightMargin = dp(6f) })
             miniTimeline = mt
         }
         this.panel = panel
@@ -433,8 +439,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         stage.editCrop = null
     }
 
+    private var panelPlay: ImageView? = null
+
     private fun updatePlayButton() {
         playBtn.setImageResource(if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
+        panelPlay?.setImageResource(if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
     }
 
     private fun updateKeyButton() {
@@ -2520,7 +2529,23 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     small(R.drawable.ic_filter) {
                         pickColor(this, l.parts[m]?.color?.takeIf { it != 0 } ?: 0xFF8A8F98.toInt()) { c -> l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }.color = c; live() }
                     }
-                    small(R.drawable.ic_reset) { l.parts[m]?.let { it.tex = null; it.video = false; it.color = 0 }; live() }
+                    small(R.drawable.ic_reset) { l.parts[m]?.let { it.tex = null; it.video = false; it.color = 0; it.hidden = false }; live() }
+                    // hide / show the part
+                    val eye = Ui.iconButton(this, R.drawable.ic_eye, 18f, if (part?.hidden == true) Ui.TEXT2 else Ui.ACCENT) {}
+                    eye.setOnClickListener {
+                        val pp = l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }
+                        pp.hidden = !pp.hidden
+                        eye.imageTintList = ColorStateList.valueOf(if (pp.hidden) Ui.TEXT2 else Ui.ACCENT)
+                        row.alpha = if (pp.hidden) 0.45f else 1f
+                        live()
+                    }
+                    btns.addView(eye)
+                    // delete = hide for good (Reset brings it back)
+                    small(R.drawable.ic_delete) {
+                        l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }.hidden = true
+                        list.removeView(row); live(); toast(tr("Qaybta waa la tirtiray (↺ Reset ayaa soo celin kara)", "Part removed"))
+                    }
+                    if (part?.hidden == true) row.alpha = 0.45f
                     col.addView(btns)
                     row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
                     list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) })

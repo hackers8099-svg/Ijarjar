@@ -796,11 +796,12 @@ object LayerRenderer {
         if (l.modelTexture != null || l.modelColor != 0) looks.add(Model3D.Look(l.modelMaterial ?: "", l.modelTexture, color = l.modelColor))
         var liveKey = ""
         for ((m, p) in l.parts) {
+            if (p.hidden) { looks.add(Model3D.Look(m, hidden = true)); continue }
             if (p.video) {
                 if (content != null) { val k = "${(t - l.startMs) / 33}"; looks.add(Model3D.Look(m, bitmap = content, bitmapKey = k, color = p.color)); liveKey += "$m@$k" }
             } else if (p.tex != null || p.color != 0) looks.add(Model3D.Look(m, p.tex, color = p.color))
         }
-        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}" } + "|$liveKey"
+        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}|${it.hidden}" } + "|$liveKey"
         val cached = modelFrames[l.id]
         val bmp = if (cached != null && cached.key == key) cached.bmp else {
             val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, looks) ?: cached?.bmp ?: return

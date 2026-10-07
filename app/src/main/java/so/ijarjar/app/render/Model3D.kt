@@ -104,7 +104,7 @@ object Model3D {
     }
 
     /** What a part (material) of the model shows: a picture file, a live bitmap (video frame) and / or a colour. */
-    class Look(val material: String, val texUri: String? = null, val bitmap: Bitmap? = null, val bitmapKey: String? = null, val color: Int = 0)
+    class Look(val material: String, val texUri: String? = null, val bitmap: Bitmap? = null, val bitmapKey: String? = null, val color: Int = 0, val hidden: Boolean = false)
 
     private val dynTex = HashMap<String, Texture>()
     private val dynKeys = HashMap<String, String>()
@@ -159,13 +159,16 @@ object Model3D {
 
     /** Applies looks; returns false when the model must be reloaded first (a change was removed). */
     private fun applyLooks(context: Context, looks: List<Look>, highlight: String?): Boolean {
-        val mats = looks.map { "${it.material}|${it.texUri}|${it.color}|${it.bitmap != null}" }.toSet()
+        val mats = looks.map { "${it.material}|${it.texUri}|${it.color}|${it.bitmap != null}|${it.hidden}" }.toSet()
         val staticKey = mats.joinToString(";") + "|hl=$highlight"
         if (staticKey != appliedLook) {
             // something was taken away → start from the original materials
             if (!mats.containsAll(appliedMats) || (appliedHighlight != null && highlight == null)) return false
             appliedLook = staticKey; appliedMats = mats; appliedHighlight = highlight
             dynKeys.clear()
+            // hidden parts: draw nothing for their pieces (restored by reloading when shown again)
+            val hide = looks.filter { it.hidden }.map { it.material }.toSet()
+            if (hide.isNotEmpty()) hideParts(hide)
             for ((_, mi) in materialInstances()) {
                 val name = mi.name ?: ""
                 if (highlight != null) {
@@ -193,6 +196,20 @@ object Model3D {
             }
         }
         return true
+    }
+
+    private fun hideParts(names: Set<String>) {
+        val e = engine ?: return
+        val a = asset ?: return
+        val rm = e.renderableManager
+        for (ent in a.entities) {
+            if (!rm.hasComponent(ent)) continue
+            val inst = rm.getInstance(ent)
+            for (p in 0 until rm.getPrimitiveCount(inst)) {
+                if (rm.getMaterialInstanceAt(inst, p).name in names)
+                    runCatching { rm.setGeometryAt(inst, p, com.google.android.filament.RenderableManager.PrimitiveType.TRIANGLES, 0, 0) }
+            }
+        }
     }
 
     /** Small pictures of the model with one part lit up (to see which part is which). */
