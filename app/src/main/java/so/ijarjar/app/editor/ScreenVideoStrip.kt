@@ -76,7 +76,8 @@ class ScreenVideoStrip(context: Context, private val uri: String, val durationMs
         }
         if (last < durationMs) c.drawRect(xOf(last), top, xOf(durationMs), bot, paint)
         // pieces: outline, selected one with handles
-        for ((i, sg) in segs.withIndex()) {
+        for (i in segs.indices.sortedBy { if (it == selected) 1 else 0 }) {
+            val sg = segs[i]
             val r = RectF(xOf(sg.start), top, xOf(sg.end), bot)
             paint.style = Paint.Style.STROKE
             paint.strokeWidth = dp(if (i == selected) 3f else 1.5f)
@@ -124,12 +125,9 @@ class ScreenVideoStrip(context: Context, private val uri: String, val durationMs
             MotionEvent.ACTION_MOVE -> {
                 val t = msOf(e.x)
                 if (dragEdge != 0) {
+                    // pieces are independent (like CapCut clips): each edge can go anywhere in the video
                     val sg = segs[dragSeg]
-                    val sorted = segs.sortedBy { it.start }
-                    val k = sorted.indexOf(sg)
-                    val lo = sorted.getOrNull(k - 1)?.end ?: 0L
-                    val hi = sorted.getOrNull(k + 1)?.start ?: durationMs
-                    if (dragEdge < 0) sg.start = t.coerceIn(lo, sg.end - 100) else sg.end = t.coerceIn(sg.start + 100, hi)
+                    if (dragEdge < 0) sg.start = t.coerceIn(0L, sg.end - 100) else sg.end = t.coerceIn(sg.start + 100, durationMs)
                     cursorMs = if (dragEdge < 0) sg.start else sg.end - 1
                     onCursor?.invoke(cursorMs); onChanged?.invoke()
                 } else { cursorMs = t; onCursor?.invoke(cursorMs) }
