@@ -41,6 +41,15 @@ jobs:
               out.push(f+': errors='+r.issues.numErrors+' warnings='+r.issues.numWarnings+' '+r.issues.messages.filter(m=>m.severity<=1).slice(0,6).map(m=>m.code+'@'+m.pointer).join(' '));}
               console.log('::warning title=GLB check::'+out.join(' | '));})();"
 
+      - name: Check transparent MOV writer
+        continue-on-error: true
+        run: |
+          gradle :app:testReleaseUnitTest --tests '*AlphaMovTest*' --console=plain -q
+          which ffprobe || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null)
+          info=$(ffprobe -v error -show_entries stream=codec_name,pix_fmt,width,height,nb_frames -of compact app/build/alpha/test.mov 2>&1)
+          dec=$(ffmpeg -v error -i app/build/alpha/test.mov -f null - 2>&1 | head -3)
+          echo "::warning title=Alpha MOV check::$info decode-errors=[$dec]"
+
       - name: Show build errors
         if: failure()
         run: |

@@ -4083,8 +4083,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val (d, root) = Ui.sheet(this, tr("Dhoofi muuqaalka", "Export video"))
         var res = 1080
         var mov = false
+        var alpha = false
         root.addView(Ui.choiceRow(this, listOf("480p", "720p", "1080p", "2K", "4K"), 2) { k -> res = intArrayOf(480, 720, 1080, 1440, 2160)[k] })
-        root.addView(Ui.choiceRow(this, listOf("MP4", "MOV"), 0) { k -> mov = k == 1 })
+        val alphaNote = Ui.label(this, tr("MOV alpha: gadaal la'aan (transparent) — layer-yada keliya, track-ga weyn iyo background-ka lagama soo saaro. Codec PNG (After Effects, Premiere, CapCut PC ayaa furaya). Fayl weyn buu noqonayaa, waqti badanna wuu qaadanayaa.",
+            "MOV alpha: transparent — only the layers; the main track and background are left out. PNG codec (opens in After Effects, Premiere, CapCut PC). Big file, takes longer.")).apply { visibility = View.GONE }
+        root.addView(Ui.choiceRow(this, listOf("MP4", "MOV", tr("MOV alpha (transparent)", "MOV alpha (transparent)")), 0) { k ->
+            mov = k >= 1; alpha = k == 2; alphaNote.visibility = if (alpha) View.VISIBLE else View.GONE })
+        root.addView(alphaNote)
         root.addView(Ui.label(this, tr("Mudada: ", "Duration: ") + TimelineView.fmt(project.durationMs) +
             tr("   ·  2K/4K waxay u baahan yihiin telefoon awood leh", "   ·  2K/4K need a strong phone")))
         val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; visibility = View.GONE }
@@ -4099,7 +4104,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             status.text = tr("Waa la samaynayaa… fadlan sug", "Rendering… please wait")
             save()
             val mime = if (mov) "video/quicktime" else "video/mp4"
-            exporter = Exporter(this, ProjectStore.fromJson(ProjectStore.toJson(project)), res, mov = mov, callback = object : Exporter.Callback {
+            exporter = Exporter(this, ProjectStore.fromJson(ProjectStore.toJson(project)), res, mov = mov, alpha = alpha, callback = object : Exporter.Callback {
                 override fun onProgress(percent: Int) { bar.progress = percent; status.text = tr("Waa la samaynayaa… ", "Rendering… ") + "$percent%" }
                 override fun onDone(uri: Uri?, file: File) {
                     bar.progress = 100

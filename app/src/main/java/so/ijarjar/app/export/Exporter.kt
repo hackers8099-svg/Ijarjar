@@ -70,7 +70,9 @@ class Exporter(
     private val shortSide: Int,
     private val callback: Callback,
     /** true = QuickTime .mov file, false = .mp4 */
-    private val mov: Boolean = false
+    private val mov: Boolean = false,
+    /** true = transparent .mov (PNG codec, RGB + alpha): only the layers, no background */
+    private val alpha: Boolean = false
 ) {
     interface Callback {
         fun onProgress(percent: Int)
@@ -87,6 +89,7 @@ class Exporter(
         val (w, h) = project.outputSize(shortSide)
         project.outputSize(1080).let { so.ijarjar.app.render.ExprEngine.compW = it.first.toDouble(); so.ijarjar.app.render.ExprEngine.compH = it.second.toDouble() }
         output.delete()
+        if (alpha) { startAlpha(w, h); return }
 
         val items = project.clips.mapIndexed { i, c -> buildItem(c, i, w, h) }
         val sequences = mutableListOf(EditedMediaItemSequence(items))
@@ -133,6 +136,7 @@ class Exporter(
     }
 
     fun cancel() {
+        cancelled = true
         handler.removeCallbacksAndMessages(null)
         transformer?.cancel()
         frameSource.release()
@@ -300,6 +304,79 @@ class Exporter(
         }
     }
 
+    /** Anything that moves needs a new picture every frame. */
+    private fun isAnimated(active: List<Layer>) = active.any {
+        !(it.kind == LayerKind.TEXT || it.kind == LayerKind.STICKER || it.kind == LayerKind.IMAGE || it.kind == LayerKind.SHAPE || it.kind == LayerKind.DRAW) ||
+            it.keyframes.isNotEmpty() || it.motionBlur || it.exprCode.isNotEmpty() ||
+            it.animIn != so.ijarjar.app.model.LayerAnim.NONE || it.animOut != so.ijarjar.app.model.LayerAnim.NONE ||
+            it.animLoop != so.ijarjar.app.model.LoopAnim.NONE || it.expr != so.ijarjar.app.model.Expression.NONE ||
+            it.textIn != so.ijarjar.app.model.TextAnim.NONE || it.textOut != so.ijarjar.app.model.TextAnim.NONE ||
+            it.textLoop != so.ijarjar.app.model.TextLoop.NONE || it.isCaption
+    }
+
+    // ------------------------------------------------------------------ transparent MOV
+
+    @Volatile private var cancelled = false
+
+    /**
+     * Transparent video: every frame of the layers (no main track, no background) is drawn with the
+     * preview's renderer, saved as PNG and put in a QuickTime file. PNG work runs on 3 threads.
+     */
+    private fun startAlpha(w: Int, h: Int) {
+        val out = File(context.cacheDir, "ijarjar_alpha.mov")
+        val fps = 30
+        Thread {
+            val writer = so.ijarjar.app.media.AlphaMovWriter(out, w, h, fps)
+            val pool = java.util.concurrent.Executors.newFixedThreadPool(3)
+            try {
+                val n = maxOf(1, (project.durationMs * fps / 1000).toInt())
+                val pending = ArrayDeque<java.util.concurrent.Future<ByteArray>?>()   // null = same as the frame before
+                fun flushOne() {
+                    val f = pending.removeFirst()
+                    if (f == null) writer.repeatFrame() else writer.addFrame(f.get())
+                }
+                var lastKey: String? = null
+                var lastPct = -1
+                for (i in 0 until n) {
+                    if (cancelled) break
+                    val t = i * 1000L / fps
+                    val active = project.layers.filter { it.isActive(t) }
+                    val key = active.joinToString(",") { it.id }
+                    if (key == lastKey && !isAnimated(active)) pending.add(null)
+                    else {
+                        lastKey = key
+                        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bmp)
+                        for (l in LayerRenderer.drawOrder(active)) {
+                            val content = if (l.videoSource() != null) frameSource.videoFrame(l, t, w) else null
+                            if (l.kind == LayerKind.VIDEO && content == null) continue
+                            LayerRenderer.draw(context, canvas, l, t, w, h, content, 1920)
+                        }
+                        pending.add(pool.submit<ByteArray> {
+                            val bos = java.io.ByteArrayOutputStream(1 shl 20)
+                            bmp.compress(Bitmap.CompressFormat.PNG, 100, bos); bmp.recycle()
+                            bos.toByteArray()
+                        })
+                    }
+                    while (pending.size > 6 || (pending.isNotEmpty() && pending.first()?.isDone != false)) flushOne()
+                    val pct = (i * 99 / n)
+                    if (pct != lastPct) { lastPct = pct; handler.post { callback.onProgress(pct) } }
+                }
+                while (pending.isNotEmpty()) flushOne()
+                if (cancelled) { writer.abort(); return@Thread }
+                writer.close()
+                val uri = saveMedia(context, out, "IjarJar_alpha_" + System.currentTimeMillis() + ".mov", "video/quicktime", true)
+                handler.post { callback.onDone(uri, out) }
+            } catch (e: Throwable) {
+                writer.abort()
+                handler.post { callback.onError(e.message ?: e.javaClass.simpleName) }
+            } finally {
+                pool.shutdownNow()
+                frameSource.release()
+            }
+        }.apply { name = "ijarjar-alpha-export" }.start()
+    }
+
     /** Draws every layer that is visible at the frame time into one full-frame bitmap. */
     private inner class CanvasOverlay(private val clipStartMs: Long, private val w: Int, private val h: Int) : BitmapOverlay() {
         private val clock = LocalClock()
@@ -311,16 +388,9 @@ class Exporter(
             val bmp = frameSource.canvasBitmap(w, h)
             val active = project.layers.filter { it.isActive(t) }
             // anything that moves needs a redraw every frame
-            val animated = active.any {
-                !(it.kind == LayerKind.TEXT || it.kind == LayerKind.STICKER || it.kind == LayerKind.IMAGE || it.kind == LayerKind.SHAPE || it.kind == LayerKind.DRAW) ||
-                    it.keyframes.isNotEmpty() || it.motionBlur ||
-                    it.animIn != so.ijarjar.app.model.LayerAnim.NONE || it.animOut != so.ijarjar.app.model.LayerAnim.NONE ||
-                    it.animLoop != so.ijarjar.app.model.LoopAnim.NONE || it.expr != so.ijarjar.app.model.Expression.NONE ||
-                    it.textIn != so.ijarjar.app.model.TextAnim.NONE || it.textOut != so.ijarjar.app.model.TextAnim.NONE ||
-                    it.textLoop != so.ijarjar.app.model.TextLoop.NONE
-            }
+            val animated = isAnimated(active)
             val key = active.joinToString(",") { it.id }
-            if (!animated && key == lastKey && frameSource.lastOwner === this) return bmp
+            if (!animated && key == lastKey && frameSource.lastOwner === this) return frameSource.straight(w, h)
             lastKey = key
             frameSource.lastOwner = this
             bmp.eraseColor(Color.TRANSPARENT)
@@ -330,7 +400,9 @@ class Exporter(
                 if (l.kind == LayerKind.VIDEO && content == null) continue
                 LayerRenderer.draw(context, canvas, l, t, w, h, content, 1920)
             }
-            return bmp
+            // The overlay shader mixes with the alpha itself, so it needs plain (not premultiplied) colours —
+            // otherwise see-through parts (highlight boxes, shadows, soft edges) come out grey / darker than the preview.
+            return frameSource.toStraight(bmp)
         }
 
         override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings = settings
@@ -343,6 +415,25 @@ class Exporter(
         private val retrievers = HashMap<String, MediaMetadataRetriever>()
         private val lastFrames = HashMap<String, Pair<Long, Bitmap>>()
         private val durations = HashMap<String, Long>()
+
+        private var straightBmp: Bitmap? = null
+        private var px: IntArray? = null
+
+        fun straight(w: Int, h: Int): Bitmap = straightBmp?.takeIf { it.width == w && it.height == h } ?: canvasBitmap(w, h)
+
+        /** Copy of [src] with un-premultiplied colours (what the GL overlay blend expects). */
+        fun toStraight(src: Bitmap): Bitmap {
+            val w = src.width; val h = src.height
+            var out = straightBmp
+            if (out == null || out.width != w || out.height != h) {
+                out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPremultiplied(false) }
+                straightBmp = out
+            }
+            val a = px?.takeIf { it.size == w * h } ?: IntArray(w * h).also { px = it }
+            src.getPixels(a, 0, w, 0, 0, w, h)      // getPixels gives un-premultiplied colours
+            out!!.setPixels(a, 0, w, 0, 0, w, h)    // stored as-is: this bitmap is not premultiplied
+            return out
+        }
 
         fun canvasBitmap(w: Int, h: Int): Bitmap {
             val b = canvasBmp
