@@ -206,8 +206,8 @@ object Model3D {
             if (!rm.hasComponent(ent)) continue
             val inst = rm.getInstance(ent)
             for (p in 0 until rm.getPrimitiveCount(inst)) {
-                if (rm.getMaterialInstanceAt(inst, p).name in names)
-                    runCatching { rm.setGeometryAt(inst, p, com.google.android.filament.RenderableManager.PrimitiveType.TRIANGLES, 0, 0) }
+                val mi = rm.getMaterialInstanceAt(inst, p)
+                if (mi.name in names) runCatching { mi.setColorWrite(false); mi.setDepthWrite(false) }
             }
         }
     }
