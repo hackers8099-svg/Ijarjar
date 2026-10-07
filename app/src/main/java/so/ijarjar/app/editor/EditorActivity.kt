@@ -667,6 +667,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     group("3D")
                     t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
                     if (l.kind == LayerKind.MODEL3D) {
+                        t(R.drawable.ic_image_add, tr("Waxa ku jira", "Contents"), l.modelImages.isNotEmpty()) { showGlbContents(l) }
                         t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
                         if (l.phoneStyle != null) {
                             t(R.drawable.ic_image_add, tr("Beddel shaashadda", "Replace screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
@@ -2478,6 +2479,81 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 project.layers[i] = l
                 setSelection(TimelineView.Sel.LayerSel(l.id)); commit()
                 toast(tr("Waxaa la geliyay taleefan 3D ah ✓", "Now inside a 3D phone ✓"))
+            }
+        }
+    }
+
+    private var glbImageTarget: Pair<Layer, Int>? = null
+    private val pickGlbImage = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val (l, idx) = glbImageTarget ?: return@registerForActivityResult
+        if (uri == null) return@registerForActivityResult
+        keep(uri)
+        l.modelImages[idx.toString()] = uri.toString()
+        rebuildModel(l) { showGlbContents(l) }
+    }
+
+    /** Writes the model again with the swapped pictures (from the original file each time). */
+    private fun rebuildModel(l: Layer, after: () -> Unit = {}) {
+        val src = l.modelSource ?: l.uri ?: return
+        if (l.modelSource == null) l.modelSource = src
+        toast(tr("Moodelka waa la cusbooneysiinayaa…", "Updating the model…"))
+        io.execute {
+            val reps = l.modelImages.mapNotNull { (k, v) -> k.toIntOrNull()?.let { it to v } }.toMap()
+            val newUri = if (reps.isEmpty()) src else {
+                val f = File(File(filesDir, "models").apply { mkdirs() }, "${l.id}_${reps.hashCode().toUInt()}.glb")
+                if (so.ijarjar.app.media.GlbEdit.build(this, src, reps, f)) Uri.fromFile(f).toString() else null
+            }
+            main.post {
+                if (newUri == null) { toast(tr("Lama beddeli karo sawirkan", "Couldn't swap that picture")); return@post }
+                l.uri = newUri; commit(); after()
+                toast(tr("Sawirka moodelka waa la beddelay ✓", "Model picture swapped ✓"))
+            }
+        }
+    }
+
+    /** Everything inside a .glb: its pictures (swap any of them), parts and details. */
+    private fun showGlbContents(l: Layer) {
+        val src = l.modelSource ?: l.uri ?: return
+        val (d, root) = Ui.sheet(this, tr("Waxa ku jira GLB", "Inside the GLB")) { commit() }
+        val status = Ui.label(this, tr("Waa la akhrinayaa…", "Reading…"))
+        root.addView(status)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(box)
+        d.show()
+        io.execute {
+            val imgs = so.ijarjar.app.media.GlbEdit.images(this, src)
+            val info = so.ijarjar.app.media.GlbEdit.info(this, src)
+            main.post {
+                status.text = tr("Sawirada ku jira moodelka (${imgs.size}). Midka shaashadda (wallpaper) raadi oo \"Beddel\" riix — sawirkaaga ayaa meeshiisa galaya.",
+                    "Pictures inside the model (${imgs.size}). Find the screen (wallpaper) one and tap \"Replace\" — your picture takes its place.")
+                for (im in imgs) {
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                        background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()); setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+                    }
+                    val iv = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; background = Ui.roundBg(0xFF15151A.toInt(), dp(8f).toFloat()); setImageBitmap(im.thumb) }
+                    row.addView(iv, LinearLayout.LayoutParams(dp(84f), dp(84f)))
+                    val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10f), 0, 0, 0) }
+                    val swapped = l.modelImages.containsKey(im.index.toString())
+                    col.addView(Ui.text(this, im.name + if (swapped) "  ✓" else "", 14f, Ui.TEXT, true))
+                    col.addView(Ui.text(this, "${im.width}×${im.height} · ${im.bytes / 1024} KB", 11f, Ui.TEXT2))
+                    if (im.usedBy.isNotEmpty()) col.addView(Ui.text(this, im.usedBy.take(3).joinToString(", "), 11f, Ui.TEXT2).apply { maxLines = 2 })
+                    val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                    btns.addView(Ui.button(this, tr("Beddel", "Replace"), false) { glbImageTarget = l to im.index; d.dismiss(); pickGlbImage.launch(imagesOnly()) })
+                    if (swapped) btns.addView(Ui.button(this, tr("Asal", "Original"), false) { l.modelImages.remove(im.index.toString()); d.dismiss(); rebuildModel(l) { showGlbContents(l) } },
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
+                    col.addView(btns)
+                    row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    box.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) })
+                }
+                if (info != null) {
+                    box.addView(Ui.label(this, tr("Faahfaahin", "Details")))
+                    box.addView(Ui.text(this, tr("Mesh: ${info.meshes.size} · Qaybo (materials): ${info.materials.size} · Sawirro: ${info.images} · Saddex-geesle: ${info.triangles} · Animation: ${info.animations}",
+                        "Meshes: ${info.meshes.size} · Materials: ${info.materials.size} · Pictures: ${info.images} · Triangles: ${info.triangles} · Animations: ${info.animations}"), 12f, Ui.TEXT2))
+                    box.addView(Ui.text(this, "Mesh: " + info.meshes.take(40).joinToString(", "), 11f, Ui.TEXT2).apply { setPadding(0, dp(6f), 0, 0) })
+                    box.addView(Ui.text(this, "Materials: " + info.materials.take(60).joinToString(", "), 11f, Ui.TEXT2).apply { setPadding(0, dp(6f), 0, 0) })
+                }
+                buttonRow(box, tr("Qaybaha (midab, qari, tirtir)", "Parts (colour, hide, delete)") to { d.dismiss(); showModelParts(l) })
             }
         }
     }

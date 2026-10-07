@@ -504,7 +504,9 @@ class Layer(
     var modelMaterial: String? = null,    // which material gets it (null = all)
     var modelColor: Int = 0,
     var parts: MutableMap<String, ModelPart> = mutableMapOf(),   // per material of a 3D model
-    var phoneStyle: String? = null       // generated 3D phone (PhoneGlb.Style name)
+    var phoneStyle: String? = null,      // generated 3D phone (PhoneGlb.Style name)
+    var modelSource: String? = null,     // the original .glb before pictures inside it were swapped
+    var modelImages: MutableMap<String, String> = mutableMapOf()   // image index inside the .glb → new picture
 ) {
     /** Where this layer's moving picture comes from (overlay video, or a video on a 3D model). */
     fun videoSource(): String? = when (kind) {
