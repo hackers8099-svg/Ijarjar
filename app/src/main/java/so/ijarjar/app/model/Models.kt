@@ -422,6 +422,7 @@ class Layer(
     var textOut: TextAnim = TextAnim.NONE,
     var textLoop: TextLoop = TextLoop.NONE,
     var highlightColor: Int = 0xFFFFE600.toInt(),
+    var exprCode: MutableMap<String, String> = mutableMapOf(),   // AE-style expression code per property
     var hlRound: Float = 0.5f,          // word highlight box: 0 = square … 1 = pill
     var hlAnim: Int = 0,                // 0 pop, 1 slide from word to word, 2 fade, 3 grow from left, 4 none
     var hlTextColor: Int = 0,           // text colour on the highlighted word (0 = keep)
@@ -484,7 +485,10 @@ class Layer(
     var taOrder: Int = 0,         // 0 forward, 1 backward, 2 from centre, 3 random
     var taEase: Easing = Easing.EASE_OUT,
     // 3D model (.glb)
-    var modelSpin: Float = 0f
+    var modelSpin: Float = 0f,
+    var modelTexture: String? = null,     // picture put on the 3D model
+    var modelMaterial: String? = null,    // which material gets it (null = all)
+    var modelColor: Int = 0
 ) {
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     fun isActive(t: Long) = t >= startMs && t < endMs

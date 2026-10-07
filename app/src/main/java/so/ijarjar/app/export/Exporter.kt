@@ -85,6 +85,7 @@ class Exporter(
 
     fun start() {
         val (w, h) = project.outputSize(shortSide)
+        project.outputSize(1080).let { so.ijarjar.app.render.ExprEngine.compW = it.first.toDouble(); so.ijarjar.app.render.ExprEngine.compH = it.second.toDouble() }
         output.delete()
 
         val items = project.clips.mapIndexed { i, c -> buildItem(c, i, w, h) }

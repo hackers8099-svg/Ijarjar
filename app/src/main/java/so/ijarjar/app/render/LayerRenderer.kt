@@ -142,9 +142,59 @@ object LayerRenderer {
 
     private fun poseOf(k: Keyframe) = Pose(k.cx, k.cy, k.scale, k.rotation, k.opacity, sx = k.sx, sy = k.sy, rx = k.rx, ry = k.ry, z = k.z)
 
+    // ------------------------------------------------------------------ expression code (AE style)
+
+    /** Property names that can have expression code. */
+    val EXPR_PROPS = listOf("position", "scale", "rotation", "opacity", "rotX", "rotY", "posZ")
+
+    fun propValue(p: Pose, k: String): DoubleArray {
+        val w = ExprEngine.compW; val h = ExprEngine.compH
+        return when (k) {
+            "position" -> doubleArrayOf(p.cx * w, p.cy * h)
+            "scale" -> doubleArrayOf(p.scale * p.sx * 100.0, p.scale * p.sy * 100.0)
+            "rotation" -> doubleArrayOf(p.rotation.toDouble())
+            "opacity" -> doubleArrayOf(p.opacity * 100.0)
+            "rotX" -> doubleArrayOf(p.rx.toDouble())
+            "rotY" -> doubleArrayOf(p.ry.toDouble())
+            else -> doubleArrayOf(p.z * 1000.0)
+        }
+    }
+
+    private fun setProp(p: Pose, k: String, r: DoubleArray) {
+        if (r.isEmpty()) return
+        val w = ExprEngine.compW; val h = ExprEngine.compH
+        when (k) {
+            "position" -> { p.cx = (r[0] / w).toFloat(); if (r.size > 1) p.cy = (r[1] / h).toFloat() }
+            "scale" -> {
+                val sc = if (abs(p.scale) < 1e-4f) 1f else p.scale
+                p.sx = (r[0] / 100.0 / sc).toFloat(); p.sy = (r.getOrElse(1) { r[0] } / 100.0 / sc).toFloat()
+            }
+            "rotation" -> p.rotation = r[0].toFloat()
+            "opacity" -> p.opacity = (r[0] / 100.0).toFloat().coerceIn(0f, 1f)
+            "rotX" -> p.rx = r[0].toFloat()
+            "rotY" -> p.ry = r[0].toFloat()
+            else -> p.z = (r[0] / 1000.0).toFloat()
+        }
+    }
+
+    /** Runs the layer's expression code on top of its keyframed values. */
+    fun applyCode(l: Layer, t: Long, p: Pose) {
+        if (l.exprCode.isEmpty()) return
+        val time = (t - l.startMs) / 1000.0
+        val keyTimes = l.keyframes.map { it.t / 1000.0 }.sorted()
+        for ((k, code) in l.exprCode) {
+            if (code.isBlank()) continue
+            val ctx = ExprEngine.Ctx(time, propValue(p, k), { s -> propValue(basePose(l, l.startMs + (s * 1000).toLong()), k) },
+                keyTimes, l.durationMs / 1000.0, ExprEngine.compW, ExprEngine.compH)
+            val r = ExprEngine.eval(code, ctx) ?: continue
+            setProp(p, k, r)
+        }
+    }
+
     /** Full pose: keyframes + in/out + loop animations. Used for drawing. */
     fun poseAt(l: Layer, t: Long): Pose {
         val p = basePose(l, t)
+        applyCode(l, t, p)
         val dur = l.durationMs
         val inMs = minOf(l.animInMs, dur / 2).coerceAtLeast(1)
         val outMs = minOf(l.animOutMs, dur / 2).coerceAtLeast(1)
@@ -685,12 +735,13 @@ object LayerRenderer {
     private fun drawModel(context: Context, canvas: Canvas, l: Layer, pose: Pose, t: Long, canvasW: Int, canvasH: Int,
                           cw: Float, ch: Float, alpha: Int, maxDim: Int) {
         val uri = l.uri ?: return
-        val size = (cw * pose.scale).toInt().coerceIn(64, minOf(maxDim, 1600))
+        // render a bit bigger than shown so edges stay smooth
+        val size = (cw * pose.scale * 1.4f).toInt().coerceIn(96, minOf((maxDim * 1.4f).toInt(), 1800))
         val spin = l.modelSpin * (t - l.startMs) / 1000f * 360f
-        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}"
+        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|${l.modelTexture}|${l.modelMaterial}|${l.modelColor}"
         val cached = modelFrames[l.id]
         val bmp = if (cached != null && cached.key == key) cached.bmp else {
-            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin) ?: cached?.bmp ?: return
+            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, l.modelTexture, l.modelMaterial, l.modelColor) ?: cached?.bmp ?: return
             modelFrames[l.id] = ModelFrame(key, b)
             b
         }
@@ -781,6 +832,10 @@ object LayerRenderer {
 
     // ------------------------------------------------------------------ keyframe helpers
 
+    /** How editing a keyframed layer works: 0 = new keyframe at the playhead (AE auto-key),
+     *  1 = change the nearest keyframe, 2 = move the whole animation. */
+    @Volatile var keyMode = 0
+
     fun writePose(l: Layer, t: Long, p: Pose) {
         if (l.keyframes.isEmpty()) {
             l.cx = p.cx; l.cy = p.cy; l.scale = p.scale; l.rotation = p.rotation; l.opacity = p.opacity
@@ -789,7 +844,21 @@ object LayerRenderer {
             return
         }
         val rel = (t - l.startMs).coerceIn(0, l.durationMs)
+        if (keyMode == 2) {
+            // move the whole animation: the change is added to every keyframe
+            val b = basePose(l, t)
+            val dS = if (abs(b.scale) < 1e-4f) 1f else p.scale / b.scale
+            val dSx = if (abs(b.sx) < 1e-4f) 1f else p.sx / b.sx
+            val dSy = if (abs(b.sy) < 1e-4f) 1f else p.sy / b.sy
+            for (k in l.keyframes) {
+                k.cx += p.cx - b.cx; k.cy += p.cy - b.cy; k.scale *= dS; k.rotation += p.rotation - b.rotation
+                k.opacity = (k.opacity + p.opacity - b.opacity).coerceIn(0f, 1f); k.sx *= dSx; k.sy *= dSy
+                k.rx += p.rx - b.rx; k.ry += p.ry - b.ry; k.z += p.z - b.z
+            }
+            return
+        }
         val k = l.keyframes.firstOrNull { abs(it.t - rel) < 60 }
+            ?: if (keyMode == 1) l.keyframes.minByOrNull { abs(it.t - rel) } else null
         if (k != null) { k.cx = p.cx; k.cy = p.cy; k.scale = p.scale; k.rotation = p.rotation; k.opacity = p.opacity; k.sx = p.sx; k.sy = p.sy; k.rx = p.rx; k.ry = p.ry; k.z = p.z }
         else {
             // new keyframes copy the curve of the keyframe before them

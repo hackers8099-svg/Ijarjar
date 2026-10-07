@@ -69,11 +69,12 @@ object Expressions {
         // stop when the next keyframe begins moving again
         val next = ks.firstOrNull { it.t > k.t }
         if (next != null && rel >= next.t) return
-        val a = LayerRenderer.basePose(l.also { }, l.startMs + k.t - 1)
-        val b = LayerRenderer.basePose(l, l.startMs + k.t - 31)
-        val vScale = (a.scale - b.scale) / 0.03f
-        val vx = (a.cx - b.cx) / 0.03f; val vy = (a.cy - b.cy) / 0.03f; val vr = (a.rotation - b.rotation) / 0.03f
-        val osc = amp * 0.05f * sin(freq * dt * tau) / exp(decay * dt)
+        // average speed of the move into this keyframe (works with eased keyframes too, like AE's inertia)
+        val prevK = ks[ks.indexOf(k) - 1]
+        val segS = ((k.t - prevK.t) / 1000f).coerceAtLeast(0.001f)
+        val vScale = (k.scale - prevK.scale) / segS
+        val vx = (k.cx - prevK.cx) / segS; val vy = (k.cy - prevK.cy) / segS; val vr = (k.rotation - prevK.rotation) / segS
+        val osc = amp * 0.08f * sin(freq * dt * tau) / exp(decay * dt)
         p.cx += vx * osc; p.cy += vy * osc; p.scale += vScale * osc; p.rotation += vr * osc
     }
 }

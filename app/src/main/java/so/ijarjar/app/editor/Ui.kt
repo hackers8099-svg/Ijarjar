@@ -311,7 +311,10 @@ class Panel(val context: Context, title: String) {
 
     /** Keyboard open: only the header and [top] stay, so the preview isn't squeezed. */
     fun onKeyboard(open: Boolean) {
-        if (top.childCount > 0) scroll.visibility = if (open) View.GONE else View.VISIBLE
+        // only when typing in the box at the top; a text box further down (e.g. expression code) keeps the panel
+        val typingOnTop = top.findFocus() != null
+        scroll.visibility = if (open && typingOnTop && top.childCount > 0) View.GONE else View.VISIBLE
+        if (open && !typingOnTop) scroll.post { scroll.findFocus()?.let { f -> val r = android.graphics.Rect(); f.getDrawingRect(r); scroll.offsetDescendantRectToMyCoords(f, r); scroll.smoothScrollTo(0, r.top - Ui.dp(context, 40f)) } }
     }
 
     /** Closes and keeps the changes (runs the dismiss action once). */

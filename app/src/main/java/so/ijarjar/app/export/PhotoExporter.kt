@@ -17,6 +17,7 @@ object PhotoExporter {
 
     fun render(context: Context, p: Project, shortSide: Int): Bitmap {
         val (w, h) = p.outputSize(shortSide)
+        p.outputSize(1080).let { so.ijarjar.app.render.ExprEngine.compW = it.first.toDouble(); so.ijarjar.app.render.ExprEngine.compH = it.second.toDouble() }
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         BackgroundRenderer.draw(context, canvas, p, w, h, maxOf(w, h))
