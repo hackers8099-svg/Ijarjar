@@ -805,11 +805,12 @@ object LayerRenderer {
                 if (content != null) { val k = "${(t - l.startMs) / 33}"; looks.add(Model3D.Look(m, bitmap = content, bitmapKey = k, color = p.color, flipV = p.flipV, flipH = p.flipH, aspect = asp)); liveKey += "$m@$k" }
             } else if (p.tex != null || p.color != 0) looks.add(Model3D.Look(m, p.tex, color = p.color, flipV = p.flipV, flipH = p.flipH, aspect = asp))
         }
-        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}|${it.hidden}|${it.flipV}|${it.flipH}" } + "|$liveKey"
+        val light = Model3D.Light(l.lightPower, l.lightAmbient, l.lightAz, l.lightEl, l.lightSize)
+        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|${l.lightPower},${l.lightAmbient},${l.lightAz},${l.lightEl},${l.lightSize}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}|${it.hidden}|${it.flipV}|${it.flipH}" } + "|$liveKey"
         // a few frames per layer are kept, so motion blur (earlier moments) doesn't re-render every time
         val cached = modelFrames["${l.id}|$key"] ?: modelFrames[l.id]
         val bmp = if (cached != null && cached.key == key) cached.bmp else {
-            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, looks) ?: cached?.bmp ?: return
+            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, looks, null, light) ?: cached?.bmp ?: return
             modelFrames[l.id] = ModelFrame(key, b)
             modelFrames["${l.id}|$key"] = ModelFrame(key, b)
             if (modelFrames.size > 40) modelFrames.keys.filter { it.contains('|') }.take(20).forEach { modelFrames.remove(it) }

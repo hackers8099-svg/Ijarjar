@@ -52,6 +52,25 @@ object Model3D {
     private var radius = 1f
     private var failed = false
     private var appliedLook = ""
+    private var sunEntity = 0
+
+    /** Light on the model: brightness, soft light from all sides, where the main light comes from, and its size. */
+    class Light(val power: Float = 1f, val ambient: Float = 1f, val azimuth: Float = -35f, val elevation: Float = 45f, val size: Float = 1f)
+
+    private fun applyLight(lt: Light) {
+        val e = engine ?: return
+        val lm = e.lightManager
+        val inst = lm.getInstance(sunEntity)
+        if (inst != 0) {
+            val az = Math.toRadians(lt.azimuth.toDouble()); val el = Math.toRadians(lt.elevation.toDouble())
+            // direction the light travels: from (az, el) towards the model
+            val dx = -(Math.cos(el) * Math.sin(az)).toFloat(); val dy = -Math.sin(el).toFloat(); val dz = -(Math.cos(el) * Math.cos(az)).toFloat()
+            lm.setDirection(inst, dx, dy, dz)
+            lm.setIntensity(inst, 90000f * lt.power.coerceAtLeast(0f))
+            runCatching { lm.setSunAngularRadius(inst, (0.5f + lt.size * 2f).coerceIn(0.25f, 20f)); lm.setSunHaloSize(inst, 10f) }
+        }
+        scene?.indirectLight?.intensity = 28000f * lt.ambient.coerceAtLeast(0f)
+    }
     private val textures = HashMap<String, Texture>()
     private var assetLen = -1L
     /** UV set used by each material's colour / glow picture in the file (so a new picture lines up the same way). */
@@ -328,7 +347,8 @@ object Model3D {
             val sh = floatArrayOf(0.9f, 0.9f, 0.95f)
             scene!!.indirectLight = IndirectLight.Builder().irradiance(1, sh).intensity(28000f).build(e)
             val sun = EntityManager.get().create()
-            LightManager.Builder(LightManager.Type.DIRECTIONAL)
+            sunEntity = sun
+            LightManager.Builder(LightManager.Type.SUN)
                 .color(1f, 0.97f, 0.92f).intensity(90000f).direction(-0.4f, -1f, -0.6f).castShadows(false)
                 .build(e, sun)
             scene!!.addEntity(sun)
@@ -377,8 +397,9 @@ object Model3D {
         return m
     }
 
-    private fun renderNow(context: Context, uri: String, w: Int, h: Int, rx: Float, ry: Float, looks: List<Look>, highlight: String?): Bitmap? {
+    private fun renderNow(context: Context, uri: String, w: Int, h: Int, rx: Float, ry: Float, looks: List<Look>, highlight: String?, light: Light): Bitmap? {
         ensure()
+        applyLight(light)
         val e = engine ?: return null
         if (!load(context, uri)) return null
         if (!applyLooks(context, looks, highlight)) {
@@ -415,7 +436,7 @@ object Model3D {
 
     /** Renders the model; safe to call from any thread (waits up to 2 s). */
     fun render(context: Context, uri: String, w: Int, h: Int, rx: Float, ry: Float,
-               looks: List<Look> = emptyList(), highlight: String? = null): Bitmap? {
+               looks: List<Look> = emptyList(), highlight: String? = null, light: Light = Light()): Bitmap? {
         val hd = synchronized(this) {
             if (handler == null) {
                 val t = HandlerThread("ijarjar-3d").also { it.start() }
@@ -426,7 +447,7 @@ object Model3D {
         var out: Bitmap? = null
         val latch = CountDownLatch(1)
         hd.post {
-            out = try { renderNow(context.applicationContext, uri, w.coerceIn(16, 2048), h.coerceIn(16, 2048), rx, ry, looks, highlight) } catch (t: Throwable) { null }
+            out = try { renderNow(context.applicationContext, uri, w.coerceIn(16, 2048), h.coerceIn(16, 2048), rx, ry, looks, highlight, light) } catch (t: Throwable) { null }
             latch.countDown()
         }
         latch.await(2, TimeUnit.SECONDS)

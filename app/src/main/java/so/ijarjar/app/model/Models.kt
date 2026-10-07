@@ -547,6 +547,12 @@ class Layer(
     var screenSegs: MutableList<ScreenSeg> = mutableListOf()
     var screenLoop: Boolean = true
     var screenSpeed: Float = 1f
+    /** 3D light: brightness, all-round light, direction (degrees) and size of the main light. */
+    var lightPower: Float = 1f
+    var lightAmbient: Float = 1f
+    var lightAz: Float = -35f
+    var lightEl: Float = 45f
+    var lightSize: Float = 1f
 
     /** Where in the screen video file we are at timeline time [t] ([dur] = length of the file). */
     fun screenTime(t: Long, dur: Long): Long {

@@ -704,6 +704,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
                         t(R.drawable.ic_rotate, tr("Jihee / toosi", "Orient"), l.rotX != 0f || l.rotY != 0f) { show3D(l) }
                         t(R.drawable.ic_trim, tr("Video-ga shaashadda", "Screen video"), l.screenSegs.size > 1 || l.screenSpeed != 1f) { showScreenVideo(l) }
+                        t(R.drawable.ic_enhance, tr("Iftiinka", "Light"), l.lightPower != 1f || l.lightAmbient != 1f || l.lightAz != -35f || l.lightEl != 45f || l.lightSize != 1f) { showLight(l) }
                         if (l.phoneStyle != null) {
                             t(R.drawable.ic_image_add, tr("Beddel shaashadda", "Replace screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
                             t(R.drawable.ic_mockup, tr("Beddel taleefanka", "Replace phone")) { showPhoneStyle(l) }
@@ -2542,6 +2543,34 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             }
         } else commit()
         toast(if (isVideo) tr("Video-ga waa lagu xiray qaybta ✓", "Video linked to the part ✓") else tr("Sawirka waa lagu xiray qaybta ✓", "Picture linked to the part ✓"))
+    }
+
+    /** Light on a 3D model: brightness, all-round light, where the light comes from and how big it is. */
+    private fun showLight(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Iftiinka", "Light")) { commit() }
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun build() {
+            box.removeAllViews()
+            fun dial(label: String, v: Float, def: Float, perDp: Float, fmt: (Float) -> String, min: Float, max: Float, set: (Float) -> Unit) =
+                box.addView(ScrubDial(this, label, v, def, perDp, fmt, min, max) { x -> set(x); live() },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4f) })
+            val pct = { v: Float -> "${(v * 100).toInt()}%" }
+            val deg = { v: Float -> "%.0f°".format(v) }
+            dial(tr("Iftiin", "Brightness"), l.lightPower, 1f, 0.01f, pct, 0f, 4f) { l.lightPower = it }
+            dial(tr("Iftiin guud (hareeraha)", "Ambient"), l.lightAmbient, 1f, 0.01f, pct, 0f, 4f) { l.lightAmbient = it }
+            dial(tr("Booska X (bidix ↔ midig)", "Position X (left ↔ right)"), l.lightAz, -35f, 0.8f, deg, -180f, 180f) { l.lightAz = it }
+            dial(tr("Booska Y (hoos ↕ kor)", "Position Y (down ↕ up)"), l.lightEl, 45f, 0.6f, deg, -89f, 89f) { l.lightEl = it }
+            dial(tr("Cabbirka iftiinka", "Light size"), l.lightSize, 1f, 0.02f, { "%.1f".format(it) }, 0f, 10f) { l.lightSize = it }
+        }
+        root.addView(Ui.label(this, tr("Farta ku jiid bidix/midig. Laba jeer taabo si aad u celiso.", "Drag left / right. Double-tap to reset.")))
+        root.addView(box)
+        build()
+        buttonRow(root,
+            tr("Kor", "Top") to { l.lightAz = 0f; l.lightEl = 80f; live(); build() },
+            tr("Hore", "Front") to { l.lightAz = 0f; l.lightEl = 10f; live(); build() },
+            tr("Dhinac", "Side") to { l.lightAz = -80f; l.lightEl = 20f; live(); build() },
+            tr("Dib u deji", "Reset") to { l.lightPower = 1f; l.lightAmbient = 1f; l.lightAz = -35f; l.lightEl = 45f; l.lightSize = 1f; live(); build() })
+        d.show()
     }
 
     /** Cut, trim, speed and loop for the video playing on a 3D screen (like a small CapCut editor). */
