@@ -393,7 +393,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         if (panel.snapshot == null) panel.snapshot = ProjectStore.toJson(project)
         // a slim time bar in every video panel: move the playhead without closing the panel
         if (!photo && project.durationMs > 0 && panel.view.findViewWithTag<View>("mini") == null) {
-            val mt = MiniTimeline(this, { project.durationMs }, { selectedLayer() }, { timeMs }) { t -> onKeyframeTap(t) }.apply { tag = "mini" }
+            val mt = MiniTimeline(this, { project.durationMs }, { selectedLayer() }, { timeMs }) { t -> onKeyframeTap(t) }.apply { tag = "mini"; onKeyMoved = { live() } }
             panel.view.addView(mt, 2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6f); rightMargin = dp(6f) })
             miniTimeline = mt
         }
@@ -406,6 +406,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         tlBox.visibility = View.GONE
         toolBox.visibility = View.GONE
     }
+
+    override fun panelUndo(redo: Boolean) { if (redo) redo() else undo() }
 
     override fun cancelPanel(panel: Panel) {
         val snap = panel.snapshot ?: return

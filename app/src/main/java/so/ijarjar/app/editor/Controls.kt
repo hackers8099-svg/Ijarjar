@@ -184,6 +184,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
     private var dragging = -1   // 0 = out handle, 1 = in handle, 2 = scrub, 3 = pinch
     private var lastMid = 0f
     private var gx = 0f; private var gy = 0f; private var decided = false
+    private var keyStartT = 0L; private var moved = false
     private val gslop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
     private fun v(p: Pose): Float = when (prop) {
@@ -265,7 +266,12 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                     if (hypot(e.x - h1[0], e.y - h1[1]) < 22 * d) dragging = 0
                     else if (hypot(e.x - h2[0], e.y - h2[1]) < 22 * d) dragging = 1
                 }
-                // handles grab the finger at once; elsewhere we wait to see if it is a scroll
+                // a keyframe ◆ under the finger: drag it left / right to change its time
+                if (dragging == 2) {
+                    val hit = layer.keyframes.minByOrNull { hypot(tx(it.t) - e.x, ty(kv(it)) - e.y) }
+                    if (hit != null && hypot(tx(hit.t) - e.x, ty(kv(hit)) - e.y) < 20 * d) { selected = hit; dragging = 4; keyStartT = hit.t }
+                }
+                // handles and keyframes grab the finger at once; elsewhere we wait to see if it is a scroll
                 if (dragging != 2) { parent?.requestDisallowInterceptTouchEvent(true); decided = true }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -277,6 +283,16 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                 }
                 val a = selected
                 if (dragging == 3) return true
+                if (dragging == 4 && a != null) {
+                    val ks = layer.keyframes.sortedBy { it.t }
+                    val i = ks.indexOf(a)
+                    val lo = (ks.getOrNull(i - 1)?.t ?: -1L) + 20
+                    val hi = (ks.getOrNull(i + 1)?.t ?: (layer.durationMs + 1)) - 20
+                    a.t = tOf(e.x).coerceIn(lo.coerceAtLeast(0), hi.coerceAtMost(layer.durationMs))
+                    moved = true
+                    onEdit(); onSeek(layer.startMs + a.t); invalidate()
+                    return true
+                }
                 if (dragging == 2) onSeek(layer.startMs + tOf(e.x))
                 else if (a != null && (dragging == 0 || dragging == 1)) {
                     val b = nextOf(a) ?: return true
@@ -291,6 +307,8 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                 }
             }
             MotionEvent.ACTION_UP -> {
+                if (dragging == 4 && !moved) selected?.let { onSeek(layer.startMs + it.t) }
+                moved = false
                 if (!decided && dragging == 2) {
                     // a tap: pick a keyframe or move the playhead
                     val hit = layer.keyframes.minByOrNull { abs(tx(it.t) - e.x) }
@@ -394,9 +412,26 @@ class MiniTimeline(context: Context, private val duration: () -> Long, private v
     private fun x(t: Long) = l + (r - l) * (t.toFloat() / duration().coerceAtLeast(1))
     private fun t(x: Float) = (((x - l) / (r - l)).coerceIn(0f, 1f) * duration()).toLong()
 
+    private var dragKey: so.ijarjar.app.model.Keyframe? = null
+    var onKeyMoved: (() -> Unit)? = null
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (e.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            parent?.requestDisallowInterceptTouchEvent(true)
+            val ly = layer()
+            dragKey = ly?.keyframes?.minByOrNull { abs(x(ly.startMs + it.t) - e.x) }?.takeIf { abs(x(ly.startMs + it.t) - e.x) < 9 * d && abs(e.y - height / 2f) < 14 * d }
+        }
+        val dk = dragKey
+        val ly = layer()
+        if (dk != null && ly != null && e.actionMasked == MotionEvent.ACTION_MOVE) {
+            val ks = ly.keyframes.sortedBy { it.t }; val i = ks.indexOf(dk)
+            val lo = (ks.getOrNull(i - 1)?.t ?: -1L) + 20; val hi = (ks.getOrNull(i + 1)?.t ?: (ly.durationMs + 1)) - 20
+            dk.t = (t(e.x) - ly.startMs).coerceIn(lo.coerceAtLeast(0), hi.coerceAtMost(ly.durationMs))
+            onSeek(ly.startMs + dk.t); onKeyMoved?.invoke(); invalidate()
+            return true
+        }
+        if (e.actionMasked == MotionEvent.ACTION_UP) dragKey = null
         if (e.actionMasked == MotionEvent.ACTION_DOWN || e.actionMasked == MotionEvent.ACTION_MOVE) {
             var tt = t(e.x)
             // snap to a keyframe when close

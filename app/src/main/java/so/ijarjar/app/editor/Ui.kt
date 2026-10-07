@@ -300,6 +300,8 @@ interface PanelHost {
     fun detachPanel(panel: Panel)
     /** Puts the project back the way it was when the panel opened. */
     fun cancelPanel(panel: Panel)
+    /** Undo (or redo) without closing the panel. */
+    fun panelUndo(redo: Boolean)
 }
 
 /**
@@ -336,6 +338,8 @@ class Panel(val context: Context, title: String) {
         head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_close, 22f, Ui.TEXT2) { cancel() })
         head.addView(Ui.text(context, title, 15f, Ui.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 1 },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_undo, 20f, Ui.TEXT) { (context as? PanelHost)?.panelUndo(false) })
+        head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_redo, 20f, Ui.TEXT) { (context as? PanelHost)?.panelUndo(true) })
         head.addView(Ui.iconButton(context, so.ijarjar.app.R.drawable.ic_check, 24f, Ui.ACCENT) { dismiss() })
         view.addView(head)
         top = LinearLayout(context).apply {
