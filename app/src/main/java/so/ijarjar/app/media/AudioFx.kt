@@ -57,6 +57,8 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
     }
 
     private val hp = Biquad(); private val lp = Biquad(); private val presence = Biquad()
+    private val mud = Biquad(); private val air = Biquad()
+    private var den: Array<Denoiser> = emptyArray()
     // voice changer
     private val vHp = Biquad(); private val vLp = Biquad(); private val vMid = Biquad()
     private var delay = Array(2) { FloatArray(1) }
@@ -74,6 +76,9 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
         hp.highPass(fs, 90.0)
         lp.lowPass(fs, minOf(9000.0, fs * 0.45))
         presence.peak(fs, 3000.0, 4.0)
+        mud.peak(fs, 300.0, -3.5, 0.9)
+        air.peak(fs, minOf(10000.0, fs * 0.4), 2.5, 0.7)
+        den = Array(inputAudioFormat.channelCount.coerceIn(1, 2)) { Denoiser(inputAudioFormat.sampleRate) }
         delay = Array(inputAudioFormat.channelCount.coerceIn(1, 8)) { FloatArray((fs * 0.6).toInt()) }
         val chs = inputAudioFormat.channelCount.coerceIn(1, 8)
         echoBuf = Array(chs) { FloatArray((fs * 1.3).toInt()) }; ePos = 0
@@ -111,16 +116,18 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
         val frames = size / (2 * ch)
         val attack = 1.0 - kotlin.math.exp(-1.0 / (0.005 * fs))
         val release = 1.0 - kotlin.math.exp(-1.0 / (0.12 * fs))
-        val threshold = 0.004 + noise * 0.04          // gate threshold (full scale = 1)
-        val floor = (1.0 - noise * 0.9).coerceIn(0.05, 1.0)
+        val threshold = 0.002 + noise * 0.012         // gentle gate after the spectral clean-up
+        val floor = (1.0 - noise * 0.6).coerceIn(0.3, 1.0)
         val sample = DoubleArray(ch)
         for (f in 0 until frames) {
             var peak = 0.0
             for (c in 0 until ch) {
                 var x = src.getShort().toDouble() / 32768.0
+                // real noise removal (spectral), then rumble cut
+                if (noise > 0f && c < den.size) x = den[c].process(x.toFloat(), noise).toDouble()
                 x = hp.run(x, c)
-                if (noise > 0.3f) x = lp.run(x, c)
-                if (enhance) x = presence.run(x, c)
+                if (noise > 0.6f) x = lp.run(x, c)
+                if (enhance) { x = mud.run(x, c); x = presence.run(x, c); x = air.run(x, c) }
                 sample[c] = x
                 peak = maxOf(peak, abs(x))
             }
@@ -241,7 +248,7 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
         return y
     }
 
-    override fun onFlush() { hp.reset(); lp.reset(); presence.reset(); gateEnv = 0.0; gateGain = 1.0; compEnv = 0.0 }
+    override fun onFlush() { hp.reset(); lp.reset(); presence.reset(); mud.reset(); air.reset(); gateEnv = 0.0; gateGain = 1.0; compEnv = 0.0 }
 
     @Suppress("unused")
     private fun rms(a: DoubleArray) = sqrt(a.sumOf { it * it } / a.size.coerceAtLeast(1))
