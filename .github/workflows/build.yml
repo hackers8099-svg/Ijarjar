@@ -44,7 +44,7 @@ jobs:
       - name: Check transparent MOV writer
         continue-on-error: true
         run: |
-          gradle :app:testReleaseUnitTest --tests '*AlphaMovTest*' --console=plain -q
+          gradle :app:testReleaseUnitTest --tests '*AlphaMovTest*' --console=plain > alphatest.log 2>&1 || { msg=$(grep -E "e: |error|FAILED|Exception|What went wrong|Caused" alphatest.log | head -15 | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g'); echo "::warning title=Alpha test failed::$msg"; exit 1; }
           which ffprobe || (sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg >/dev/null)
           info=$(ffprobe -v error -show_entries stream=codec_name,pix_fmt,width,height,nb_frames -of compact app/build/alpha/test.mov 2>&1)
           dec=$(ffmpeg -v error -i app/build/alpha/test.mov -f null - 2>&1 | head -3)
