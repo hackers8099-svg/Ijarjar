@@ -506,7 +506,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 }
                 if (picked.isNotEmpty()) {
                     t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) {
-                        val copies = picked.map { l -> l.copy().also { b -> b.linkGroup = null; b.cx = l.cx + 0.04f; b.cy = l.cy + 0.04f; for (k in b.keyframes) { k.cx += 0.04f; k.cy += 0.04f } } }
+                        val copies = picked.map { l -> l.copy().also { b -> b.linkGroup = null } }
                         project.layers.addAll(copies)
                         MultiSelect.ids.clear(); copies.forEach { MultiSelect.ids.add(it.id) }
                         stage.selectedLayerId = copies.last().id
@@ -603,8 +603,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(l) }
                     t(R.drawable.ic_link, tr("Isku xir", "Link"), l.linkGroup != null) { showLink(l) }
                     if (l.linkGroup != null) t(R.drawable.ic_unlink, tr("Kala fur", "Unlink")) { unlink(l) }
-                    t(R.drawable.ic_bring_forward, tr("Kor u qaad", "Forward")) { reorderLayer(l, 1) }
-                    t(R.drawable.ic_send_backward, tr("Hoos u dhig", "Backward")) { reorderLayer(l, -1) }
+                    t(R.drawable.ic_bring_forward, tr("Kor u qaad", "Bring up")) { moveLayerInStack(l, 1); commit() }
+                    t(R.drawable.ic_send_backward, tr("Hoos u dhig", "Send down")) { moveLayerInStack(l, -1); commit() }
+                    t(R.drawable.ic_bring_forward, tr("Ugu horreysii", "To front")) { project.layers.remove(l); project.layers.add(l); commit() }
+                    t(R.drawable.ic_send_backward, tr("Ugu dambeysii", "To back")) { project.layers.remove(l); project.layers.add(0, l); commit() }
                     t(R.drawable.ic_flip, tr("Rog", "Flip")) { for (g in project.linkedWith(l)) g.flipH = !g.flipH; commit() }
                     t(R.drawable.ic_reset, tr("Dib u deji", "Reset")) {
                         l.scale = 1f; l.rotation = 0f; l.cx = 0.5f; l.cy = 0.5f; l.stretchX = 1f; l.stretchY = 1f; l.keyframes.clear(); commit()
@@ -1382,7 +1384,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             main.post {
                 if (info == null) return@post
                 l.uri = uri.toString(); l.name = MediaUtils.displayName(this, uri)
-                l.contentAspect = info.height.toFloat() / info.width; l.srcAspect = l.contentAspect
+                // stay in the same place and inside the same box
+                val old = l.contentAspect.coerceAtLeast(0.01f)
+                val nw = info.height.toFloat() / info.width.coerceAtLeast(1)
+                l.baseW = minOf(l.baseW, l.baseW * old / nw.coerceAtLeast(0.01f))
+                l.contentAspect = nw; l.srcAspect = l.contentAspect
                 l.cropL = 0f; l.cropT = 0f; l.cropR = 0f; l.cropB = 0f
                 commit()
             }
@@ -1932,10 +1938,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun duplicateLayer(l: Layer) {
         val b = l.copy()
         b.linkGroup = null
-        if (!l.isEffect()) {
-            b.cx = l.cx + 0.04f; b.cy = l.cy + 0.04f
-            for (k in b.keyframes) { k.cx += 0.04f; k.cy += 0.04f }
-        } else { b.startMs = l.endMs; b.endMs = l.endMs + l.durationMs }
+        // the copy sits exactly on top of the original (same place, same size)
+        if (l.isEffect()) { b.startMs = l.endMs; b.endMs = l.endMs + l.durationMs }
         project.layers.add(project.layers.indexOf(l) + 1, b)
         setSelection(TimelineView.Sel.LayerSel(b.id))
         commit()
@@ -1955,21 +1959,53 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun layerTitle(l: Layer) = timeline.layerLabel(l).take(28)
 
+    /** All layers in a list (top = in front). ▲ / ▼ move a layer up or down, tap a name to select it. */
     private fun showLayers() {
         if (project.layers.isEmpty()) { toast(tr("Layer ma jiro weli", "No layers yet")); return }
-        val (d, root) = Ui.sheet(this, tr("Layer-ada", "Layers"))
-        val (sv, row) = Ui.hrow(this)
-        for (l in project.layers.reversed()) {
-            val chip = Ui.text(this, (if (l.linkGroup != null) "🔗 " else "") + layerTitle(l), 13f).apply {
-                background = Ui.roundBg(Ui.SURFACE2, dp(10f).toFloat(), if (l.id == selectedLayer()?.id) dp(2f) else 0, Ui.ACCENT)
-                setPadding(dp(12f), dp(10f), dp(12f), dp(10f))
-                maxLines = 1
-                setOnClickListener { d.dismiss(); onSelect(TimelineView.Sel.LayerSel(l.id)) }
+        val (d, root) = Ui.sheet(this, tr("Layer-ada", "Layers")) { commit() }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun rebuild() {
+            list.removeAllViews()
+            val order = project.layers.filter { !it.isEffect() }.reversed()
+            for ((pos, l) in order.withIndex()) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    val sel = l.id == selectedLayer()?.id
+                    background = Ui.roundBg(if (sel) 0x2219D3C5 else Ui.SURFACE2, dp(12f).toFloat(), if (sel) dp(1.5f) else 0, Ui.ACCENT)
+                    setPadding(dp(12f), dp(2f), dp(4f), dp(2f))
+                }
+                row.addView(Ui.text(this, "${pos + 1}", 12f, Ui.TEXT2), LinearLayout.LayoutParams(dp(22f), ViewGroup.LayoutParams.WRAP_CONTENT))
+                row.addView(Ui.text(this, (if (l.linkGroup != null) "🔗 " else "") + layerTitle(l), 14f).apply {
+                    maxLines = 1; setPadding(0, dp(10f), 0, dp(10f))
+                    setOnClickListener { setSelection(TimelineView.Sel.LayerSel(l.id)); stage.selectedLayerId = l.id; rebuild() }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                // up = towards the front (later in the list)
+                row.addView(Ui.iconButton(this, R.drawable.ic_bring_forward, 20f, if (pos > 0) Ui.TEXT else 0x33FFFFFF) {
+                    moveLayerInStack(l, 1); rebuild()
+                })
+                row.addView(Ui.iconButton(this, R.drawable.ic_send_backward, 20f, if (pos < order.size - 1) Ui.TEXT else 0x33FFFFFF) {
+                    moveLayerInStack(l, -1); rebuild()
+                })
+                list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) })
             }
-            row.addView(chip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6f) })
         }
-        root.addView(sv)
+        root.addView(Ui.label(this, tr("Kan ugu sarreeya ayaa hore u muuqda. ▲ kor u qaad · ▼ hoos u dhig", "The top one shows in front. ▲ bring up · ▼ send down")))
+        root.addView(list)
+        rebuild()
+        if (project.layers.any { it.kind == LayerKind.VIDEO } && project.layers.any { it.kind != LayerKind.VIDEO && !it.isEffect() })
+            root.addView(Ui.label(this, tr("Fiiro: muuqaallada (video overlay) had iyo jeer waxay ku jiraan qoraalka iyo sawirada gadaashooda.", "Note: overlay videos always sit behind text and pictures.")))
         d.show()
+    }
+
+    /** Moves a layer one step up (+1, towards the front) or down (-1), skipping effect layers. */
+    private fun moveLayerInStack(l: Layer, d: Int) {
+        val pics = project.layers.filter { !it.isEffect() }
+        val i = pics.indexOf(l); val j = i + d
+        if (i < 0 || j !in pics.indices) return
+        val other = pics[j]
+        val a = project.layers.indexOf(l); val b = project.layers.indexOf(other)
+        project.layers[a] = other; project.layers[b] = l
+        live()
     }
 
     private fun showLink(base: Layer?) {

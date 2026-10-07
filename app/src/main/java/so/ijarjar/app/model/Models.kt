@@ -607,5 +607,5 @@ enum class VoiceFx(val so: String, val en: String, val pitch: Float, val mode: I
     RADIO("Raadiyo", "Radio", 1f, 4),
     PHONE("Telefoon", "Telephone", 1f, 5),
     MEGAPHONE("Sameecad", "Megaphone", 1f, 8);
-    val label: String get() = so.ijarjar.app.L.t(so, en)
+    val label: String get() = L.t(so, en)
 }

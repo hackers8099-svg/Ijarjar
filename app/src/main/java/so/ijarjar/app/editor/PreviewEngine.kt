@@ -39,7 +39,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         return ExoPlayer.Builder(context, rf).build()
     }
 
-    private val main: ExoPlayer = playerWithFx {
+    private val main: ExoPlayer = playerWithFx({
         val c = project.clips.getOrNull(currentIndexSafe)
         if (c == null) Pair(0f, false) else Pair(c.denoise, c.enhanceVoice)
     }, { project.clips.getOrNull(currentIndexSafe)?.voice ?: so.ijarjar.app.model.VoiceFx.NONE })
@@ -119,7 +119,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             }
             existing?.release()
             val id = a.id
-            val pl = playerWithFx {
+            val pl = playerWithFx({
                 val t = project.audios.firstOrNull { it.id == id }
                 if (t == null) Pair(0f, false) else Pair(t.denoise, t.enhanceVoice)
             }, { project.audios.firstOrNull { it.id == id }?.voice ?: so.ijarjar.app.model.VoiceFx.NONE })
