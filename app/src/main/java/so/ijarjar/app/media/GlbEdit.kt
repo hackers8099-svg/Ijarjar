@@ -152,6 +152,7 @@ object GlbEdit {
             val bos = ByteArrayOutputStream()
             scaled.compress(if (jpeg) Bitmap.CompressFormat.JPEG else Bitmap.CompressFormat.PNG, 92, bos)
             val data = bos.toByteArray()
+            img.put("mimeType", if (jpeg) "image/jpeg" else "image/png")
             if (img.has("bufferView")) newData[img.getInt("bufferView")] = data
             else { img.put("uri", "data:${if (jpeg) "image/jpeg" else "image/png"};base64," + android.util.Base64.encodeToString(data, android.util.Base64.NO_WRAP)) }
         }

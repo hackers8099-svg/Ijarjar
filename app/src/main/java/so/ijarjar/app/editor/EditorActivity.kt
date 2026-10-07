@@ -2484,11 +2484,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     private var glbImageTarget: Pair<Layer, Int>? = null
+    private var glbImageMats: List<String> = emptyList()
     private val pickGlbImage = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         val (l, idx) = glbImageTarget ?: return@registerForActivityResult
         if (uri == null) return@registerForActivityResult
         keep(uri)
         l.modelImages[idx.toString()] = uri.toString()
+        // colours / pictures set on those parts before would cover the new picture: clear them
+        for (m in glbImageMats) l.parts[m]?.let { it.tex = null; it.video = false; it.color = 0 }
         rebuildModel(l) { showGlbContents(l) }
     }
 
@@ -2539,7 +2542,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     col.addView(Ui.text(this, "${im.width}×${im.height} · ${im.bytes / 1024} KB", 11f, Ui.TEXT2))
                     if (im.usedBy.isNotEmpty()) col.addView(Ui.text(this, im.usedBy.take(3).joinToString(", "), 11f, Ui.TEXT2).apply { maxLines = 2 })
                     val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-                    btns.addView(Ui.button(this, tr("Beddel", "Replace"), false) { glbImageTarget = l to im.index; d.dismiss(); pickGlbImage.launch(imagesOnly()) })
+                    btns.addView(Ui.button(this, tr("Beddel", "Replace"), false) {
+                        glbImageTarget = l to im.index; glbImageMats = im.usedBy.map { it.substringBeforeLast(" (") }
+                        d.dismiss(); pickGlbImage.launch(imagesOnly())
+                    })
                     if (swapped) btns.addView(Ui.button(this, tr("Asal", "Original"), false) { l.modelImages.remove(im.index.toString()); d.dismiss(); rebuildModel(l) { showGlbContents(l) } },
                         LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
                     col.addView(btns)
@@ -2572,6 +2578,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             val screenWord = Regex("screen|display|lcd|wallpaper|monitor|panel|oled|ui", RegexOption.IGNORE_CASE)
             val names = so.ijarjar.app.render.Model3D.materials(this, uri).sortedByDescending { screenWord.containsMatchIn(it) }
             main.post {
+                buttonRow(root, tr("↺ Dib u celi dhammaan qaybaha", "↺ Reset all parts") to { l.parts.clear(); live(); d.dismiss(); showModelParts(l) })
                 status.text = if (names.isEmpty()) tr("Qaybo lama helin.", "No parts found.")
                     else tr("Qaybta casaanka ah ee sawir kasta waa qaybtaas — raadi midka shaashadda (hore) ka casaan ah, kadib 🖼 riix. Magaca taabo si aad u beddesho.",
                         "The pink area in each picture is that part — find the one where the front screen turns pink, then tap 🖼. Tap a name to rename it.")

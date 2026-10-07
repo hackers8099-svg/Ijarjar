@@ -147,7 +147,9 @@ object Model3D {
             mi.setParameter("emissiveMap", tex, sampler())
             if (m.hasParameter("emissiveIndex")) mi.setParameter("emissiveIndex", 0)
             if (m.hasParameter("emissiveUvMatrix")) mi.setParameter("emissiveUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
-            if (m.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", 0.9f, 0.9f, 0.9f)
+            // emissive is measured in light units: make it bright enough to read like a lit screen
+            if (m.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", 1f, 1f, 1f)
+            if (m.hasParameter("emissiveStrength")) mi.setParameter("emissiveStrength", 1f)
         }
         if (m.hasParameter("roughnessFactor")) runCatching { mi.setParameter("roughnessFactor", 0.35f) }
         if (m.hasParameter("metallicFactor")) runCatching { mi.setParameter("metallicFactor", 0f) }
