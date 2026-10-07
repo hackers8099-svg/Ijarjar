@@ -703,6 +703,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         t(R.drawable.ic_image_add, tr("Waxa ku jira", "Contents"), l.modelImages.isNotEmpty()) { showGlbContents(l) }
                         t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
                         t(R.drawable.ic_rotate, tr("Jihee / toosi", "Orient"), l.rotX != 0f || l.rotY != 0f) { show3D(l) }
+                        t(R.drawable.ic_trim, tr("Video-ga shaashadda", "Screen video"), l.screenSegs.size > 1 || l.screenSpeed != 1f) { showScreenVideo(l) }
                         if (l.phoneStyle != null) {
                             t(R.drawable.ic_image_add, tr("Beddel shaashadda", "Replace screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
                             t(R.drawable.ic_mockup, tr("Beddel taleefanka", "Replace phone")) { showPhoneStyle(l) }
@@ -2534,9 +2535,84 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         extraVideoMats = emptyList()
         if (isVideo) io.execute {
             val info = MediaUtils.probe(this, uri)
-            main.post { if (info != null && info.durationMs > l.durationMs && !photo) l.endMs = l.startMs + info.durationMs; commit() }
+            main.post {
+                l.screenSegs.clear()
+                if (info != null && info.durationMs > l.durationMs && !photo) l.endMs = l.startMs + info.durationMs
+                commit(); showScreenVideo(l)
+            }
         } else commit()
         toast(if (isVideo) tr("Video-ga waa lagu xiray qaybta ✓", "Video linked to the part ✓") else tr("Sawirka waa lagu xiray qaybta ✓", "Picture linked to the part ✓"))
+    }
+
+    /** Cut, trim, speed and loop for the video playing on a 3D screen (like a small CapCut editor). */
+    private fun showScreenVideo(l: Layer) {
+        val src = l.videoSource()
+        val (d, root) = Ui.sheet(this, tr("Video-ga shaashadda", "Screen video")) { commit() }
+        if (src == null) {
+            root.addView(Ui.label(this, tr("Marka hore video geli shaashadda.", "Put a video on the screen first.")))
+            buttonRow(root, tr("Dooro video", "Pick a video") to {
+                d.dismiss(); partTarget = l to (if (l.phoneStyle != null) "Screen" else (l.parts.keys.firstOrNull() ?: "Screen"))
+                pickPartMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) })
+            d.show(); return
+        }
+        val status = Ui.label(this, tr("Waa la akhrinayaa…", "Reading…"))
+        root.addView(status)
+        d.show()
+        io.execute {
+            val dur = MediaUtils.probe(this, Uri.parse(src))?.durationMs ?: 0L
+            main.post {
+                if (dur <= 0) { status.text = tr("Video-ga lama akhrin karo", "Couldn't read the video"); return@post }
+                root.removeView(status)
+                if (l.screenSegs.isEmpty()) l.screenSegs.add(so.ijarjar.app.model.ScreenSeg(0, dur))
+                val frame = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; background = Ui.roundBg(0xFF101014.toInt(), dp(10f).toFloat()) }
+                root.addView(frame, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(150f)))
+                val info = Ui.label(this, "")
+                val strip = ScreenVideoStrip(this, src, dur, l.screenSegs)
+                fun upd() {
+                    val kept = l.screenSegs.sumOf { it.length }
+                    info.text = tr("Qaybo: ${l.screenSegs.size} · la hayo ", "Pieces: ${l.screenSegs.size} · kept ") + TimelineView.fmt(kept) + tr(" ee ", " of ") + TimelineView.fmt(dur) +
+                        tr("  ·  jiid geesaha si aad u gooyso", "  ·  drag the edges to trim")
+                }
+                var pending = false
+                fun showFrame(t: Long) {
+                    if (pending) return
+                    pending = true
+                    io.execute {
+                        val b = MediaUtils.thumbnail(this, Uri.parse(src), true, t, 480)
+                        main.post { pending = false; if (b != null) frame.setImageBitmap(b) }
+                    }
+                }
+                strip.onCursor = { t -> showFrame(t) }
+                strip.onChanged = { upd(); live() }
+                root.addView(strip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8f) })
+                root.addView(info)
+                buttonRow(root,
+                    "✂ " + tr("Kala jar", "Split") to {
+                        val t = strip.cursorMs
+                        val i = l.screenSegs.indexOfFirst { t > it.start + 100 && t < it.end - 100 }
+                        if (i < 0) toast(tr("Xariiqda dhig gudaha qayb", "Put the line inside a piece"))
+                        else {
+                            val sg = l.screenSegs[i]
+                            l.screenSegs.add(i + 1, so.ijarjar.app.model.ScreenSeg(t, sg.end)); sg.end = t
+                            strip.selected = i + 1; strip.invalidate(); upd(); live()
+                        }
+                    },
+                    "🗑 " + tr("Tirtir qaybta", "Delete piece") to {
+                        if (l.screenSegs.size <= 1) toast(tr("Ugu yaraan hal qayb waa inay jirtaa", "Keep at least one piece"))
+                        else { l.screenSegs.removeAt(strip.selected.coerceIn(0, l.screenSegs.size - 1)); strip.selected = 0; strip.invalidate(); upd(); live() }
+                    },
+                    "↺ " + tr("Asal", "Reset") to { l.screenSegs.clear(); l.screenSegs.add(so.ijarjar.app.model.ScreenSeg(0, dur)); strip.selected = 0; strip.invalidate(); upd(); live() })
+                root.addView(Ui.label(this, tr("Xawaare", "Speed")))
+                val speeds = listOf(0.5f, 1f, 1.5f, 2f, 3f)
+                root.addView(Ui.choiceRow(this, speeds.map { "${it}x".replace(".0x", "x") }, speeds.indexOf(l.screenSpeed).coerceAtLeast(1)) { i -> l.screenSpeed = speeds[i]; live() })
+                root.addView(Ui.choiceRow(this, listOf(tr("Ku celceli (loop)", "Loop"), tr("Hal mar", "Play once")), if (l.screenLoop) 0 else 1) { i -> l.screenLoop = i == 0; live() })
+                buttonRow(root, tr("Dhererka layer-ka = video-ga", "Layer length = video") to {
+                    val kept = l.screenSegs.sumOf { it.length }
+                    l.endMs = l.startMs + (kept / l.screenSpeed).toLong().coerceAtLeast(200); commit(); toast(tr("Waa la habeeyay ✓", "Done ✓"))
+                })
+                upd(); strip.cursorMs = l.screenSegs.first().start; showFrame(strip.cursorMs)
+            }
+        }
     }
 
     /** Pick one of the built-in 3D phones, then a screenshot or video for its screen. */

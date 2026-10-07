@@ -268,8 +268,9 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             val pl = overlayPlayers[l.id] ?: continue
             if (!l.isActive(t)) { if (pl.isPlaying) pl.pause(); continue }
             val raw = l.trimStartMs + (t - l.startMs)
-            // a video on a 3D model loops
-            val expect = if (l.kind == LayerKind.MODEL3D && pl.duration > 0) raw % pl.duration else raw
+            // a video on a 3D model: its own cuts, speed and loop
+            val expect = if (l.kind == LayerKind.MODEL3D) l.screenTime(t, maxOf(0L, pl.duration)) else raw
+            if (l.kind == LayerKind.MODEL3D && pl.playbackParameters.speed != l.screenSpeed) pl.playbackParameters = PlaybackParameters(l.screenSpeed, 1f)
             if (isPlaying) {
                 if (force || abs(pl.currentPosition - expect) > 300) pl.seekTo(expect)
                 if (!pl.isPlaying) pl.play()

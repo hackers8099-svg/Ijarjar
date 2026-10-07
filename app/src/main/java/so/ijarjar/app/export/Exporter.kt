@@ -458,7 +458,7 @@ class Exporter(
             var local = l.trimStartMs + (t - l.startMs)
             if (l.kind == LayerKind.MODEL3D) {
                 val dur = durations.getOrPut(l.id) { so.ijarjar.app.media.MediaUtils.probe(context, Uri.parse(l.videoSource()))?.durationMs ?: 0L }
-                if (dur > 0) local %= dur
+                local = l.screenTime(t, dur)
             }
             val bucket = local / 33
             lastFrames[l.id]?.let { if (it.first == bucket) return it.second }

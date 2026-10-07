@@ -543,6 +543,22 @@ class Layer(
     var modelImages: MutableMap<String, String> = mutableMapOf()   // image index inside the .glb → new picture
 ) {
     /** Where this layer's moving picture comes from (overlay video, or a video on a 3D model). */
+    /** Pieces of the screen video that play, in order (empty = the whole video). */
+    var screenSegs: MutableList<ScreenSeg> = mutableListOf()
+    var screenLoop: Boolean = true
+    var screenSpeed: Float = 1f
+
+    /** Where in the screen video file we are at timeline time [t] ([dur] = length of the file). */
+    fun screenTime(t: Long, dur: Long): Long {
+        val local = ((t - startMs).coerceAtLeast(0) * screenSpeed).toLong() + trimStartMs
+        val segs = screenSegs.filter { it.length > 0 }
+        if (segs.isEmpty()) return if (dur > 0 && screenLoop) local % dur else if (dur > 0) local.coerceAtMost(dur - 1) else local
+        val total = segs.sumOf { it.length }
+        var pos = if (screenLoop) local % total else local.coerceAtMost(total - 1)
+        for (sg in segs) { if (pos < sg.length) return sg.start + pos; pos -= sg.length }
+        return segs.last().end - 1
+    }
+
     fun videoSource(): String? = when (kind) {
         LayerKind.VIDEO -> uri
         LayerKind.MODEL3D -> parts.values.firstOrNull { it.video && it.tex != null }?.tex
@@ -699,5 +715,8 @@ class SoundFx(
 }
 
 /** One part (material) of a 3D model: a friendly name, a picture or video on it, a colour. */
+/** A kept piece of the video on a 3D screen (milliseconds in the video file). */
+class ScreenSeg(var start: Long = 0, var end: Long = 0) { val length get() = (end - start).coerceAtLeast(0) }
+
 class ModelPart(var name: String = "", var tex: String? = null, var video: Boolean = false, var color: Int = 0, var hidden: Boolean = false,
                 var flipV: Boolean = false, var flipH: Boolean = false)
