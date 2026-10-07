@@ -29,7 +29,15 @@ object Filters {
 
     fun colorMatrix(a: Adjust): ColorMatrix {
         val m = ColorMatrix()
-        presetMatrix(a.preset)?.let { m.postConcat(it) }
+        presetMatrix(a.preset)?.let { pm ->
+            val k = a.presetAmount.coerceIn(0f, 1f)
+            if (k >= 0.999f) m.postConcat(pm)
+            else {
+                // mix between "no filter" and the full filter
+                val id = ColorMatrix().array; val f = pm.array
+                m.postConcat(ColorMatrix(FloatArray(20) { id[it] + (f[it] - id[it]) * k }))
+            }
+        }
         if (a.temperature != 0f) {
             val t = a.temperature * 0.25f
             m.postConcat(gainMatrix(1f + t, 1f, 1f - t))
@@ -59,6 +67,18 @@ object Filters {
 
     fun colorFilter(a: Adjust): ColorMatrixColorFilter? =
         if (a.isColorIdentity()) null else ColorMatrixColorFilter(colorMatrix(a))
+
+    /** A colour grade: saturation, contrast, brightness, R/G/B gain and R/G/B lift. */
+    private fun grade(sat: Float, con: Float, bri: Float, rg: Float, gg: Float, bg: Float, ro: Float, go: Float, bo: Float): ColorMatrix {
+        val m = ColorMatrix().apply { setSaturation(sat) }
+        val t = 128f * (1f - con)
+        m.postConcat(ColorMatrix(floatArrayOf(
+            con * rg, 0f, 0f, 0f, t + bri + ro,
+            0f, con * gg, 0f, 0f, t + bri + go,
+            0f, 0f, con * bg, 0f, t + bri + bo,
+            0f, 0f, 0f, 1f, 0f)))
+        return m
+    }
 
     private fun presetMatrix(p: FilterPreset): ColorMatrix? = when (p) {
         FilterPreset.NONE -> null
@@ -161,6 +181,38 @@ object Filters {
             0.02f, 1.02f, 0f, 0f, 4f,
             0f, 0.05f, 0.9f, 0f, -4f,
             0f, 0f, 0f, 1f, 0f))
+        FilterPreset.CLEAR -> grade(1.05f, 1.08f, 6f, 1f, 1f, 1.03f, 0f, 0f, 0f)
+        FilterPreset.FRESH -> grade(1.15f, 1.05f, 8f, 0.97f, 1.03f, 1.05f, 0f, 2f, 4f)
+        FilterPreset.BRIGHT -> grade(1.05f, 0.95f, 22f, 1f, 1f, 1f, 0f, 0f, 0f)
+        FilterPreset.SOFT -> grade(0.85f, 0.85f, 18f, 1.02f, 1f, 0.98f, 4f, 4f, 4f)
+        FilterPreset.SUNNY -> grade(1.2f, 1.05f, 10f, 1.08f, 1.03f, 0.9f, 4f, 2f, -6f)
+        FilterPreset.FILM_200 -> grade(0.9f, 1.05f, 2f, 1.05f, 1f, 0.92f, 8f, 4f, 0f)
+        FilterPreset.FILM_400 -> grade(0.85f, 1.1f, 0f, 1f, 1.02f, 0.95f, 6f, 6f, 10f)
+        FilterPreset.POLAROID -> grade(0.8f, 0.9f, 14f, 1.05f, 1.02f, 0.9f, 14f, 10f, 4f)
+        FilterPreset.PORTRA -> grade(0.92f, 0.98f, 6f, 1.06f, 1.0f, 0.93f, 6f, 2f, 0f)
+        FilterPreset.CHROME -> grade(1.25f, 1.15f, 0f, 1.02f, 1f, 1.02f, -4f, -4f, -2f)
+        FilterPreset.RETRO -> grade(0.75f, 0.95f, 6f, 1.1f, 1.02f, 0.8f, 16f, 8f, 0f)
+        FilterPreset.SEVENTIES -> grade(0.8f, 0.9f, 4f, 1.12f, 1f, 0.78f, 20f, 10f, -4f)
+        FilterPreset.FADED_RED -> grade(0.7f, 0.85f, 10f, 1.12f, 0.95f, 0.92f, 20f, 6f, 8f)
+        FilterPreset.OLD_PHOTO -> grade(0.35f, 0.8f, 10f, 1.1f, 1.02f, 0.85f, 24f, 14f, 2f)
+        FilterPreset.HOLLYWOOD -> grade(0.95f, 1.15f, -2f, 1.05f, 0.98f, 1.02f, 0f, -2f, 6f)
+        FilterPreset.BLOCKBUSTER -> grade(1.1f, 1.2f, -4f, 1.08f, 0.98f, 0.92f, -4f, 0f, 14f)
+        FilterPreset.DUNE -> grade(0.85f, 1.1f, 2f, 1.15f, 1.02f, 0.78f, 6f, 0f, -10f)
+        FilterPreset.ARCTIC -> grade(0.8f, 1.05f, 8f, 0.88f, 1f, 1.15f, -4f, 4f, 16f)
+        FilterPreset.BLEACH -> grade(0.45f, 1.3f, -4f, 1f, 1f, 1f, 0f, 0f, 0f)
+        FilterPreset.SILVER -> grade(0f, 1.1f, 8f, 1f, 1f, 1.02f, 0f, 0f, 4f)
+        FilterPreset.CHARCOAL -> grade(0f, 1.35f, -14f, 1f, 1f, 1f, 0f, 0f, 0f)
+        FilterPreset.SELENIUM -> grade(0f, 1.1f, 0f, 0.95f, 1f, 1.1f, 0f, 0f, 10f)
+        FilterPreset.SKIN_GLOW -> grade(1.0f, 0.95f, 12f, 1.06f, 1.0f, 0.97f, 8f, 4f, 4f)
+        FilterPreset.ROSY -> grade(1.05f, 1f, 8f, 1.08f, 0.97f, 1.0f, 10f, 0f, 6f)
+        FilterPreset.BRONZE -> grade(1.1f, 1.05f, 2f, 1.12f, 1.0f, 0.82f, 10f, 2f, -8f)
+        FilterPreset.LUSH -> grade(1.3f, 1.05f, 0f, 0.95f, 1.1f, 0.92f, 0f, 6f, 0f)
+        FilterPreset.OCEAN -> grade(1.2f, 1.05f, 2f, 0.88f, 1.02f, 1.15f, 0f, 4f, 12f)
+        FilterPreset.AUTUMN -> grade(1.15f, 1.05f, 0f, 1.15f, 0.98f, 0.8f, 8f, 0f, -8f)
+        FilterPreset.TASTY -> grade(1.35f, 1.08f, 6f, 1.08f, 1.02f, 0.92f, 6f, 2f, -4f)
+        FilterPreset.CREAMY -> grade(0.9f, 0.9f, 14f, 1.05f, 1.02f, 0.95f, 12f, 8f, 4f)
+        FilterPreset.NEON_NIGHT -> grade(1.4f, 1.15f, -6f, 1.05f, 0.9f, 1.15f, 6f, -6f, 18f)
+        FilterPreset.MIDNIGHT -> grade(0.8f, 1.1f, -16f, 0.9f, 0.95f, 1.12f, -6f, 0f, 14f)
         FilterPreset.INVERT -> ColorMatrix(floatArrayOf(
             -1f, 0f, 0f, 0f, 255f,
             0f, -1f, 0f, 0f, 255f,

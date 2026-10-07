@@ -130,13 +130,74 @@ class TransitionTile(context: Context, private val a: Bitmap?, private val b: Bi
     }
 }
 
-/** A filter applied to the current frame. */
-class FilterTile(context: Context, private val thumb: Bitmap?, preset: FilterPreset) : LoopTile(context, 1000) {
+/** A filter applied to the current frame (or a sample photo), with its name on a strip like CapCut. */
+class FilterTile(context: Context, thumb: Bitmap?, private val preset: FilterPreset) : LoopTile(context, 1000) {
+    private val pic = thumb ?: FilterSample.get()
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
         colorFilter = Filters.colorFilter(Adjust(preset = preset))
     }
+    private val strip = Paint()
+    private val name = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true }
     override fun animated() = false
-    override fun drawContent(canvas: Canvas, t: Long) = drawThumb(canvas, thumb, width.toFloat(), height.toFloat(), paint)
+    override fun drawContent(canvas: Canvas, t: Long) {
+        val w = width.toFloat(); val h = height.toFloat()
+        if (preset == FilterPreset.NONE) {
+            bg.color = 0xFF34343E.toInt(); canvas.drawRect(0f, 0f, w, h, bg)
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCCFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = w * 0.045f }
+            val r = w * 0.17f; val cy = h * 0.42f
+            canvas.drawCircle(w / 2, cy, r, p)
+            canvas.drawLine(w / 2 - r * 0.7f, cy + r * 0.7f, w / 2 + r * 0.7f, cy - r * 0.7f, p)
+        } else drawThumb(canvas, pic, w, h, paint)
+        val sh = h * 0.26f
+        strip.color = if (selectedTile) Ui.ACCENT else (GROUP_COLORS[preset.group % GROUP_COLORS.size] and 0x00FFFFFF) or 0xD0000000.toInt()
+        canvas.drawRect(0f, h - sh, w, h, strip)
+        name.textSize = sh * 0.52f
+        var label = preset.label
+        while (label.length > 3 && name.measureText(label) > w * 0.92f) label = label.dropLast(1)
+        if (label != preset.label) label = label.dropLast(1) + "…"
+        canvas.drawText(label, w / 2, h - sh / 2 + name.textSize * 0.36f, name)
+    }
+    companion object {
+        private val GROUP_COLORS = intArrayOf(0xFF3A3A44.toInt(), 0xFF2E7D6B.toInt(), 0xFF8A5A2B.toInt(), 0xFF7A4A3A.toInt(),
+            0xFF2B4F7A.toInt(), 0xFF444444.toInt(), 0xFF8A3A5E.toInt(), 0xFF3F6E2A.toInt(), 0xFF9A5A1A.toInt(), 0xFF4A2B7A.toInt())
+    }
+}
+
+/** A colourful built-in sample picture (sky, sun, hills, water, a person) to show filters when there is no media yet. */
+object FilterSample {
+    private var cached: Bitmap? = null
+    fun get(): Bitmap {
+        cached?.let { return it }
+        val w = 240; val h = 320
+        val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(b)
+        val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        p.shader = android.graphics.LinearGradient(0f, 0f, 0f, h * 0.6f, intArrayOf(0xFF2F6FD6.toInt(), 0xFF7FB7F0.toInt(), 0xFFFFC98A.toInt()), null, android.graphics.Shader.TileMode.CLAMP)
+        c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), p); p.shader = null
+        p.shader = android.graphics.RadialGradient(w * 0.68f, h * 0.42f, w * 0.22f, intArrayOf(0xFFFFF4C2.toInt(), 0xFFFFB347.toInt(), 0x00FFB347), floatArrayOf(0f, 0.45f, 1f), android.graphics.Shader.TileMode.CLAMP)
+        c.drawCircle(w * 0.68f, h * 0.42f, w * 0.22f, p); p.shader = null
+        p.color = 0xFFFFFFFF.toInt(); p.alpha = 200
+        c.drawOval(RectF(w * 0.08f, h * 0.12f, w * 0.42f, h * 0.19f), p); c.drawOval(RectF(w * 0.2f, h * 0.09f, w * 0.5f, h * 0.17f), p)
+        p.alpha = 255
+        fun hill(y: Float, amp: Float, col: Int) {
+            val path = Path(); path.moveTo(0f, h.toFloat()); path.lineTo(0f, y)
+            var x = 0f
+            while (x <= w) { path.lineTo(x, y - amp * kotlin.math.sin(x / w * 6.3f + amp).toFloat() - amp * 0.5f * kotlin.math.sin(x / w * 13f).toFloat()); x += 6f }
+            path.lineTo(w.toFloat(), h.toFloat()); path.close(); p.color = col; c.drawPath(path, p)
+        }
+        hill(h * 0.52f, 22f, 0xFF5C7A9E.toInt())
+        hill(h * 0.6f, 14f, 0xFF3E8C4F.toInt())
+        p.shader = android.graphics.LinearGradient(0f, h * 0.66f, 0f, h.toFloat(), intArrayOf(0xFF2A9DB8.toInt(), 0xFF0E4F73.toInt()), null, android.graphics.Shader.TileMode.CLAMP)
+        c.drawRect(0f, h * 0.66f, w.toFloat(), h.toFloat(), p); p.shader = null
+        p.color = 0x66FFE3A0; c.drawRect(w * 0.6f, h * 0.7f, w * 0.76f, h * 0.715f, p); c.drawRect(w * 0.63f, h * 0.75f, w * 0.73f, h * 0.762f, p)
+        // a person in a red top on the shore (skin tones show portrait filters)
+        p.color = 0xFFE8B48A.toInt(); c.drawCircle(w * 0.28f, h * 0.6f, w * 0.06f, p)
+        p.color = 0xFF2B1B14.toInt(); c.drawArc(RectF(w * 0.22f, h * 0.555f, w * 0.34f, h * 0.635f), 180f, 180f, true, p)
+        p.color = 0xFFE0384F.toInt(); c.drawRoundRect(RectF(w * 0.2f, h * 0.645f, w * 0.36f, h * 0.84f), 14f, 14f, p)
+        p.color = 0xFFF2E3C6.toInt(); c.drawRect(0f, h * 0.86f, w.toFloat(), h.toFloat(), p)
+        cached = b
+        return b
+    }
 }
 
 /** Draws a keyframe curve. */

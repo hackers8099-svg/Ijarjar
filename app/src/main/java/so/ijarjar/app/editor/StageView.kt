@@ -234,7 +234,7 @@ class StageView(context: Context) : FrameLayout(context) {
         // colour: clip filter + colour effects
         val effect = EffectRenderer.colorMatrix(p, timeMs)
         val a = c.adjust
-        val key = "${c.id}|${a.brightness}|${a.contrast}|${a.saturation}|${a.temperature}|${a.tint}|${a.preset}|${effect?.array?.contentToString()}"
+        val key = "${c.id}|${a.brightness}|${a.contrast}|${a.saturation}|${a.temperature}|${a.tint}|${a.preset}|${a.presetAmount}|${effect?.array?.contentToString()}"
         if (key != colorKey) {
             colorKey = key
             val cm: ColorMatrix? = if (a.isColorIdentity() && effect == null) null else {

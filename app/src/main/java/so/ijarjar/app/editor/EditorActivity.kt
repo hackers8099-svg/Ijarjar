@@ -657,7 +657,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         if (project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
                     }
                     group(tr("Muuqaal", "Look"))
-                    if (l.isPicture()) t(R.drawable.ic_filter, tr("Filter", "Filters"), !l.adjust.isIdentity()) { showFilters(l.adjust, null) }
+                    if (l.isPicture()) t(R.drawable.ic_filter, tr("Filter", "Filters"), !l.adjust.isIdentity()) { showFilters(l.adjust, null, layerThumb(l)) }
                     t(R.drawable.ic_glow, tr("Qaab (opacity, xariiq, glow)", "Style"), l.outlineColor != 0 || l.shadow || l.glowColor != 0) { showStyle(l) }
                     if (l.isPicture()) {
                         t(R.drawable.ic_mask, tr("Maaskaro", "Mask"), l.mask != MaskKind.NONE) { showMask(l) }
@@ -918,6 +918,37 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         root.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
+    /** Filter tiles (3:4 pictures with the name on them), 4 per row. */
+    private fun filterGrid(root: LinearLayout, items: List<FilterPreset>, thumb: Bitmap?, isSel: (FilterPreset) -> Boolean, pick: (FilterPreset) -> Unit) {
+        val cols = 4
+        val widthPx = resources.displayMetrics.widthPixels - Ui.dp(this, 28f)
+        val gap = Ui.dp(this, 6f)
+        val tw = (widthPx - gap * (cols - 1)) / cols
+        val th = (tw * 4f / 3f).toInt()
+        val grid = GridLayout(this).apply { columnCount = cols }
+        val tiles = ArrayList<FilterTile>()
+        for ((i, p) in items.withIndex()) {
+            val tv = FilterTile(this, thumb, p)
+            tv.selectedTile = isSel(p)
+            tiles.add(tv)
+            tv.setOnClickListener {
+                pick(p)
+                for ((k, x) in tiles.withIndex()) x.selectedTile = isSel(items[k])
+            }
+            grid.addView(tv, GridLayout.LayoutParams().apply {
+                width = tw; height = th
+                setMargins(0, 0, if (i % cols == cols - 1) 0 else gap, gap)
+            })
+        }
+        root.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = Ui.dp(this@EditorActivity, 6f) })
+    }
+
+    private fun layerThumb(l: Layer): Bitmap? {
+        val u = l.uri ?: return currentThumb()
+        return if (l.kind == LayerKind.VIDEO) MediaUtils.thumbnail(this, Uri.parse(u), true, l.trimStartMs, 200)
+        else MediaUtils.loadBitmapCached(this, Uri.parse(u), 256)
+    }
+
     private fun <T> tileRow(root: LinearLayout, items: List<T>, isSel: (T) -> Boolean, label: (T) -> String,
                             tile: (T) -> LoopTile, size: Float = 64f, pick: (T) -> Unit) {
         val (sv, row) = Ui.hrow(this)
@@ -1162,12 +1193,34 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     /** Filters (preview tiles), adjustments and LUT import for a clip, picture layer or photo background. */
-    private fun showFilters(a: Adjust, applyAll: (() -> Unit)?) {
+    private fun showFilters(a: Adjust, applyAll: (() -> Unit)?, pic: Bitmap? = null) {
         val (d, root) = Ui.sheet(this, tr("Filter", "Filters")) { commit() }
-        val thumb = currentThumb()
+        val thumb = pic ?: currentThumb()
         Ui.tabs(this, root, listOf(
             tr("Filter", "Filters") to { body: LinearLayout ->
-                tileGrid(body, FilterPreset.entries, { it == a.preset }, { it.label }, { FilterTile(this, thumb, it) }) { p -> a.preset = p; live() }
+                // CapCut style: categories on top, picture tiles with the name on a strip, strength slider
+                val cats = listOf(tr("Dhammaan", "All"), tr("Nolol", "Life"), tr("Filim", "Film"), tr("Qadiim", "Vintage"), "Cinematic",
+                    tr("Madow-cadaan", "B&W"), tr("Qof", "Portrait"), tr("Muuqaal", "Landscape"), tr("Cunto", "Food"), tr("Habeen", "Night"))
+                val amountBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                fun showAmount() {
+                    amountBox.removeAllViews()
+                    if (a.preset != FilterPreset.NONE)
+                        amountBox.addView(Ui.sliderRow(this, tr("Xoog", "Strength") + " · " + a.preset.label, 0f, 1f, a.presetAmount) { a.presetAmount = it; live() })
+                }
+                val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                fun fill(cat: Int) {
+                    grid.removeAllViews()
+                    val items = if (cat == 0) FilterPreset.entries.toList()
+                        else listOf(FilterPreset.NONE) + FilterPreset.entries.filter { it.group == cat }
+                    filterGrid(grid, items, thumb, { it == a.preset }) { p ->
+                        if (a.preset != p) a.presetAmount = 1f
+                        a.preset = p; showAmount(); live()
+                    }
+                }
+                body.addView(Ui.choiceRow(this, cats, 0) { fill(it) })
+                body.addView(amountBox)
+                body.addView(grid)
+                showAmount(); fill(0)
                 if (applyAll != null) buttonRow(body, tr("Ku dabaq dhammaan", "Apply to all") to { applyAll(); d.dismiss() })
             },
             tr("Hagaaji", "Adjust") to { body: LinearLayout ->
@@ -1183,7 +1236,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.sliderRow(this, tr("Qariin", "Blur"), 0f, 1f, a.blur) { a.blur = it; live() })
                 buttonRow(body, tr("Dib u celi", "Reset") to {
                     a.brightness = 0f; a.contrast = 0f; a.saturation = 0f; a.temperature = 0f; a.tint = 0f; a.blur = 0f; a.preset = FilterPreset.NONE
-                    a.highlights = 0f; a.shadows = 0f; a.vibrance = 0f; a.fade = 0f; d.dismiss()
+                    a.highlights = 0f; a.shadows = 0f; a.vibrance = 0f; a.fade = 0f; a.presetAmount = 1f; d.dismiss()
                 })
             },
             "LUT" to { body: LinearLayout ->

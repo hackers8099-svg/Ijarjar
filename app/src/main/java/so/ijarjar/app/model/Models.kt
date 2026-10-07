@@ -11,28 +11,60 @@ enum class LayerKind { VIDEO, IMAGE, TEXT, STICKER, EFFECT, SHAPE, ANIMATED, DRA
 
 enum class AudioKind { MUSIC, VOICE, EXTRACTED, SOUND }
 
-enum class FilterPreset(val so: String, val en: String) {
+enum class FilterPreset(val so: String, val en: String, val group: Int = 0) {
     NONE("Caadi", "None"),
-    BW("Madow-Cadaan", "B&W"),
-    SEPIA("Sepia", "Sepia"),
-    VINTAGE("Qadiim", "Vintage"),
-    COOL("Qabow", "Cool"),
-    WARM("Kulul", "Warm"),
-    VIVID("Midab badan", "Vivid"),
-    FADE("Daciif", "Faded"),
-    NOIR("Mugdi", "Noir"),
-    GOLDEN("Dahab", "Golden"),
-    TEAL_ORANGE("Cinema", "Cinematic"),
-    PINK("Casaan", "Pink"),
-    MOODY("Murugo", "Moody"),
-    PASTEL("Jilicsan", "Pastel"),
-    SUNSET("Qorrax-dhac", "Sunset"),
-    FOREST("Kayn", "Forest"),
-    MATTE("Matte", "Matte"),
-    CYBER("Cyber", "Cyberpunk"),
-    MONO_HI("Madow adag", "Hi-con B&W"),
-    KODAK("Filim", "Film"),
-    INVERT("Rogan", "Invert");
+    BW("Madow-Cadaan", "B&W", 5),
+    SEPIA("Sepia", "Sepia", 3),
+    VINTAGE("Qadiim", "Vintage", 3),
+    COOL("Qabow", "Cool", 1),
+    WARM("Kulul", "Warm", 1),
+    VIVID("Midab badan", "Vivid", 1),
+    FADE("Daciif", "Faded", 3),
+    NOIR("Mugdi", "Noir", 5),
+    GOLDEN("Dahab", "Golden", 6),
+    TEAL_ORANGE("Cinema", "Cinematic", 4),
+    PINK("Casaan", "Pink", 6),
+    MOODY("Murugo", "Moody", 4),
+    PASTEL("Jilicsan", "Pastel", 1),
+    SUNSET("Qorrax-dhac", "Sunset", 7),
+    FOREST("Kayn", "Forest", 7),
+    MATTE("Matte", "Matte", 2),
+    CYBER("Cyber", "Cyberpunk", 9),
+    MONO_HI("Madow adag", "Hi-con B&W", 5),
+    KODAK("Filim", "Film", 2),
+    INVERT("Rogan", "Invert", 4),
+    CLEAR("Cad", "Clear", 1),
+    FRESH("Cusub", "Fresh", 1),
+    BRIGHT("Iftiin", "Bright", 1),
+    SOFT("Jilicsan 2", "Soft", 1),
+    SUNNY("Qorrax", "Sunny", 1),
+    FILM_200("Filim 200", "Film 200", 2),
+    FILM_400("Filim 400", "Film 400", 2),
+    POLAROID("Polaroid", "Polaroid", 2),
+    PORTRA("Portra", "Portra", 2),
+    CHROME("Chrome", "Chrome", 2),
+    RETRO("Retro", "Retro", 3),
+    SEVENTIES("70-meeyadii", "70s", 3),
+    FADED_RED("Casaan duug", "Faded Red", 3),
+    OLD_PHOTO("Sawir duug", "Old Photo", 3),
+    HOLLYWOOD("Hollywood", "Hollywood", 4),
+    BLOCKBUSTER("Blockbuster", "Blockbuster", 4),
+    DUNE("Lamadegaan", "Desert", 4),
+    ARCTIC("Baraf", "Arctic", 4),
+    BLEACH("Bleach", "Bleach Bypass", 4),
+    SILVER("Lacag", "Silver", 5),
+    CHARCOAL("Dhuxul", "Charcoal", 5),
+    SELENIUM("Buluug-madow", "Selenium", 5),
+    SKIN_GLOW("Maqaar dhalaal", "Skin Glow", 6),
+    ROSY("Ubax", "Rosy", 6),
+    BRONZE("Naxaas", "Sunset Bronze", 6),
+    LUSH("Cagaar", "Lush Green", 7),
+    OCEAN("Bad", "Ocean", 7),
+    AUTUMN("Dayr", "Autumn", 7),
+    TASTY("Cunto", "Tasty", 8),
+    CREAMY("Kareem", "Creamy", 8),
+    NEON_NIGHT("Habeen neon", "Neon Night", 9),
+    MIDNIGHT("Saqbadh", "Midnight", 9);
 
     val label: String get() = L.t(so, en)
 }
@@ -289,7 +321,8 @@ class Adjust(
     var highlights: Float = 0f,   // -1..1
     var shadows: Float = 0f,      // -1..1
     var vibrance: Float = 0f,     // -1..1
-    var fade: Float = 0f          // 0..1 (lifted blacks)
+    var fade: Float = 0f,         // 0..1 (lifted blacks)
+    var presetAmount: Float = 1f  // 0..1 how strong the filter is
 ) {
     fun isColorIdentity() = brightness == 0f && contrast == 0f && saturation == 0f &&
         temperature == 0f && tint == 0f && (preset == FilterPreset.NONE)
