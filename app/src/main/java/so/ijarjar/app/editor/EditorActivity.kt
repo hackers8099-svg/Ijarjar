@@ -672,6 +672,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         if (l.phoneStyle != null) {
                             t(R.drawable.ic_image_add, tr("Beddel shaashadda", "Replace screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
                             t(R.drawable.ic_mockup, tr("Beddel taleefanka", "Replace phone")) { showPhoneStyle(l) }
+                            t(R.drawable.ic_flip, tr("Rog shaashadda", "Flip screen")) { showScreenFlip(l, "Screen") }
                         }
                         t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
                     }
@@ -2406,6 +2407,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     // ------------------------------------------------------------------ real 3D phones + model parts
 
     private var partTarget: Pair<Layer, String>? = null
+    private var extraVideoMats: List<String> = emptyList()
     private val pickPartMedia = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         val (l, mat) = partTarget ?: return@registerForActivityResult
         if (uri == null) return@registerForActivityResult
@@ -2415,6 +2417,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         if (isVideo) for (p in l.parts.values) if (p.video) { p.video = false; p.tex = null }
         val part = l.parts.getOrPut(mat) { so.ijarjar.app.model.ModelPart(name = mat) }
         part.tex = uri.toString(); part.video = isVideo
+        // the same video on the other parts that shared that picture
+        if (isVideo) for (m2 in extraVideoMats) l.parts.getOrPut(m2) { so.ijarjar.app.model.ModelPart(name = m2) }.let { it.tex = uri.toString(); it.video = true }
+        extraVideoMats = emptyList()
         if (isVideo) io.execute {
             val info = MediaUtils.probe(this, uri)
             main.post { if (info != null && info.durationMs > l.durationMs && !photo) l.endMs = l.startMs + info.durationMs; commit() }
@@ -2443,6 +2448,15 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 }
             }
         }
+        d.show()
+    }
+
+    /** If the picture on a screen is upside down or mirrored, turn it here. */
+    private fun showScreenFlip(l: Layer, mat: String) {
+        val (d, root) = Ui.sheet(this, tr("Rog shaashadda", "Flip screen")) { commit() }
+        val p = l.parts.getOrPut(mat) { so.ijarjar.app.model.ModelPart(name = mat) }
+        root.addView(Ui.choiceRow(this, listOf(tr("Kor-hoos: caadi", "Upside down: no"), tr("Kor-hoos: rog", "Upside down: flip")), if (p.flipV) 1 else 0) { p.flipV = it == 1; live() })
+        root.addView(Ui.choiceRow(this, listOf(tr("Muraayad: caadi", "Mirror: no"), tr("Muraayad: rog", "Mirror: flip")), if (p.flipH) 1 else 0) { p.flipH = it == 1; live() })
         d.show()
     }
 
@@ -2546,6 +2560,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         glbImageTarget = l to im.index; glbImageMats = im.usedBy.map { it.substringBeforeLast(" (") }
                         d.dismiss(); pickGlbImage.launch(imagesOnly())
                     })
+                    if (im.usedBy.isNotEmpty()) btns.addView(Ui.button(this, "Video", false) {
+                        // video plays live on the parts that use this picture
+                        val mats = im.usedBy.map { it.substringBeforeLast(" (") }.distinct()
+                        partTarget = l to mats.first(); extraVideoMats = mats.drop(1)
+                        d.dismiss(); pickPartMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+                    }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
                     if (swapped) btns.addView(Ui.button(this, tr("Asal", "Original"), false) { l.modelImages.remove(im.index.toString()); d.dismiss(); rebuildModel(l) { showGlbContents(l) } },
                         LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
                     col.addView(btns)
@@ -2623,6 +2643,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         live()
                     }
                     btns.addView(eye)
+                    // turn the picture the right way: upside down / mirror
+                    btns.addView(Ui.text(this, "↕", 18f, Ui.ACCENT).apply { setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
+                        setOnClickListener { val pp = l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }; pp.flipV = !pp.flipV; live() } })
+                    btns.addView(Ui.text(this, "↔", 18f, Ui.ACCENT).apply { setPadding(dp(8f), dp(4f), dp(8f), dp(4f))
+                        setOnClickListener { val pp = l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }; pp.flipH = !pp.flipH; live() } })
                     // delete = hide for good (Reset brings it back)
                     small(R.drawable.ic_delete) {
                         l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }.hidden = true

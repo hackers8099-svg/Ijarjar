@@ -662,4 +662,5 @@ class SoundFx(
 }
 
 /** One part (material) of a 3D model: a friendly name, a picture or video on it, a colour. */
-class ModelPart(var name: String = "", var tex: String? = null, var video: Boolean = false, var color: Int = 0, var hidden: Boolean = false)
+class ModelPart(var name: String = "", var tex: String? = null, var video: Boolean = false, var color: Int = 0, var hidden: Boolean = false,
+                var flipV: Boolean = false, var flipH: Boolean = false)
