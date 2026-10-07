@@ -1083,18 +1083,15 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 when {
                     lower.any { it.endsWith(".mogrt") || it.endsWith(".aep") || it.endsWith(".prproj") } -> MaterialAlertDialogBuilder(this)
                         .setTitle(tr("Faylkan si toos ah uma shaqeeyo", "This file can't be opened directly"))
-                        .setMessage(tr("Faylasha .mogrt iyo .aep waxay u baahan yihiin Adobe. After Effects ka dhoofi sidan:\n\n• Lottie (.json) adigoo isticmaalaya Bodymovin — qoraalka waad beddeli kartaa\n• PNG sequence (transparent)\n• GIF\n\nKadib halkan ku soo gali.",
-                            ".mogrt and .aep files need Adobe software. From After Effects export as:\n\n• Lottie (.json) with Bodymovin — the text stays editable\n• PNG sequence (transparent)\n• GIF\n\nThen import it here."))
+                        .setMessage(tr("Faylasha .mogrt iyo .aep waxay u baahan yihiin Adobe. After Effects ka dhoofi sidan:\n\n• Lottie (.json) adigoo isticmaalaya Bodymovin — qoraalka waad beddeli kartaa\n• MOV (Animation / PNG codec, RGB + Alpha)\n• PNG sequence (transparent)\n• GIF\n\nKadib halkan ku soo gali.",
+                            ".mogrt and .aep files need Adobe software. From After Effects export as:\n\n• Lottie (.json) with Bodymovin — the text stays editable\n• MOV (Animation / PNG codec, RGB + Alpha)\n• PNG sequence (transparent)\n• GIF\n\nThen import it here."))
                         .setPositiveButton("OK", null).show()
                     uris.size > 1 && lower.all { it.endsWith(".png") || it.endsWith(".webp") } -> addSequence(uris.sortedBy { MediaUtils.displayName(this, it) }, names.first())
                     uris.size > 1 -> uris.forEach { addMediaLayer(it) }
                     AnimatedSource.isLottieName(lower[0]) || lower[0].endsWith(".zip") -> addLottie(uris[0], names[0])
                     lower[0].endsWith(".gif") -> addGif(uris[0], names[0])
-                    else -> {
-                        if (lower[0].endsWith(".mov")) toast(tr("MOV: hufnaanta (alpha) Android kuma shaqeyso — isticmaal PNG sequence ama Lottie.",
-                            "MOV: Android can't play transparency — use a PNG sequence or Lottie."))
-                        addMediaLayer(uris[0])
-                    }
+                    lower[0].endsWith(".mov") -> addMovAlpha(uris[0], names[0])
+                    else -> addMediaLayer(uris[0])
                 }
             }
         }
@@ -1127,6 +1124,43 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 newLayerTimes(l, (uris.size * 1000L / 25).coerceAtLeast(500))
                 addLayer(l)
                 toast(tr("${uris.size} sawir ayaa la isku xiray (25 fps)", "${uris.size} frames joined (25 fps)"))
+            }
+        }
+    }
+
+    /** Transparent MOV (After Effects "Animation" or "PNG" codec, RGB + Alpha) → frames with alpha. */
+    private fun addMovAlpha(uri: Uri, name: String) {
+        val (d, root) = Ui.sheet(this, tr("MOV hufan (alpha)", "Transparent MOV (alpha)"))
+        root.addView(Ui.label(this, tr("Fiimkan waa la furayaa si hufnaanta loo ilaaliyo…", "Reading the frames and keeping the transparency…")))
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        root.addView(bar)
+        d.show()
+        var cancelled = false
+        d.setOnDismissListener { cancelled = true }
+        io.execute {
+            val res = so.ijarjar.app.media.MovAlpha.extract(this, uri) { pr -> main.post { bar.progress = pr } }
+            main.post {
+                if (cancelled && res !is so.ijarjar.app.media.MovAlpha.Result.Ok) return@post
+                d.setOnDismissListener {}; d.dismiss()
+                when (res) {
+                    is so.ijarjar.app.media.MovAlpha.Result.Ok -> {
+                        val l = Layer(kind = LayerKind.ANIMATED, name = "MOV · $name", frames = res.frames.toMutableList(), fps = res.fps)
+                        fitBase(l, res.w, res.h)
+                        newLayerTimes(l, (res.frames.size * 1000L / res.fps).toLong().coerceAtLeast(300))
+                        addLayer(l)
+                        toast(tr("MOV hufan waa la soo geliyay ✓ (${res.frames.size} frame)", "Transparent MOV added ✓ (${res.frames.size} frames)"))
+                    }
+                    is so.ijarjar.app.media.MovAlpha.Result.Other -> {
+                        if (res.hasAlpha) MaterialAlertDialogBuilder(this)
+                            .setTitle(tr("Codec-kan (${res.codec}) lama taageero", "This codec (${res.codec}) isn't supported"))
+                            .setMessage(tr("ProRes 4444 / HEVC alpha ma furmaan Android. After Effects / Media Encoder ka dhoofi sidan:\n\n• Format: QuickTime\n• Video Codec: Animation  ama  PNG\n• Channels: RGB + Alpha\n\nKadib halkan ku soo gali — hufnaantu waa shaqeyneysaa.",
+                                "ProRes 4444 / HEVC alpha can't be decoded on Android. Export from After Effects / Media Encoder as:\n\n• Format: QuickTime\n• Video Codec: Animation  or  PNG\n• Channels: RGB + Alpha\n\nThen import it here — the transparency will work."))
+                            .setPositiveButton(tr("Sidaas ku dar (alpha la'aan)", "Add without alpha")) { _, _ -> addMediaLayer(uri) }
+                            .setNegativeButton(tr("Jooji", "Cancel"), null).show()
+                        else addMediaLayer(uri)
+                    }
+                    else -> addMediaLayer(uri)
+                }
             }
         }
     }
@@ -1927,6 +1961,36 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
+    private var presetTarget: Layer? = null
+    private val pickPreset = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val l = presetTarget ?: return@registerForActivityResult
+        if (uri == null) { showPresets(l); return@registerForActivityResult }
+        io.execute {
+            val res = so.ijarjar.app.data.PresetImport.import(this, uri)
+            main.post {
+                when (res) {
+                    is so.ijarjar.app.data.PresetImport.Result.Ok -> {
+                        val mine = so.ijarjar.app.data.Presets.load(this)
+                        mine.addAll(res.presets); so.ijarjar.app.data.Presets.save(this, mine)
+                        so.ijarjar.app.data.Presets.apply(res.presets.first(), l); commit()
+                        toast(tr("${res.presets.size} preset ayaa la soo geliyay ✓", "${res.presets.size} preset(s) imported ✓"))
+                        previewAnim(l, true)
+                    }
+                    is so.ijarjar.app.data.PresetImport.Result.Fail -> MaterialAlertDialogBuilder(this)
+                        .setTitle(tr("Preset-ka lama akhrin", "Couldn't read the preset"))
+                        .setMessage(when (res.reason) {
+                            "ffx" -> tr("After Effects .ffx waa fayl xiran oo Adobe kaliya akhrin karto. Beddelkeeda: animation-ka AE ka dhoofi Lottie (.json, Bodymovin) ama ku samee halkan oo keydi preset ahaan.",
+                                "After Effects .ffx is a closed format only Adobe can read. Instead export the animation from AE as Lottie (.json, Bodymovin), or build it here and save it as a preset.")
+                            "nokeys" -> tr("Preset-kan kuma jiraan keyframes Position/Scale/Rotation/Opacity ah (tusaale Lumetri ama effect kale). Midabka: isticmaal .cube LUT.",
+                                "This preset has no Position/Scale/Rotation/Opacity keyframes (e.g. Lumetri or another effect). For colour use a .cube LUT.")
+                            else -> tr("Faylkan ma aha .prfpset ama .ijpreset.", "This isn't a .prfpset or .ijpreset file.")
+                        })
+                        .setPositiveButton("OK", null).show()
+                }
+            }
+        }
+    }
+
     /** Save a layer's animation and apply it to other layers (works like Premiere / After Effects presets). */
     private fun showPresets(l: Layer) {
         val (d, root) = Ui.sheet(this, "Presets") { commit() }
@@ -1958,8 +2022,17 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 d.dismiss()
             })
         if (mine.isNotEmpty()) buttonRow(root, tr("Tirtir presets-kayga", "Delete my presets") to { so.ijarjar.app.data.Presets.save(this, emptyList()); d.dismiss() })
-        root.addView(Ui.label(this, tr("Fiiro: faylasha .ffx / .prfpset ee Adobe Android kuma furmaan. Looks-ka Lumetri (.cube) waxaad ku soo gelin kartaa Filter → LUT.",
-            "Note: Adobe .ffx / .prfpset files can't be read on Android. Lumetri looks (.cube) can be imported in Filters → LUT.")))
+        buttonRow(root,
+            tr("Soo geli (.prfpset / .ijpreset)", "Import (.prfpset / .ijpreset)") to { presetTarget = l; d.dismiss(); pickPreset.launch(arrayOf("*/*")) },
+            tr("Wadaag presets-kayga", "Share my presets") to {
+                if (mine.isEmpty()) toast(tr("Weli preset ma lihid", "No presets yet")) else {
+                    val f = File(cacheDir, "IjarJar-presets.ijpreset")
+                    f.writeText(so.ijarjar.app.data.PresetImport.toJson(mine))
+                    shareMedia(null, f, "application/octet-stream")
+                }
+            })
+        root.addView(Ui.label(this, tr("Premiere Pro .prfpset: Position, Scale, Rotation iyo Opacity keyframes ayaa la akhriyaa. After Effects .ffx waa fayl xiran (binary) — Android kuma furmo. Looks-ka Lumetri (.cube) → Filter → LUT.",
+            "Premiere Pro .prfpset: Position, Scale, Rotation and Opacity keyframes are read. After Effects .ffx is a closed binary format and can't be opened. Lumetri looks (.cube) → Filters → LUT.")))
         d.show()
     }
 
@@ -2021,8 +2094,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 else -> { mockupNext = true; pickOverlay.launch(arrayOf("video/*", "image/*")) }
             }
         }
-        root.addView(Ui.label(this, tr("Muuqaal, sawir, GIF, PNG sequence, Lottie (.json) — ama mashruuc sawir ah oo si toos ah u cusboonaada (dynamic link).",
-            "Video, picture, GIF, PNG sequence, Lottie (.json) — or a photo project that updates live (dynamic link).")))
+        root.addView(Ui.label(this, tr("Muuqaal, sawir, GIF, PNG sequence, MOV hufan (alpha), Lottie (.json) — ama mashruuc sawir ah oo si toos ah u cusboonaada (dynamic link).",
+            "Video, picture, GIF, PNG sequence, transparent MOV (alpha), Lottie (.json) — or a photo project that updates live (dynamic link).")))
         d.show()
     }
 

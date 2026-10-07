@@ -122,7 +122,7 @@ object Model3D {
         if (!load(context, uri)) return null
         if (swap == null || swapW != w || swapH != h) {
             swap?.let { e.destroySwapChain(it) }
-            swap = e.createSwapChain(w, h, SwapChain.CONFIG_READABLE or SwapChain.CONFIG_TRANSPARENT)
+            swap = e.createSwapChain(w, h, com.google.android.filament.SwapChainFlags.CONFIG_READABLE or com.google.android.filament.SwapChainFlags.CONFIG_TRANSPARENT)
             swapW = w; swapH = h
         }
         val v = view!!; val cam = camera!!; val r = renderer!!
