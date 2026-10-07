@@ -183,6 +183,8 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
     fun fit() { viewStart = 0; viewEnd = -1; invalidate() }
     private var dragging = -1   // 0 = out handle, 1 = in handle, 2 = scrub, 3 = pinch
     private var lastMid = 0f
+    private var gx = 0f; private var gy = 0f; private var decided = false
+    private val gslop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
     private fun v(p: Pose): Float = when (prop) {
         0 -> p.cx * 100; 1 -> p.cy * 100; 2 -> p.scale * 100; 3 -> p.rotation; 4 -> p.opacity * 100
@@ -244,7 +246,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
             val sp = abs(e.getX(0) - e.getX(1)).coerceAtLeast(1f)
             val mid = (e.getX(0) + e.getX(1)) / 2
             when (e.actionMasked) {
-                MotionEvent.ACTION_POINTER_DOWN -> { pinchSpan = sp; dragging = 3; lastMid = mid }
+                MotionEvent.ACTION_POINTER_DOWN -> { pinchSpan = sp; dragging = 3; lastMid = mid; parent?.requestDisallowInterceptTouchEvent(true) }
                 MotionEvent.ACTION_MOVE -> if (dragging == 3 && pinchSpan > 0f) {
                     zoom(sp / pinchSpan, tOf(mid)); pinchSpan = sp
                     val dt = ((lastMid - mid) / (width - padL - padR) * (vEnd() - viewStart)).toLong()
@@ -257,20 +259,22 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                parent?.requestDisallowInterceptTouchEvent(true)
+                gx = e.x; gy = e.y; decided = false
                 dragging = 2
                 handles()?.let { (h1, h2) ->
                     if (hypot(e.x - h1[0], e.y - h1[1]) < 22 * d) dragging = 0
                     else if (hypot(e.x - h2[0], e.y - h2[1]) < 22 * d) dragging = 1
                 }
-                if (dragging == 2) {
-                    // tap on a keyframe selects it
-                    val hit = layer.keyframes.minByOrNull { abs(tx(it.t) - e.x) }
-                    if (hit != null && abs(tx(hit.t) - e.x) < 18 * d) { selected = hit; onSeek(layer.startMs + hit.t); dragging = -1 }
-                    else onSeek(layer.startMs + tOf(e.x))
-                }
+                // handles grab the finger at once; elsewhere we wait to see if it is a scroll
+                if (dragging != 2) { parent?.requestDisallowInterceptTouchEvent(true); decided = true }
             }
             MotionEvent.ACTION_MOVE -> {
+                if (!decided) {
+                    val ax = abs(e.x - gx); val ay = abs(e.y - gy)
+                    if (ax < gslop && ay < gslop) return true
+                    if (ay > ax) { dragging = -1; return false }      // up / down = scroll the panel
+                    decided = true; parent?.requestDisallowInterceptTouchEvent(true)
+                }
                 val a = selected
                 if (dragging == 3) return true
                 if (dragging == 2) onSeek(layer.startMs + tOf(e.x))
@@ -286,7 +290,15 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                     onEdit(); invalidate()
                 }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> dragging = -1
+            MotionEvent.ACTION_UP -> {
+                if (!decided && dragging == 2) {
+                    // a tap: pick a keyframe or move the playhead
+                    val hit = layer.keyframes.minByOrNull { abs(tx(it.t) - e.x) }
+                    if (hit != null && abs(tx(hit.t) - e.x) < 18 * d) { selected = hit; onSeek(layer.startMs + hit.t) } else onSeek(layer.startMs + tOf(e.x))
+                }
+                dragging = -1
+            }
+            MotionEvent.ACTION_CANCEL -> dragging = -1
         }
         return true
     }

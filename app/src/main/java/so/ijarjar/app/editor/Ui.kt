@@ -127,7 +127,10 @@ object Ui {
     fun tabs(c: Context, root: LinearLayout, tabs: List<Pair<String, (LinearLayout) -> Unit>>, selected: Int = 0) {
         val body = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(c, 6f), 0, 0) }
         fun show(i: Int) { body.removeAllViews(); tabs[i].second(body) }
-        root.addView(tabBar(c, tabs.map { it.first }, selected) { show(it) })
+        // in a panel the tab bar stays on top while the content scrolls
+        val panel = root.tag as? Panel
+        if (panel != null) panel.top.addView(tabBar(c, tabs.map { it.first }, selected) { show(it); panel.scrollTop() })
+        else root.addView(tabBar(c, tabs.map { it.first }, selected) { show(it) })
         root.addView(body)
         show(selected)
     }
@@ -347,7 +350,10 @@ class Panel(val context: Context, title: String) {
         }
         scroll.addView(root)
         view.addView(scroll)
+        root.tag = this
     }
+
+    fun scrollTop() { scroll.scrollTo(0, 0) }
 
     fun setOnDismissListener(f: () -> Unit) { onDismiss = f }
 
