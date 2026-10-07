@@ -165,6 +165,14 @@ class FilterTile(context: Context, thumb: Bitmap?, private val preset: FilterPre
 
 /** A colourful built-in sample picture (sky, sun, hills, water, a person) to show filters when there is no media yet. */
 object FilterSample {
+    private var person: Bitmap? = null
+    private var food: Bitmap? = null
+    /** Portrait photo (NASA, public domain) – shows how a filter looks on skin, like CapCut's model photos. */
+    fun person(c: Context): Bitmap? = person ?: runCatching { android.graphics.BitmapFactory.decodeResource(c.resources, so.ijarjar.app.R.drawable.filter_sample_person) }.getOrNull().also { person = it }
+    /** Food photo (CC0). */
+    fun food(c: Context): Bitmap? = food ?: runCatching { android.graphics.BitmapFactory.decodeResource(c.resources, so.ijarjar.app.R.drawable.filter_sample_food) }.getOrNull().also { food = it }
+    /** The right sample for a filter group: food, landscape or a person. */
+    fun forGroup(c: Context, group: Int): Bitmap? = when (group) { 8 -> food(c); 7 -> get(); else -> person(c) }
     private var cached: Bitmap? = null
     fun get(): Bitmap {
         cached?.let { return it }

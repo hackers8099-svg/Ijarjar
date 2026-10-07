@@ -669,6 +669,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.kind == LayerKind.MODEL3D) {
                         t(R.drawable.ic_image_add, tr("Waxa ku jira", "Contents"), l.modelImages.isNotEmpty()) { showGlbContents(l) }
                         t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
+                        t(R.drawable.ic_rotate, tr("Jihee / toosi", "Orient"), l.rotX != 0f || l.rotY != 0f) { show3D(l) }
                         if (l.phoneStyle != null) {
                             t(R.drawable.ic_image_add, tr("Beddel shaashadda", "Replace screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
                             t(R.drawable.ic_mockup, tr("Beddel taleefanka", "Replace phone")) { showPhoneStyle(l) }
@@ -1210,16 +1211,22 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         amountBox.addView(Ui.sliderRow(this, tr("Xoog", "Strength") + " · " + a.preset.label, 0f, 1f, a.presetAmount) { a.presetAmount = it; live() })
                 }
                 val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-                fun fill(cat: Int) {
+                var cat = 0
+                var own = false   // false: sample photos (people / food / landscape) like CapCut, true: your own picture
+                fun fill(c: Int) {
+                    cat = c
                     grid.removeAllViews()
-                    val items = if (cat == 0) FilterPreset.entries.toList()
-                        else listOf(FilterPreset.NONE) + FilterPreset.entries.filter { it.group == cat }
-                    filterGrid(grid, items, thumb, { it == a.preset }) { p ->
+                    val items = if (c == 0) FilterPreset.entries.toList()
+                        else listOf(FilterPreset.NONE) + FilterPreset.entries.filter { it.group == c }
+                    val pic = if (own && thumb != null) thumb else so.ijarjar.app.editor.FilterSample.forGroup(this, c)
+                    filterGrid(grid, items, pic, { it == a.preset }) { p ->
                         if (a.preset != p) a.presetAmount = 1f
                         a.preset = p; showAmount(); live()
                     }
                 }
                 body.addView(Ui.choiceRow(this, cats, 0) { fill(it) })
+                if (thumb != null) body.addView(Ui.choiceRow(this, listOf(tr("Sawir tusaale", "Sample photo"), tr("Muuqaalkaaga", "Your picture")), 0) { own = it == 1; fill(cat) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6f) })
                 body.addView(amountBox)
                 body.addView(grid)
                 showAmount(); fill(0)
@@ -2777,6 +2784,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 live(); build()
             },
             "◆ Keyframe" to { d.dismiss(); showKeyframes(l) })
+        buttonRow(root,
+            tr("Rog gadaal ↔ hore (Y 180°)", "Turn around (Y 180°)") to { val q = LayerRenderer.basePose(l, timeMs); q.ry = ((q.ry + 180f) % 360f); LayerRenderer.writePose(l, timeMs, q); live(); build() },
+            tr("Toosi (madax-hoos)", "Upside down fix") to { val q = LayerRenderer.basePose(l, timeMs); q.rotation = ((q.rotation + 180f) % 360f); LayerRenderer.writePose(l, timeMs, q); live(); build() })
         if (l.kind == LayerKind.MODEL3D) buttonRow(root, tr("Qaybaha (sawir, video, midab)", "Parts (picture, video, colour)") to { d.dismiss(); showModelParts(l) })
         if (p0.rx == 0f && p0.ry == 0f && l.keyframes.isEmpty()) root.addView(Ui.label(this, tr("Talo: ◆ Keyframe ku dar si 3D-gu u dhaqaaqo.", "Tip: add ◆ keyframes to animate in 3D.")))
         d.show()
