@@ -372,3 +372,53 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         c.drawText(lab, bx + 6 * d, padT - 14 * d, bubbleText)
     }
 }
+
+/**
+ * A slim time bar inside panels: drag it to move the playhead without closing the panel.
+ * Shows the whole video, the selected layer's span and its keyframes (◆).
+ */
+@SuppressLint("ViewConstructor")
+class MiniTimeline(context: Context, private val duration: () -> Long, private val layer: () -> Layer?,
+                   private val time: () -> Long, private val onSeek: (Long) -> Unit) : View(context) {
+    private val d = resources.displayMetrics.density
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2C2C35.toInt() }
+    private val span = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x5519D3C5 }
+    private val key = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
+    private val head = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; strokeWidth = 2.5f * d }
+    private val txt = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.TEXT2; textSize = 10f * d }
+
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (40 * d).toInt())
+
+    private val l get() = 46 * d
+    private val r get() = width - 10 * d
+    private fun x(t: Long) = l + (r - l) * (t.toFloat() / duration().coerceAtLeast(1))
+    private fun t(x: Float) = (((x - l) / (r - l)).coerceIn(0f, 1f) * duration()).toLong()
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
+        if (e.actionMasked == MotionEvent.ACTION_DOWN || e.actionMasked == MotionEvent.ACTION_MOVE) {
+            var tt = t(e.x)
+            // snap to a keyframe when close
+            layer()?.let { ly -> ly.keyframes.minByOrNull { abs(x(ly.startMs + it.t) - e.x) }?.let { k -> if (abs(x(ly.startMs + k.t) - e.x) < 10 * d) tt = ly.startMs + k.t } }
+            onSeek(tt); invalidate()
+        }
+        return true
+    }
+
+    override fun onDraw(c: Canvas) {
+        val cy = height / 2f
+        c.drawRoundRect(RectF(l, cy - 7 * d, r, cy + 7 * d), 7 * d, 7 * d, track)
+        layer()?.let { ly ->
+            c.drawRoundRect(RectF(x(ly.startMs), cy - 7 * d, x(ly.endMs), cy + 7 * d), 7 * d, 7 * d, span)
+            for (k in ly.keyframes) {
+                val kx = x(ly.startMs + k.t); val s = 5 * d
+                c.drawPath(Path().apply { moveTo(kx, cy - s); lineTo(kx + s, cy); lineTo(kx, cy + s); lineTo(kx - s, cy); close() }, key)
+            }
+        }
+        val now = time()
+        val hx = x(now)
+        c.drawLine(hx, cy - 13 * d, hx, cy + 13 * d, head)
+        c.drawText("%d:%02d.%d".format(now / 60000, (now / 1000) % 60, (now % 1000) / 100), 4 * d, cy + 4 * d, txt)
+    }
+}

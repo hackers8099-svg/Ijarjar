@@ -247,6 +247,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             }
             stage.timeMs = if (photo) 0 else timeMs
             stage.refresh()
+            miniTimeline?.let { m -> if (m.isAttachedToWindow) m.invalidate() else miniTimeline = null }
             activeGraph?.let { g -> if (g.isAttachedToWindow) { if (g.playheadMs != timeMs) g.playheadMs = timeMs } else activeGraph = null }
             if (!photo) {
                 timeLabel.text = TimelineView.fmt(timeMs) + " / " + TimelineView.fmt(project.durationMs)
@@ -390,6 +391,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     override fun attachPanel(panel: Panel) {
         this.panel?.let { if (it !== panel) it.dismiss() }
         if (panel.snapshot == null) panel.snapshot = ProjectStore.toJson(project)
+        // a slim time bar in every video panel: move the playhead without closing the panel
+        if (!photo && project.durationMs > 0 && panel.view.findViewWithTag<View>("mini") == null) {
+            val mt = MiniTimeline(this, { project.durationMs }, { selectedLayer() }, { timeMs }) { t -> onKeyframeTap(t) }.apply { tag = "mini" }
+            panel.view.addView(mt, 2, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { leftMargin = dp(6f); rightMargin = dp(6f) })
+            miniTimeline = mt
+        }
         this.panel = panel
         panelBox.removeAllViews()
         val maxH = (resources.displayMetrics.heightPixels * 0.40f).toInt()
@@ -2665,6 +2672,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     // ------------------------------------------------------------------ keyframes (Motion Tools style)
 
     private var activeGraph: GraphView? = null
+    private var miniTimeline: MiniTimeline? = null
 
     /** Adds keyframes from the playhead: each step is (ms after the playhead, change to the pose). */
     /**
