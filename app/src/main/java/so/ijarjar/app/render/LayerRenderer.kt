@@ -424,10 +424,11 @@ object LayerRenderer {
 
     /** Source picture of an image / video / animated layer after crop and chroma key. */
     fun picture(context: Context, l: Layer, t: Long, content: Bitmap?, maxDim: Int): Bitmap? {
-        val static = l.kind == LayerKind.IMAGE
+        val static = l.kind == LayerKind.IMAGE && l.linkedProject == null
         val key = "${l.uri}|${l.cropL}|${l.cropT}|${l.cropR}|${l.cropB}|$maxDim"
         var b: Bitmap = when {
             content != null -> content
+            l.linkedProject != null -> so.ijarjar.app.data.DynamicLink.bitmap(context, l.linkedProject!!, maxDim) ?: return null
             l.kind == LayerKind.IMAGE && l.uri != null -> MediaUtils.loadBitmapCached(context, Uri.parse(l.uri), maxDim) ?: return null
             l.kind == LayerKind.ANIMATED -> AnimatedSource.frameAt(context, l, t - l.startMs, maxDim) ?: return null
             else -> return null

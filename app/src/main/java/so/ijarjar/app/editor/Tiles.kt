@@ -149,6 +149,38 @@ class CurveView(context: Context) : View(context) {
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.ACCENT; strokeWidth = 5f; style = Paint.Style.STROKE }
     private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
     private val start = SystemClock.uptimeMillis()
+    /** Called when the user drags a handle (the curve becomes custom). */
+    var onChange: ((FloatArray) -> Unit)? = null
+    private val handle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val handleLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88FFFFFF.toInt(); strokeWidth = 3f }
+    private var dragging = -1
+
+    private fun px(x: Float): Float { val pad = width * 0.08f; return pad + x * (width - pad * 2) }
+    private fun py(y: Float): Float { val pad = width * 0.08f; val h = height - pad * 2; return pad + h - y * h * 0.8f - h * 0.1f }
+    private fun vx(p: Float): Float { val pad = width * 0.08f; return ((p - pad) / (width - pad * 2)).coerceIn(0f, 1f) }
+    private fun vy(p: Float): Float { val pad = width * 0.08f; val h = height - pad * 2; return ((pad + h - h * 0.1f - p) / (h * 0.8f)).coerceIn(-1f, 2f) }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+        if (onChange == null) return false
+        when (e.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                val d1 = kotlin.math.hypot(e.x - px(b[0]), e.y - py(b[1]))
+                val d2 = kotlin.math.hypot(e.x - px(b[2]), e.y - py(b[3]))
+                dragging = if (d1 < d2) 0 else 1
+            }
+            android.view.MotionEvent.ACTION_MOVE -> if (dragging >= 0) {
+                val nb = b.copyOf()
+                nb[dragging * 2] = vx(e.x); nb[dragging * 2 + 1] = vy(e.y)
+                easing = Easing.CUSTOM
+                b = nb
+                onChange?.invoke(nb)
+            }
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> dragging = -1
+        }
+        return true
+    }
 
     override fun onDraw(canvas: Canvas) {
         val pad = width * 0.08f
@@ -164,6 +196,12 @@ class CurveView(context: Context) : View(context) {
             if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
         }
         canvas.drawPath(path, line)
+        if (easing == Easing.CUSTOM || onChange != null) {
+            canvas.drawLine(px(0f), py(0f), px(b[0]), py(b[1]), handleLine)
+            canvas.drawLine(px(1f), py(1f), px(b[2]), py(b[3]), handleLine)
+            canvas.drawCircle(px(b[0]), py(b[1]), width * 0.025f, handle)
+            canvas.drawCircle(px(b[2]), py(b[3]), width * 0.025f, handle)
+        }
         // moving dot shows the speed of the curve
         val tt = ((SystemClock.uptimeMillis() - start) % 1600) / 1200f
         val x = tt.coerceAtMost(1f)

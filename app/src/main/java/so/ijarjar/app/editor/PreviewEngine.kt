@@ -8,6 +8,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.common.audio.AudioProcessor
+import so.ijarjar.app.media.AudioFx
 import so.ijarjar.app.model.Clip
 import so.ijarjar.app.model.LayerKind
 import so.ijarjar.app.model.MediaKind
@@ -25,7 +30,20 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     var project: Project = Project()
         private set
 
-    private val main: ExoPlayer = ExoPlayer.Builder(context).build()
+    /** A player whose sound goes through the voice clean-up processor. */
+    private fun playerWithFx(settings: () -> Pair<Float, Boolean>): ExoPlayer {
+        val rf = object : DefaultRenderersFactory(context) {
+            override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
+                DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf<AudioProcessor>(AudioFx(settings))).build()
+        }
+        return ExoPlayer.Builder(context, rf).build()
+    }
+
+    private val main: ExoPlayer = playerWithFx {
+        val c = project.clips.getOrNull(currentIndexSafe)
+        if (c == null) Pair(0f, false) else Pair(c.denoise, c.enhanceVoice)
+    }
+    @Volatile private var currentIndexSafe = 0
     private val audioPlayers = HashMap<String, ExoPlayer>()
     private val audioSignature = HashMap<String, String>()
     private val overlayPlayers = HashMap<String, ExoPlayer>()
@@ -96,7 +114,11 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             val existing = audioPlayers[a.id]
             if (existing != null && audioSignature[a.id] == sig) { existing.volume = a.volume.coerceIn(0f, 1f); continue }
             existing?.release()
-            val pl = ExoPlayer.Builder(context).build()
+            val id = a.id
+            val pl = playerWithFx {
+                val t = project.audios.firstOrNull { it.id == id }
+                if (t == null) Pair(0f, false) else Pair(t.denoise, t.enhanceVoice)
+            }
             pl.setMediaItem(MediaItem.fromUri(Uri.parse(a.uri)))
             pl.volume = a.volume.coerceIn(0f, 1f)
             pl.prepare()
@@ -139,6 +161,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         val idx = main.currentMediaItemIndex
         val c = project.clips.getOrNull(idx) ?: return
         currentIndex = idx
+        currentIndexSafe = idx
         lastSpeed = if (c.kind == MediaKind.VIDEO) SpeedMap.speedAtSrc(c, main.currentPosition.coerceAtLeast(0)) else 1f
         main.playbackParameters = PlaybackParameters(lastSpeed)
         main.volume = if (muteMain) 0f else c.volume.coerceIn(0f, 1f)

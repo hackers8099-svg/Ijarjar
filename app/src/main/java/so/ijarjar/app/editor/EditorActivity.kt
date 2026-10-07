@@ -267,6 +267,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         pr.addView(playBtn, FrameLayout.LayoutParams(dp(48f), dp(44f), Gravity.CENTER))
         val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         keyBtn = Ui.iconButton(this, R.drawable.ic_keyframe, 22f) { toggleKeyframe() }
+        val gridBtn = Ui.iconButton(this, R.drawable.ic_grid, 22f, Ui.TEXT2) {}
+        gridBtn.setOnClickListener {
+            stage.showGrid = !stage.showGrid
+            gridBtn.imageTintList = ColorStateList.valueOf(if (stage.showGrid) Ui.ACCENT else Ui.TEXT2)
+        }
+        right.addView(gridBtn)
         fullBtn = Ui.iconButton(this, R.drawable.ic_fullscreen, 22f) { toggleFullscreen() }
         right.addView(keyBtn); right.addView(fullBtn)
         pr.addView(right, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL))
@@ -433,6 +439,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 if (s.index > 0) t(R.drawable.ic_transition, tr("Isbeddel", "Transition"), c.transition != TransitionKind.NONE) { showTransition(s.index) }
                 if (c.kind == MediaKind.VIDEO) {
                     t(R.drawable.ic_reverse, tr("Dib u celi", "Reverse"), c.reversed) { reverseClip(s.index) }
+                    t(R.drawable.ic_stabilize, tr("Deji gariirka", "Stabilize"), c.stab) { showStabilize(s.index) }
+                    t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
                     t(R.drawable.ic_freeze, tr("Qabooji", "Freeze")) { freezeFrame(s.index) }
                     t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
                 }
@@ -460,7 +468,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (!photo) t(R.drawable.ic_animation, tr("Dhaqdhaqaaq", "Animation"),
                         l.animIn != LayerAnim.NONE || l.animOut != LayerAnim.NONE || l.textIn != TextAnim.NONE || l.textOut != TextAnim.NONE ||
                             l.animLoop != LoopAnim.NONE || l.textLoop != TextLoop.NONE) { showAnimation(l) }
-                    if (!photo) t(R.drawable.ic_keyframe, "Keyframe", l.keyframes.isNotEmpty()) { toggleKeyframe() }
+                    if (!photo) t(R.drawable.ic_keyframe, "Keyframe", l.keyframes.isNotEmpty()) { showKeyframes(l) }
+                    if (!photo) t(R.drawable.ic_preset, "Presets") { showPresets(l) }
                     if (!photo && l.keyframes.isNotEmpty()) t(R.drawable.ic_curve, tr("Qalooc", "Curve")) { showCurve(l) }
                     if (!photo) t(R.drawable.ic_expression, tr("Expression", "Expression"), l.expr != Expression.NONE || l.motionBlur) { showExpression(l) }
                     if (l.isPicture()) {
@@ -496,6 +505,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 val a = selectedAudio()!!
                 back()
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showAudioVolume(a) }
+                t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), a.denoise > 0f || a.enhanceVoice) { showVoiceFx(a.denoise, a.enhanceVoice) { d, e -> a.denoise = d; a.enhanceVoice = e } }
                 t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitAudio(a) }
                 t(R.drawable.ic_start_here, tr("Bilow halkan", "Start here")) { a.startMs = timeMs; commit() }
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { val b = a.copy(); b.startMs = a.endMs; project.audios.add(b); commit() }
@@ -513,6 +523,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
                 t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
                 t(R.drawable.ic_ratio, tr("Cabbir", "Size")) { showAspect() }
+                t(R.drawable.ic_grid, tr("Shabag", "Grid"), stage.showGrid) { stage.showGrid = !stage.showGrid; buildTools() }
+                t(R.drawable.ic_send, tr("U dir muuqaal", "Send to video")) { sendToVideo() }
             }
             else -> {
                 t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit")) {
@@ -523,9 +535,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_text, tr("Qoraal", "Text")) { addText() }
                 t(R.drawable.ic_caption, tr("Qoraal-hoosaad", "Captions")) { showCaptions() }
                 t(R.drawable.ic_sticker, "Sticker") { showStickers() }
-                t(R.drawable.ic_overlay, "Overlay") {
-                    pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream"))
-                }
+                t(R.drawable.ic_overlay, "Overlay") { showOverlayMenu() }
                 t(R.drawable.ic_effects, tr("Saameyn", "Effects")) { showEffects(null) }
                 t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
@@ -620,6 +630,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     override fun onTransitionTap(clipIndex: Int) { showTransition(clipIndex) }
+
+    override fun onKeyframeTap(timeMs: Long) {
+        if (engine.isPlaying) { engine.pause(); updatePlayButton() }
+        this.timeMs = timeMs
+        timeline.timeMs = timeMs
+        engine.seekTo(timeMs)
+    }
 
     override fun onTimelineEditing() { stage.refresh() }
 
@@ -1370,6 +1387,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val k = LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.filter { it.t <= timeMs - l.startMs }.maxByOrNull { it.t } ?: l.keyframes.minByOrNull { it.t } ?: return
         val (d, root) = Ui.sheet(this, tr("Qalooca keyframe-ka", "Keyframe curve")) { commit() }
         val curve = CurveView(this).apply { easing = k.ease; b = floatArrayOf(k.bx1, k.by1, k.bx2, k.by2) }
+        curve.onChange = { nb -> k.ease = Easing.CUSTOM; k.bx1 = nb[0]; k.by1 = nb[1]; k.bx2 = nb[2]; k.by2 = nb[3]; live() }
+        root.addView(Ui.label(this, tr("Jiid barahaas cad si aad u samayso qalooc gaar ah.", "Drag the white points to make your own curve.")))
         root.addView(curve, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(110f)))
         val custom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun showCustom() {
@@ -1675,6 +1694,213 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun unlink(l: Layer) { l.linkGroup = null; cleanupGroups(); commit() }
 
+    // ------------------------------------------------------------------ keyframes (Motion Tools style)
+
+    private fun showKeyframes(l: Layer) {
+        val (d, root) = Ui.sheet(this, "Keyframes") { commit() }
+        // navigation + add / remove
+        val nav = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        fun jump(next: Boolean) {
+            val rel = timeMs - l.startMs
+            val k = if (next) l.keyframes.filter { it.t > rel + 30 }.minByOrNull { it.t } else l.keyframes.filter { it.t < rel - 30 }.maxByOrNull { it.t }
+            if (k != null) onKeyframeTap(l.startMs + k.t)
+        }
+        nav.addView(Ui.iconButton(this, R.drawable.ic_prev) { jump(false) })
+        nav.addView(Ui.button(this, tr("◆ Ku dar / tirtir", "◆ Add / remove"), false) { toggleKeyframe(); d.dismiss(); showKeyframes(selectedLayer() ?: return@button) },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        nav.addView(Ui.iconButton(this, R.drawable.ic_next) { jump(true) })
+        root.addView(nav)
+        root.addView(Ui.label(this, tr("Tilmaan: keyframe-yada timeline-ka ku jiid si aad u dhaqaajiso; taabo si aad ugu boodo.",
+            "Tip: drag the diamonds on the timeline to move keyframes; tap one to jump to it.")))
+        Ui.tabs(this, root, listOf(
+            tr("Diyaar", "Presets") to { body: LinearLayout ->
+                val sample = if (l.kind == LayerKind.TEXT) sampleText(l) else "★"
+                tileRow(body, so.ijarjar.app.data.Presets.builtIn, { false }, { it.name }, { pr ->
+                    AnimTile(this, sample) { it.endMs = 2600; it.textSizeFrac = 0.24f; so.ijarjar.app.data.Presets.apply(pr, it) }
+                }) { pr -> so.ijarjar.app.data.Presets.apply(pr, l); previewAnim(l, !pr.fromEnd); live() }
+            },
+            tr("Qiimaha", "Values") to { body: LinearLayout ->
+                val p0 = LayerRenderer.basePose(l, timeMs)
+                fun upd(f: (so.ijarjar.app.render.Pose) -> Unit) { val p = LayerRenderer.basePose(l, timeMs); f(p); LayerRenderer.writePose(l, timeMs, p); live() }
+                body.addView(Ui.sliderRow(this, "X", -0.5f, 1.5f, p0.cx.coerceIn(-0.5f, 1.5f)) { v -> upd { it.cx = v } })
+                body.addView(Ui.sliderRow(this, "Y", -0.5f, 1.5f, p0.cy.coerceIn(-0.5f, 1.5f)) { v -> upd { it.cy = v } })
+                body.addView(Ui.sliderRow(this, tr("Cabbir", "Scale"), 0.05f, 5f, p0.scale.coerceIn(0.05f, 5f)) { v -> upd { it.scale = v } })
+                body.addView(Ui.sliderRow(this, tr("Wareeg", "Rotation"), -360f, 360f, p0.rotation.let { if (it > 180) it - 360 else it }.coerceIn(-360f, 360f)) { v -> upd { it.rotation = v } })
+                body.addView(Ui.sliderRow(this, tr("Daahsoon", "Opacity"), 0f, 1f, p0.opacity.coerceIn(0f, 1f)) { v -> upd { it.opacity = v } })
+                body.addView(Ui.sliderRow(this, tr("Ballac", "Width"), 0.05f, 4f, p0.sx.coerceIn(0.05f, 4f)) { v -> upd { it.sx = v } })
+                body.addView(Ui.sliderRow(this, tr("Dherer", "Height"), 0.05f, 4f, p0.sy.coerceIn(0.05f, 4f)) { v -> upd { it.sy = v } })
+            },
+            tr("Qalooc", "Easing") to { body: LinearLayout ->
+                if (l.keyframes.isEmpty()) { body.addView(Ui.label(this, tr("Marka hore keyframe ku dar.", "Add keyframes first."))); return@to }
+                val k = LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.filter { it.t <= timeMs - l.startMs }.maxByOrNull { it.t } ?: l.keyframes.minByOrNull { it.t }!!
+                val curve = CurveView(this).apply { easing = k.ease; b = floatArrayOf(k.bx1, k.by1, k.bx2, k.by2) }
+                curve.onChange = { nb -> k.ease = Easing.CUSTOM; k.bx1 = nb[0]; k.by1 = nb[1]; k.bx2 = nb[2]; k.by2 = nb[3]; live() }
+                body.addView(curve, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(100f)))
+                body.addView(Ui.choiceRow(this, Easing.entries.map { it.label }, Easing.entries.indexOf(k.ease)) { i -> k.ease = Easing.entries[i]; curve.easing = k.ease; live() })
+                buttonRow(body, tr("Dhammaan keyframe-yada", "All keyframes") to {
+                    for (o in l.keyframes) { o.ease = k.ease; o.bx1 = k.bx1; o.by1 = k.by1; o.bx2 = k.bx2; o.by2 = k.by2 }
+                    toast("✓")
+                })
+            }
+        ))
+        d.show()
+    }
+
+    /** Save a layer's animation and apply it to other layers (works like Premiere / After Effects presets). */
+    private fun showPresets(l: Layer) {
+        val (d, root) = Ui.sheet(this, "Presets") { commit() }
+        val mine = so.ijarjar.app.data.Presets.load(this)
+        root.addView(Ui.label(this, tr("Presets-kaaga", "Your presets")))
+        if (mine.isEmpty()) root.addView(Ui.label(this, tr("Weli ma jiraan. Animation samee kadib \"Keydi\" riix.", "None yet. Animate a layer, then tap \"Save\".")))
+        else {
+            val sample = if (l.kind == LayerKind.TEXT) sampleText(l) else "★"
+            tileRow(root, mine, { false }, { it.name }, { pr -> AnimTile(this, sample) { it.endMs = 2600; so.ijarjar.app.data.Presets.apply(pr, it) } }) { pr ->
+                so.ijarjar.app.data.Presets.apply(pr, l); previewAnim(l, true); live()
+            }
+        }
+        root.addView(Ui.label(this, tr("Diyaar ah", "Built-in")))
+        val sample2 = if (l.kind == LayerKind.TEXT) sampleText(l) else "★"
+        tileRow(root, so.ijarjar.app.data.Presets.builtIn, { false }, { it.name }, { pr -> AnimTile(this, sample2) { it.endMs = 2600; so.ijarjar.app.data.Presets.apply(pr, it) } }) { pr ->
+            so.ijarjar.app.data.Presets.apply(pr, l); previewAnim(l, !pr.fromEnd); live()
+        }
+        val name = editText("", tr("Magaca preset-ka", "Preset name")) {}
+        root.addView(name)
+        buttonRow(root,
+            tr("Keydi", "Save") to {
+                val n = name.text.toString().ifBlank { "Preset ${mine.size + 1}" }
+                mine.add(so.ijarjar.app.data.Presets.fromLayer(l, n)); so.ijarjar.app.data.Presets.save(this, mine)
+                toast(tr("Waa la keydiyay: ", "Saved: ") + n); d.dismiss()
+            },
+            tr("Ku dabaq kuwa la xiray", "Apply to linked") to {
+                val pr = so.ijarjar.app.data.Presets.fromLayer(l, "tmp")
+                for (o in project.linkedWith(l)) if (o.id != l.id) so.ijarjar.app.data.Presets.apply(pr, o)
+                d.dismiss()
+            })
+        if (mine.isNotEmpty()) buttonRow(root, tr("Tirtir presets-kayga", "Delete my presets") to { so.ijarjar.app.data.Presets.save(this, emptyList()); d.dismiss() })
+        root.addView(Ui.label(this, tr("Fiiro: faylasha .ffx / .prfpset ee Adobe Android kuma furmaan. Looks-ka Lumetri (.cube) waxaad ku soo gelin kartaa Filter → LUT.",
+            "Note: Adobe .ffx / .prfpset files can't be read on Android. Lumetri looks (.cube) can be imported in Filters → LUT.")))
+        d.show()
+    }
+
+    // ------------------------------------------------------------------ stabilise & voice
+
+    private fun showStabilize(i: Int) {
+        val c = project.clips[i]
+        val (d, root) = Ui.sheet(this, tr("Deji gariirka (stabilize)", "Stabilize")) { commit() }
+        if (c.stab && c.stabPath.isNotEmpty()) {
+            root.addView(Ui.label(this, tr("Waa la dejiyay ✓", "Stabilized ✓")))
+            root.addView(Ui.sliderRow(this, tr("Weyneyn", "Crop zoom"), 1f, 1.4f, c.stabZoom.coerceIn(1f, 1.4f)) { c.stabZoom = it; live() })
+            buttonRow(root, tr("Dami", "Turn off") to { c.stab = false; c.stabPath.clear(); d.dismiss() })
+            d.show(); return
+        }
+        root.addView(Ui.label(this, tr("Muuqaalka waa la falanqeynayaa si gariirka kamarada loo dejiyo…", "Analysing the clip to smooth out camera shake…")))
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        root.addView(bar)
+        d.show()
+        var cancelled = false
+        d.setOnDismissListener { cancelled = true; commit() }
+        io.execute {
+            val path = so.ijarjar.app.media.Stabilizer.analyse(this, Uri.parse(c.uri), c.trimStartMs, c.trimEndMs) { pr -> main.post { bar.progress = pr } }
+            main.post {
+                if (cancelled) return@post
+                if (path == null || path.size < 4) { toast(tr("Lama dejin karo", "Could not stabilize")); d.dismiss(); return@post }
+                c.stabPath = path; c.stab = true; c.stabZoom = 1.1f
+                d.dismiss()
+                toast(tr("Waa la dejiyay ✓", "Stabilized ✓"))
+            }
+        }
+    }
+
+    /** Noise reduction + voice enhance for a clip or an audio track. */
+    private fun showVoiceFx(denoise: Float, enhance: Boolean, set: (Float, Boolean) -> Unit) {
+        var dn = denoise; var en = enhance
+        val (d, root) = Ui.sheet(this, tr("Hagaaji codka", "Voice clean-up")) { commit() }
+        root.addView(Ui.sliderRow(this, tr("Ka saar buuqa", "Noise removal"), 0f, 1f, dn) { dn = it; set(dn, en); live() })
+        root.addView(Ui.choiceRow(this, listOf(tr("Kor u qaad: Maya", "Enhance: off"), tr("Kor u qaad: Haa", "Enhance: on")), if (en) 1 else 0) { en = it == 1; set(dn, en); live() })
+        root.addView(Ui.label(this, tr("Buuqa gadaasha (dabaylo, mishiin, shanqar) waa la yareynayaa; \"Kor u qaad\" codka ayuu cadeynayaa oo xoojinayaa.",
+            "Reduces background noise (wind, hum, hiss); \"Enhance\" makes the voice clearer and louder.")))
+        buttonRow(root, tr("Codka ugu fiican", "Best voice") to { dn = 0.6f; en = true; set(dn, en); d.dismiss() })
+        d.show()
+    }
+
+    // ------------------------------------------------------------------ overlays & dynamic link
+
+    private fun showOverlayMenu() {
+        val (d, root) = Ui.sheet(this, "Overlay")
+        chipRow(root, listOf(
+            R.drawable.ic_overlay to tr("Fayl", "Media file"),
+            R.drawable.ic_dlink to tr("Mashruuc sawir", "Photo project"))) { k ->
+            d.dismiss()
+            if (k == 0) pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream"))
+            else linkPhotoProject()
+        }
+        root.addView(Ui.label(this, tr("Muuqaal, sawir, GIF, PNG sequence, Lottie (.json) — ama mashruuc sawir ah oo si toos ah u cusboonaada (dynamic link).",
+            "Video, picture, GIF, PNG sequence, Lottie (.json) — or a photo project that updates live (dynamic link).")))
+        d.show()
+    }
+
+    private fun addLinkedPhoto(target: Project, photo: Project, start: Long, end: Long) {
+        val r = target.aspectRatio()
+        val pa = photo.aspectRatio()
+        val l = Layer(kind = LayerKind.IMAGE, linkedProject = photo.id, name = "🔗 " + photo.name, startMs = start, endMs = end)
+        l.contentAspect = 1f / pa; l.srcAspect = l.contentAspect
+        l.baseW = if (pa > r) 1f else pa / r
+        target.layers.add(l)
+    }
+
+    private fun linkPhotoProject() {
+        val photos = ProjectStore.list(this).filter { it.isPhoto && it.id != project.id }
+        if (photos.isEmpty()) { toast(tr("Mashruuc sawir ah ma jiro weli", "No photo projects yet")); return }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(tr("Dooro mashruuc sawir", "Choose a photo project"))
+            .setItems(photos.map { it.name }.toTypedArray()) { _, which ->
+                val ph = photos[which]
+                val total = project.durationMs.coerceAtLeast(3000)
+                val st = timeMs.coerceAtMost(total - 500)
+                addLinkedPhoto(project, ph, st, (st + 3000).coerceAtMost(total))
+                commit()
+                project.layers.lastOrNull()?.let { setSelection(TimelineView.Sel.LayerSel(it.id)) }
+                toast(tr("Waa la xiray — marka aad wax ka beddesho sawirka, muuqaalkuna wuu cusboonaanayaa", "Linked — edit the photo and the video updates too"))
+            }.show()
+    }
+
+    /** Photo editor -> video editor (dynamic link). */
+    private fun sendToVideo() {
+        save()
+        val videos = ProjectStore.list(this).filter { !it.isPhoto }
+        val names = arrayOf(tr("+ Mashruuc muuqaal cusub", "+ New video project")) + videos.map { it.name }.toTypedArray()
+        MaterialAlertDialogBuilder(this)
+            .setTitle(tr("U dir muuqaal (dynamic link)", "Send to video (dynamic link)"))
+            .setItems(names) { _, which ->
+                val photoCopy = ProjectStore.fromJson(ProjectStore.toJson(project))
+                io.execute {
+                    ProjectStore.save(applicationContext, photoCopy)
+                    val target: Project = if (which == 0) {
+                        // a new video: a 5 s blank clip as the base, the photo on top
+                        val black = File(filesDir, "blank.png")
+                        if (!black.exists()) {
+                            val b = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888); b.eraseColor(0xFF000000.toInt())
+                            FileOutputStream(black).use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                        }
+                        Project(name = project.name + " · video", aspect = project.aspect).also {
+                            it.clips.add(Clip(uri = Uri.fromFile(black).toString(), kind = MediaKind.IMAGE, sourceDurationMs = 5000, trimStartMs = 0, trimEndMs = 5000, width = 16, height = 16))
+                        }
+                    } else videos[which - 1]
+                    addLinkedPhoto(target, photoCopy, 0, target.durationMs.coerceAtLeast(3000))
+                    ProjectStore.save(applicationContext, target)
+                    main.post {
+                        MaterialAlertDialogBuilder(this)
+                            .setMessage(tr("Sawirka waa la dhigay \"${target.name}\". Wixii aad halkan ka beddesho waxay ka muuqan doonaan muuqaalka.",
+                                "The photo was placed in \"${target.name}\". Changes you make here will show in the video."))
+                            .setNegativeButton(tr("Halkan joog", "Stay here"), null)
+                            .setPositiveButton(tr("Fur muuqaalka", "Open video")) { _, _ ->
+                                startActivity(Intent(this, EditorActivity::class.java).putExtra("id", target.id))
+                            }.show()
+                    }
+                }
+            }.show()
+    }
+
     // ------------------------------------------------------------------ effects & captions
 
     private fun showEffects(replace: Layer?) {
@@ -1706,56 +1932,183 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         return l
     }
 
+    /** Caption templates (Brevidy style): font, colours, box, highlight and animation in one tap. */
+    private class CapTemplate(val name: String, val fn: (Layer) -> Unit)
+
+    private val capTemplates: List<CapTemplate> by lazy {
+        fun base(l: Layer) { l.textColor2 = 0; l.bgColor = 0; l.depth = 0f; l.shadow = false; l.letterSpacing = 0f; l.strokeColor = 0; l.textLoop = TextLoop.NONE; l.textOut = TextAnim.NONE }
+        listOf(
+            CapTemplate("Hormozi") { base(it); it.font = 6; it.bold = true; it.textColor = 0xFFFFFFFF.toInt(); it.strokeColor = 0xFF000000.toInt(); it.strokeWidth = 0.18f; it.textLoop = TextLoop.WORD_POP; it.highlightColor = 0xFFFFE600.toInt(); it.textIn = TextAnim.WORD_POP },
+            CapTemplate("Beast") { base(it); it.font = 6; it.textColor = 0xFFFFE600.toInt(); it.strokeColor = 0xFF000000.toInt(); it.strokeWidth = 0.22f; it.depth = 0.35f; it.depthColor = 0xFF000000.toInt(); it.textIn = TextAnim.LETTER_POP },
+            CapTemplate("Karaoke") { base(it); it.font = 7; it.textColor = 0xFFFFFFFF.toInt(); it.strokeColor = 0xFF000000.toInt(); it.strokeWidth = 0.12f; it.textLoop = TextLoop.KARAOKE; it.highlightColor = 0xFF39FF14.toInt(); it.textIn = TextAnim.WORD_FADE_UP },
+            CapTemplate("Box") { base(it); it.font = 7; it.textColor = 0xFFFFFFFF.toInt(); it.bgColor = 0xE6000000.toInt(); it.textLoop = TextLoop.WORD_HIGHLIGHT; it.highlightColor = 0xFFFF2D55.toInt(); it.textIn = TextAnim.WORD_FADE_UP },
+            CapTemplate("Minimal") { base(it); it.font = 5; it.bold = false; it.textColor = 0xFFFFFFFF.toInt(); it.shadow = true; it.textIn = TextAnim.APPLE; it.textOut = TextAnim.APPLE },
+            CapTemplate("Neon") { base(it); it.textColor = 0xFF7DF9FF.toInt(); it.strokeColor = 0xFFFF2D95.toInt(); it.strokeWidth = 0.08f; it.shadow = true; it.textLoop = TextLoop.WAVE; it.textIn = TextAnim.LETTER_FADE },
+            CapTemplate("Typewriter") { base(it); it.font = 2; it.textColor = 0xFFFFFFFF.toInt(); it.bgColor = 0xCC000000.toInt(); it.textIn = TextAnim.TYPEWRITER },
+            CapTemplate("Bubble") { base(it); it.font = 9; it.textColor = 0xFF111111.toInt(); it.bgColor = 0xFFFFFFFF.toInt(); it.textIn = TextAnim.BOUNCE_IN },
+            CapTemplate("Glitch") { base(it); it.font = 2; it.textColor = 0xFFFFFFFF.toInt(); it.strokeColor = 0xFFFF00FF.toInt(); it.strokeWidth = 0.05f; it.textIn = TextAnim.GLITCH; it.textLoop = TextLoop.JITTER },
+            CapTemplate("Gold") { base(it); it.font = 6; it.textColor = 0xFFFFE27A.toInt(); it.textColor2 = 0xFFE09B12.toInt(); it.depth = 0.5f; it.depthColor = 0xFF6B4300.toInt(); it.textIn = TextAnim.BOUNCE_IN },
+            CapTemplate("Cinema") { base(it); it.font = 1; it.bold = false; it.textColor = 0xFFF5F5F5.toInt(); it.letterSpacing = 0.15f; it.textIn = TextAnim.TRACKING; it.textOut = TextAnim.LETTER_FADE },
+            CapTemplate("Comic") { base(it); it.font = 9; it.textColor = 0xFFFFFFFF.toInt(); it.strokeColor = 0xFF000000.toInt(); it.strokeWidth = 0.2f; it.textLoop = TextLoop.BOUNCE; it.textIn = TextAnim.LETTER_DROP },
+            CapTemplate("Soomaali") { base(it); it.font = 6; it.textColor = 0xFFFFFFFF.toInt(); it.strokeColor = 0xFF4189DD.toInt(); it.strokeWidth = 0.16f; it.textLoop = TextLoop.KARAOKE; it.highlightColor = 0xFF4189DD.toInt(); it.textIn = TextAnim.WORD_POP },
+            CapTemplate("Fire") { base(it); it.font = 6; it.textColor = 0xFFFFF176.toInt(); it.textColor2 = 0xFFFF3D00.toInt(); it.strokeColor = 0xFF3E0000.toInt(); it.strokeWidth = 0.1f; it.textIn = TextAnim.LETTER_RISE },
+            CapTemplate("Pastel") { base(it); it.font = 3; it.bold = false; it.textColor = 0xFFFFC2D1.toInt(); it.strokeColor = 0xFF3A0CA3.toInt(); it.strokeWidth = 0.08f; it.textLoop = TextLoop.WAVE; it.textIn = TextAnim.COLOR_IN; it.highlightColor = 0xFFB5179E.toInt() },
+            CapTemplate("Rainbow") { base(it); it.font = 6; it.textColor = 0xFFFFFFFF.toInt(); it.strokeColor = 0xFF000000.toInt(); it.strokeWidth = 0.14f; it.textLoop = TextLoop.RAINBOW; it.textIn = TextAnim.RANDOM }
+        )
+    }
+
+    private var capWords = 4
+    private var capUpper = false
+
+    private fun captionLayer(text: String, start: Long, end: Long): Layer {
+        val template = project.layers.firstOrNull { it.isCaption }
+        val l = Layer(kind = LayerKind.TEXT, text = if (capUpper) text.uppercase() else text, isCaption = true, textSizeFrac = 0.06f, cy = 0.78f,
+            textColor = 0xFFFFFFFF.toInt(), strokeColor = 0xFF000000.toInt(), strokeWidth = 0.14f, textIn = TextAnim.WORD_POP, animInMs = 400, animOutMs = 250)
+        if (template != null) copyTextStyle(template, l) else capTemplates[0].fn(l)
+        l.startMs = start; l.endMs = end
+        return l
+    }
+
+    /** Splits text over [start,end) into captions of [capWords] words, timed by word length. */
+    private fun addCaptionText(text: String, start: Long, end: Long) {
+        val words = text.split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (words.isEmpty()) return
+        val chunks = words.chunked(capWords.coerceAtLeast(1))
+        val totalChars = words.sumOf { it.length + 1 }.coerceAtLeast(1)
+        var t = start
+        for ((i, ch) in chunks.withIndex()) {
+            val chars = ch.sumOf { it.length + 1 }
+            val len = if (i == chunks.size - 1) end - t else ((end - start) * chars / totalChars)
+            project.layers.add(captionLayer(ch.joinToString(" "), t, (t + len).coerceAtLeast(t + 200)))
+            t += len
+        }
+    }
+
+    /** Re-cuts all captions into chunks of [capWords] words. */
+    private fun rechunkCaptions() {
+        val caps = project.layers.filter { it.isCaption }.sortedBy { it.startMs }
+        if (caps.isEmpty()) return
+        val style = caps[0]
+        project.layers.removeAll { it.isCaption }
+        val keep = Layer().also { copyTextStyle(style, it); it.isCaption = true; it.kind = LayerKind.TEXT }
+        project.layers.add(keep)
+        for (c in caps) addCaptionText(c.text, c.startMs, c.endMs)
+        project.layers.remove(keep)
+    }
+
+    private val askMicForCaptions = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+        if (ok) runAutoCaptions(pendingCaptionLang) else toast(tr("Ogolaanshaha makarafoonka waa loo baahan yahay", "Microphone permission is needed"))
+    }
+    private var pendingCaptionLang = "auto"
+
     private fun showCaptions() {
         val (d, root) = Ui.sheet(this, tr("Qoraal-hoosaad (Captions)", "Captions"))
-        val edit = editText("", tr("Sadar kasta = hal qoraal-hoosaad", "Each line = one caption")) {}.apply { minLines = 3; gravity = Gravity.TOP }
-        root.addView(edit)
-        var per = 2.5f
-        root.addView(Ui.sliderRow(this, tr("Ilbiriqsi", "Seconds"), 0.5f, 8f, per, 0.5f) { per = it })
-        // caption styles with live previews
-        data class CapStyle(val so: String, val en: String, val fn: (Layer) -> Unit)
-        val styles = listOf(
-            CapStyle("Karaoke", "Karaoke") { it.textLoop = TextLoop.KARAOKE; it.textIn = TextAnim.WORD_FADE_UP; it.highlightColor = 0xFFFFE600.toInt() },
-            CapStyle("Eray iftiin", "Highlight") { it.textLoop = TextLoop.WORD_HIGHLIGHT; it.textIn = TextAnim.NONE; it.highlightColor = 0xFFFF2D55.toInt() },
-            CapStyle("Eray weyn", "Word pop") { it.textLoop = TextLoop.WORD_POP; it.textIn = TextAnim.WORD_POP; it.highlightColor = 0xFF19D3C5.toInt() },
-            CapStyle("Apple", "Apple") { it.textLoop = TextLoop.NONE; it.textIn = TextAnim.APPLE; it.textOut = TextAnim.APPLE },
-            CapStyle("Qoraal-qor", "Typewriter") { it.textLoop = TextLoop.NONE; it.textIn = TextAnim.TYPEWRITER },
-            CapStyle("Mowjad", "Wave") { it.textLoop = TextLoop.WAVE; it.textIn = TextAnim.LETTER_RISE },
-            CapStyle("Booddo", "Bounce") { it.textLoop = TextLoop.BOUNCE; it.textIn = TextAnim.BOUNCE_IN }
-        )
-        var chosen: CapStyle? = null
-        root.addView(Ui.label(this, tr("Qaabka", "Style")))
-        tileRow(root, styles, { it == chosen }, { tr(it.so, it.en) }, { s ->
-            AnimTile(this, tr("Salaan wanaagsan", "Hello there")) { it.textSizeFrac = 0.16f; it.strokeColor = 0xFF000000.toInt(); s.fn(it); it.endMs = 2600 }
-        }) { s ->
-            chosen = s
-            val caps = project.layers.filter { it.isCaption }
-            if (caps.isNotEmpty()) { for (c in caps) s.fn(c); live() }
-        }
-        buttonRow(root,
-            tr("Ku dar xariiqda", "Add at playhead") to {
-                val lines = edit.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                if (lines.isNotEmpty()) {
-                    var t = timeMs
-                    val step = (per * 1000).toLong()
-                    for (line in lines) { project.layers.add(captionLayer(line, t, t + step).also { c -> chosen?.fn?.invoke(c) }); t += step }
-                    d.dismiss(); commit()
-                    toast(tr("${lines.size} qoraal-hoosaad waa la daray", "${lines.size} captions added"))
-                }
+        Ui.tabs(this, root, listOf(
+            tr("Auto", "Auto") to { body: LinearLayout ->
+                body.addView(Ui.label(this, tr("Codka muuqaalka ayaa qoraal loo beddelayaa. Luqadda dooro:", "The video's speech becomes captions. Language:")))
+                val langs = listOf("auto" to tr("Toos (auto)", "Auto detect"), "so-SO" to "Soomaali", "en-US" to "English", "ar-SA" to "العربية")
+                var lang = "auto"
+                body.addView(Ui.choiceRow(this, langs.map { it.second }, 0) { lang = langs[it].first })
+                buttonRow(body, tr("Samee captions", "Generate captions") to {
+                    pendingCaptionLang = lang
+                    d.dismiss()
+                    if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) runAutoCaptions(lang)
+                    else askMicForCaptions.launch(Manifest.permission.RECORD_AUDIO)
+                })
             },
-            tr("Muuqaalka oo dhan", "Whole video") to {
-                val lines = edit.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
-                if (lines.isNotEmpty() && project.durationMs > 0) {
-                    val step = project.durationMs / lines.size
-                    for ((i, line) in lines.withIndex()) project.layers.add(captionLayer(line, i * step, (i + 1) * step).also { c -> chosen?.fn?.invoke(c) })
-                    d.dismiss(); commit()
+            tr("Qor", "Type") to { body: LinearLayout ->
+                val edit = editText("", tr("Sadar kasta = hal qoraal-hoosaad", "Each line = one caption")) {}.apply { minLines = 2; gravity = Gravity.TOP }
+                body.addView(edit)
+                var per = 2.5f
+                body.addView(Ui.sliderRow(this, tr("Ilbiriqsi", "Seconds"), 0.5f, 8f, per, 0.5f) { per = it })
+                buttonRow(body,
+                    tr("Xariiqda", "At playhead") to {
+                        val lines = edit.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                        var t = timeMs
+                        val step = (per * 1000).toLong()
+                        for (line in lines) { addCaptionText(line, t, t + step); t += step }
+                        if (lines.isNotEmpty()) { d.dismiss(); commit() }
+                    },
+                    tr("Dhammaan", "Whole video") to {
+                        val lines = edit.text.toString().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                        if (lines.isNotEmpty() && project.durationMs > 0) {
+                            val step = project.durationMs / lines.size
+                            for ((i, line) in lines.withIndex()) addCaptionText(line, i * step, (i + 1) * step)
+                            d.dismiss(); commit()
+                        }
+                    })
+            },
+            tr("Template", "Templates") to { body: LinearLayout ->
+                tileRow(body, capTemplates, { false }, { it.name }, { tpl ->
+                    AnimTile(this, tr("Salaan wanaagsan", "Hello there")) { tpl.fn(it); it.textSizeFrac = 0.17f; it.endMs = 2600 }
+                }, 66f) { tpl ->
+                    val caps = project.layers.filter { it.isCaption }
+                    if (caps.isEmpty()) toast(tr("Marka hore captions samee", "Make some captions first"))
+                    for (c in caps) tpl.fn(c)
+                    live()
                 }
-            })
-        val existing = project.layers.filter { it.isCaption }
-        if (existing.isNotEmpty()) buttonRow(root,
-            tr("Qaabka", "Edit style") to { d.dismiss(); setSelection(TimelineView.Sel.LayerSel(existing[0].id)); showTextEditor(existing[0]) },
-            tr("Tirtir dhammaan", "Delete all") to { project.layers.removeAll { it.isCaption }; d.dismiss(); setSelection(null); commit() })
+                buttonRow(body, tr("Keydi", "Save") to { commit() })
+            },
+            tr("Qaab", "Layout") to { body: LinearLayout ->
+                body.addView(Ui.sliderRow(this, tr("Erayo", "Words / caption"), 1f, 8f, capWords.toFloat(), 1f) { capWords = it.toInt() })
+                body.addView(Ui.choiceRow(this, listOf(tr("Kor", "Top"), tr("Dhexe", "Middle"), tr("Hoos", "Bottom")), -1) { k ->
+                    val y = floatArrayOf(0.18f, 0.5f, 0.8f)[k]
+                    for (c in project.layers) if (c.isCaption) { c.cy = y; c.keyframes.clear() }
+                    live()
+                })
+                body.addView(Ui.choiceRow(this, listOf("Aa", "AA"), if (capUpper) 1 else 0) { k ->
+                    capUpper = k == 1
+                    if (capUpper) for (c in project.layers) if (c.isCaption) c.text = c.text.uppercase()
+                    live()
+                })
+                body.addView(Ui.sliderRow(this, tr("Cabbirka", "Size"), 0.03f, 0.15f, project.layers.firstOrNull { it.isCaption }?.textSizeFrac?.coerceIn(0.03f, 0.15f) ?: 0.06f) { v ->
+                    for (c in project.layers) if (c.isCaption) c.textSizeFrac = v
+                    live()
+                })
+                buttonRow(body,
+                    tr("Kala jar mar kale", "Re-split") to { rechunkCaptions(); d.dismiss(); commit() },
+                    tr("Qaabka", "Style") to {
+                        val first = project.layers.firstOrNull { it.isCaption }
+                        if (first != null) { d.dismiss(); setSelection(TimelineView.Sel.LayerSel(first.id)); showTextEditor(first) }
+                    },
+                    tr("Tirtir", "Delete") to { project.layers.removeAll { it.isCaption }; d.dismiss(); setSelection(null); commit() })
+            }
+        ))
         d.show()
+    }
+
+    private fun runAutoCaptions(lang: String) {
+        if (project.clips.none { it.kind == MediaKind.VIDEO }) { toast(tr("Muuqaal cod leh ku dar", "Add a video with speech")); return }
+        if (!so.ijarjar.app.media.AutoCaptions.supported(this)) {
+            MaterialAlertDialogBuilder(this)
+                .setMessage(tr("Auto captions waxay u baahan yihiin Android 13+ iyo adeegga codka Google. Qoraalka gacanta ku qor qeybta \"Qor\".",
+                    "Auto captions need Android 13+ and Google speech services. You can type captions in the \"Type\" tab."))
+                .setPositiveButton("OK", null).show()
+            return
+        }
+        engine.pause(); updatePlayButton()
+        val (d, root) = Ui.sheet(this, tr("Auto captions", "Auto captions"))
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        val status = Ui.label(this, tr("Codka waa la akhrinayaa…", "Reading the sound…"))
+        root.addView(status); root.addView(bar)
+        val ac = so.ijarjar.app.media.AutoCaptions(this)
+        d.setOnDismissListener { ac.cancel() }
+        d.show()
+        ac.start(ProjectStore.fromJson(ProjectStore.toJson(project)), lang, object : so.ijarjar.app.media.AutoCaptions.Callback {
+            override fun onProgress(done: Int, total: Int) {
+                bar.progress = done * 100 / total.coerceAtLeast(1)
+                status.text = tr("Qoraal-hoosaad ", "Caption ") + "${done + 1} / $total"
+            }
+            override fun onDone(pieces: List<so.ijarjar.app.media.AutoCaptions.Piece>) {
+                d.setOnDismissListener { }; d.dismiss()
+                if (pieces.isEmpty()) { toast(tr("Hadal lama helin (ama luqadda telefoonku ma taageerto)", "No speech found (or the phone does not support this language)")); return }
+                for (p in pieces) addCaptionText(p.text, p.startMs, p.endMs)
+                commit()
+                toast(tr("${pieces.size} qoraal-hoosaad ayaa la sameeyay", "${pieces.size} captions made"))
+                showCaptions()
+            }
+            override fun onError(message: String) { d.setOnDismissListener { }; d.dismiss(); toast(tr("Khalad: ", "Error: ") + message) }
+        })
     }
 
     // ------------------------------------------------------------------ audio
@@ -1969,7 +2322,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         engine.pause(); updatePlayButton()
         val (d, root) = Ui.sheet(this, tr("Dhoofi muuqaalka", "Export video"))
         var res = 1080
+        var mov = false
         root.addView(Ui.choiceRow(this, listOf("480p", "720p", "1080p", "2K", "4K"), 2) { k -> res = intArrayOf(480, 720, 1080, 1440, 2160)[k] })
+        root.addView(Ui.choiceRow(this, listOf("MP4", "MOV"), 0) { k -> mov = k == 1 })
         root.addView(Ui.label(this, tr("Mudada: ", "Duration: ") + TimelineView.fmt(project.durationMs) +
             tr("   ·  2K/4K waxay u baahan yihiin telefoon awood leh", "   ·  2K/4K need a strong phone")))
         val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; visibility = View.GONE }
@@ -1983,13 +2338,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             bar.visibility = View.VISIBLE
             status.text = tr("Waa la samaynayaa… fadlan sug", "Rendering… please wait")
             save()
-            exporter = Exporter(this, ProjectStore.fromJson(ProjectStore.toJson(project)), res, object : Exporter.Callback {
+            val mime = if (mov) "video/quicktime" else "video/mp4"
+            exporter = Exporter(this, ProjectStore.fromJson(ProjectStore.toJson(project)), res, mov = mov, callback = object : Exporter.Callback {
                 override fun onProgress(percent: Int) { bar.progress = percent; status.text = tr("Waa la samaynayaa… ", "Rendering… ") + "$percent%" }
                 override fun onDone(uri: Uri?, file: File) {
                     bar.progress = 100
                     status.text = if (uri != null) tr("Waa la keydiyay: Gallery → Movies/IjarJar", "Saved: Gallery → Movies/IjarJar") else tr("Diyaar", "Done")
                     startBtn.visibility = View.GONE
-                    buttonRow(root, tr("Fur", "Open") to { openMedia(uri, file, "video/mp4") }, tr("Wadaag", "Share") to { shareMedia(uri, file, "video/mp4") })
+                    buttonRow(root, tr("Fur", "Open") to { openMedia(uri, file, mime) }, tr("Wadaag", "Share") to { shareMedia(uri, file, mime) })
                     exporter = null
                 }
                 override fun onError(message: String) {

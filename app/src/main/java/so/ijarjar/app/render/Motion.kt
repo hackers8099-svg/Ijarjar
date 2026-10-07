@@ -48,8 +48,28 @@ object Motion {
                 apply(m, p.clips[i + 1].transition, 1f - (out - localMs).toFloat() / hOut, incoming = false, localMs)
             }
         }
+        if (c.stab && c.stabPath.size >= 2) stabilise(p, c, localMs, m)
         EffectRenderer.applyMotion(p, p.clipStartMs(i) + localMs, m)
         return m
+    }
+
+    /** Moves the picture against the camera shake that was measured when stabilising. */
+    private fun stabilise(p: Project, c: so.ijarjar.app.model.Clip, localMs: Long, m: ClipMotion) {
+        val src = SpeedMap.outToSrc(c, localMs).coerceAtLeast(0)
+        val n = c.stabPath.size / 2
+        val f = (src / 100f).coerceIn(0f, (n - 1).toFloat())
+        val i = f.toInt().coerceAtMost(n - 2).coerceAtLeast(0)
+        val t = f - i
+        val dx = c.stabPath[i * 2] + (c.stabPath[i * 2 + 2] - c.stabPath[i * 2]) * t
+        val dy = c.stabPath[i * 2 + 1] + (c.stabPath[i * 2 + 3] - c.stabPath[i * 2 + 1]) * t
+        // the picture is fitted in the canvas: convert frame fractions to canvas fractions
+        val ca = c.width.toFloat().coerceAtLeast(1f) / c.height.coerceAtLeast(1)
+        val r = p.aspectRatio()
+        val fw = if (ca > r) 1f else ca / r
+        val fh = if (ca > r) r / ca else 1f
+        m.scale *= c.stabZoom
+        m.tx += dx * fw * m.scale
+        m.ty += dy * fh * m.scale
     }
 
     private fun apply(m: ClipMotion, kind: TransitionKind, fRaw: Float, incoming: Boolean, u: Long) {

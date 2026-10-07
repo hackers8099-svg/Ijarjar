@@ -57,6 +57,7 @@ object ProjectStore {
         for (c in p.clips) {
             if (c.curvePoints == null || c.curvePoints.size != 5) c.curvePoints = mutableListOf(1f, 1f, 1f, 1f, 1f)
             if (c.adjust == null) c.adjust = so.ijarjar.app.model.Adjust()
+            if (c.stabPath == null) c.stabPath = mutableListOf()
         }
         if (p.bgAdjust == null) p.bgAdjust = so.ijarjar.app.model.Adjust()
         // older projects had a single "music" field

@@ -40,6 +40,7 @@ import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.google.common.collect.ImmutableList
 import so.ijarjar.app.model.AudioTrack
+import so.ijarjar.app.media.AudioFx
 import so.ijarjar.app.model.Clip
 import so.ijarjar.app.model.Layer
 import so.ijarjar.app.model.LayerKind
@@ -67,7 +68,9 @@ class Exporter(
     private val context: Context,
     private val project: Project,
     private val shortSide: Int,
-    private val callback: Callback
+    private val callback: Callback,
+    /** true = QuickTime .mov file, false = .mp4 */
+    private val mov: Boolean = false
 ) {
     interface Callback {
         fun onProgress(percent: Int)
@@ -77,7 +80,7 @@ class Exporter(
 
     private var transformer: Transformer? = null
     private val handler = Handler(Looper.getMainLooper())
-    private val output = File(context.cacheDir, "ijarjar_export.mp4")
+    private val output = File(context.cacheDir, if (mov) "ijarjar_export.mov" else "ijarjar_export.mp4")
     private val frameSource = FrameSource()
 
     fun start() {
@@ -161,6 +164,7 @@ class Exporter(
             ).build()
         val audio = mutableListOf<AudioProcessor>()
         if (a.volume != 1f) audio.add(volumeProcessor(a.volume))
+        if (a.denoise > 0f || a.enhanceVoice) { val d = a.denoise; val e = a.enhanceVoice; audio.add(AudioFx { Pair(d, e) }) }
         list.add(EditedMediaItem.Builder(item).setRemoveVideo(true).setEffects(Effects(audio, emptyList())).build())
         return EditedMediaItemSequence(list)
     }
@@ -218,6 +222,7 @@ class Exporter(
             video.add(pair.second)
         }
         if (c.volume != 1f) audio.add(volumeProcessor(c.volume))
+        if (c.denoise > 0f || c.enhanceVoice) { val d = c.denoise; val e = c.enhanceVoice; audio.add(AudioFx { Pair(d, e) }) }
         video.addAll(Filters.exportEffects(c.adjust, c.width.coerceAtLeast(16)))
         c.adjust.lutUri?.let { u -> Lut.load(context, u)?.let { lut -> video.add(SingleColorLut.createFromCube(lut.toCube(c.adjust.lutStrength))) } }
         if (project.layers.any { it.isEffect() && it.effect.group == 2 }) video.add(EffectColor(clipStartMs))
@@ -360,7 +365,29 @@ class Exporter(
     }
 
     /** Copies the finished file into the phone gallery (Movies/IjarJar). */
-    private fun saveToGallery(): Uri? = saveMedia(context, output, "IjarJar_" + System.currentTimeMillis() + ".mp4", "video/mp4", true)
+    private fun saveToGallery(): Uri? {
+        if (mov) markAsQuickTime(output)
+        return saveMedia(context, output, "IjarJar_" + System.currentTimeMillis() + (if (mov) ".mov" else ".mp4"),
+            if (mov) "video/quicktime" else "video/mp4", true)
+    }
+
+    /**
+     * MP4 and MOV share the same structure; setting the file's brand to QuickTime ("qt  ")
+     * makes it a proper .mov that QuickTime, Premiere and After Effects open as MOV.
+     */
+    private fun markAsQuickTime(f: File) {
+        runCatching {
+            RandomAccessFile(f, "rw").use { raf ->
+                val head = ByteArray(8)
+                raf.readFully(head)
+                if (String(head, 4, 4, Charsets.US_ASCII) == "ftyp") {
+                    raf.seek(8)
+                    raf.write("qt  ".toByteArray(Charsets.US_ASCII))
+                    raf.write(byteArrayOf(0x20, 0x05, 0x03, 0x00))
+                }
+            }
+        }
+    }
 
     companion object {
         /** Saves a file to Movies/IjarJar (video) or Pictures/IjarJar (image). */
@@ -401,7 +428,5 @@ class Exporter(
             }
         }
 
-        @Suppress("unused")
-        private fun unused(r: RandomAccessFile) = r
     }
 }

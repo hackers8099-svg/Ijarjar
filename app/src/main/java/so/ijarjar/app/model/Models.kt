@@ -291,7 +291,14 @@ class Clip(
     var curve: SpeedCurve = SpeedCurve.NONE,
     var curvePoints: MutableList<Float> = mutableListOf(1f, 1f, 1f, 1f, 1f),
     var reversed: Boolean = false,
-    var originalUri: String? = null
+    var originalUri: String? = null,
+    // voice clean-up
+    var denoise: Float = 0f,
+    var enhanceVoice: Boolean = false,
+    // stabilisation: correction (x, y) per 100 ms of source, as a fraction of the frame
+    var stab: Boolean = false,
+    var stabPath: MutableList<Float> = mutableListOf(),
+    var stabZoom: Float = 1.1f
 ) {
     val trimmedMs: Long get() = (trimEndMs - trimStartMs).coerceAtLeast(1)
     val hasCurve: Boolean get() = kind == MediaKind.VIDEO && curve != SpeedCurve.NONE
@@ -417,7 +424,9 @@ class Layer(
     // colour for pictures, and Lottie (After Effects / Bodymovin) animations
     var adjust: Adjust = Adjust(),
     var isLottie: Boolean = false,
-    var lottieText: String = ""
+    var lottieText: String = "",
+    // dynamic link: a photo project shown live as this layer
+    var linkedProject: String? = null
 ) {
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     fun isActive(t: Long) = t >= startMs && t < endMs
@@ -440,7 +449,9 @@ class AudioTrack(
     var durationMs: Long = 0,
     var sourceDurationMs: Long = 0,
     var volume: Float = 1f,
-    var fromVideo: Boolean = false
+    var fromVideo: Boolean = false,
+    var denoise: Float = 0f,
+    var enhanceVoice: Boolean = false
 ) {
     val endMs: Long get() = startMs + durationMs
     fun isActive(t: Long) = t >= startMs && t < endMs

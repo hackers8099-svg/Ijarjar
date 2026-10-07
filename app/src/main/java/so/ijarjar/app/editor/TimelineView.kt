@@ -49,6 +49,7 @@ class TimelineView(context: Context) : View(context) {
         fun onScrub(timeMs: Long)
         fun onSelect(sel: Sel?)
         fun onTransitionTap(clipIndex: Int)
+        fun onKeyframeTap(timeMs: Long)
         fun onTimelineEditing()
         fun onTimelineEdited()
     }
@@ -361,7 +362,21 @@ class TimelineView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ touch
 
-    private enum class Drag { NONE, SCRUB, VSCROLL, CLIP_L, CLIP_R, LAYER_L, LAYER_R, LAYER_MOVE, AUDIO_L, AUDIO_R, AUDIO_MOVE }
+    private enum class Drag { NONE, SCRUB, VSCROLL, CLIP_L, CLIP_R, LAYER_L, LAYER_R, LAYER_MOVE, AUDIO_L, AUDIO_R, AUDIO_MOVE, KEYFRAME }
+
+    private var keyDrag: so.ijarjar.app.model.Keyframe? = null
+    private var keyOrigT = 0L
+
+    /** Keyframe diamond of the selected layer under the finger. */
+    private fun keyframeAt(p: Project, x: Float, y: Float): so.ijarjar.app.model.Keyframe? {
+        val s = selection as? Sel.LayerSel ?: return null
+        val idx = p.layers.indexOfFirst { it.id == s.id }
+        if (idx < 0) return null
+        val l = p.layers[idx]
+        val top = layerTop(idx)
+        if (y < top - dp(8f) || y > top + layerH + dp(10f)) return null
+        return l.keyframes.minByOrNull { abs(xOf(l.startMs + it.t) - x) }?.takeIf { abs(xOf(l.startMs + it.t) - x) < dp(12f) }
+    }
 
     private var drag = Drag.NONE
     private var downX = 0f
@@ -455,6 +470,7 @@ class TimelineView(context: Context) : View(context) {
                 val idx = p.layers.indexOfFirst { it.id == s.id }
                 if (idx < 0) return Drag.NONE
                 val l = p.layers[idx]
+                keyframeAt(p, x, y)?.let { k -> keyDrag = k; keyOrigT = k.t; return Drag.KEYFRAME }
                 val top = layerTop(idx)
                 if (y < top - dp(6f) || y > top + layerH + dp(6f)) return Drag.NONE
                 return edgeDrag(x, xOf(l.startMs), xOf(l.endMs), Drag.LAYER_L, Drag.LAYER_R, Drag.LAYER_MOVE)
@@ -536,12 +552,18 @@ class TimelineView(context: Context) : View(context) {
                 a.durationMs = max(200, dur)
             }
             Drag.AUDIO_MOVE -> selectedAudio(p)?.let { a -> a.startMs = max(0, origStart + dMs) }
+            Drag.KEYFRAME -> selectedLayer(p)?.let { l -> keyDrag?.let { k -> k.t = (keyOrigT + dMs).coerceIn(0, l.durationMs) } }
             else -> {}
         }
     }
 
     private fun onTap(p: Project, x: Float, y: Float) {
         val t = tOf(x)
+        // tapping a keyframe jumps to it
+        keyframeAt(p, x, y)?.let { k ->
+            val l = selectedLayer(p) ?: return@let
+            listener?.onKeyframeTap(l.startMs + k.t); return
+        }
         val ct = clipTop()
         if (y in ct..(ct + clipH)) {
             // transition buttons

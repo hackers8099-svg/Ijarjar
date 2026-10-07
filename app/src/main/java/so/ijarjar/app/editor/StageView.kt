@@ -68,6 +68,9 @@ class StageView(context: Context) : FrameLayout(context) {
     var canvasTarget: CanvasTarget? = null
     var listener: Listener? = null
     var brush: Brush? = null
+    /** Rule-of-thirds grid + centre lines + safe area. */
+    var showGrid = false
+        set(v) { field = v; overlay.invalidate() }
     /** When set, the next tap picks a colour from the selected layer's picture. */
     var colorPicker: ((Int) -> Unit)? = null
 
@@ -263,6 +266,8 @@ class StageView(context: Context) : FrameLayout(context) {
         private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
         private val linkLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); strokeWidth = dp(1.5f) }
         private val frameCache = HashMap<String, Bitmap>()
+        private val gridPaint = Paint().apply { color = 0x88FFFFFF.toInt() }
+        private val safePaint = Paint().apply { color = 0x55FFFFFF; style = Paint.Style.STROKE; strokeWidth = 2f; pathEffect = DashPathEffect(floatArrayOf(12f, 10f), 0f) }
 
         private var showVGuide = false
         private var showHGuide = false
@@ -290,6 +295,17 @@ class StageView(context: Context) : FrameLayout(context) {
                     continue
                 }
                 LayerRenderer.draw(context, canvas, l, timeMs, w, h, null)
+            }
+            if (showGrid) {
+                gridPaint.strokeWidth = dp(1f)
+                for (k in 1..2) {
+                    canvas.drawLine(w * k / 3f, 0f, w * k / 3f, h.toFloat(), gridPaint)
+                    canvas.drawLine(0f, h * k / 3f, w.toFloat(), h * k / 3f, gridPaint)
+                }
+                canvas.drawLine(w / 2f, h / 2f - dp(10f), w / 2f, h / 2f + dp(10f), gridPaint)
+                canvas.drawLine(w / 2f - dp(10f), h / 2f, w / 2f + dp(10f), h / 2f, gridPaint)
+                // title-safe area (90 %)
+                canvas.drawRect(w * 0.05f, h * 0.05f, w * 0.95f, h * 0.95f, safePaint)
             }
             if (selectedLayerId == null) canvasTarget?.let { drawTargetBox(canvas, it, w, h) }
             val sel = p.layers.firstOrNull { it.id == selectedLayerId } ?: return
