@@ -24,6 +24,10 @@ android {
             storePassword = "ijarjar123"
             keyAlias = "ijarjar"
             keyPassword = "ijarjar123"
+            // sign every way Android knows, so every phone's installer accepts it
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
         }
     }
 
@@ -51,6 +55,8 @@ android {
     buildFeatures {
         viewBinding = false
     }
+    // native libraries are unpacked on install (works on 4 KB and 16 KB page phones alike)
+    packaging { jniLibs { useLegacyPackaging = true } }
 }
 
 dependencies {
