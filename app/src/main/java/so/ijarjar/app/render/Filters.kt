@@ -112,6 +112,55 @@ object Filters {
             0f, 0.9f, 0f, 0f, 0f,
             0.05f, 0f, 1.05f, 0f, 15f,
             0f, 0f, 0f, 1f, 0f))
+        FilterPreset.MOODY -> ColorMatrix().apply {
+            setSaturation(0.7f)
+            postConcat(ColorMatrix(floatArrayOf(
+                0.95f, 0f, 0f, 0f, -10f,
+                0f, 1f, 0f, 0f, -5f,
+                0f, 0f, 1.1f, 0f, 5f,
+                0f, 0f, 0f, 1f, 0f)))
+        }
+        FilterPreset.PASTEL -> ColorMatrix().apply {
+            setSaturation(0.6f)
+            postConcat(ColorMatrix(floatArrayOf(
+                0.85f, 0f, 0f, 0f, 40f,
+                0f, 0.85f, 0f, 0f, 38f,
+                0f, 0f, 0.85f, 0f, 45f,
+                0f, 0f, 0f, 1f, 0f)))
+        }
+        FilterPreset.SUNSET -> ColorMatrix(floatArrayOf(
+            1.2f, 0.05f, 0f, 0f, 15f,
+            0f, 0.95f, 0f, 0f, 0f,
+            0f, 0f, 0.8f, 0f, 10f,
+            0f, 0f, 0f, 1f, 0f))
+        FilterPreset.FOREST -> ColorMatrix(floatArrayOf(
+            0.9f, 0f, 0f, 0f, 0f,
+            0.05f, 1.1f, 0f, 0f, 5f,
+            0f, 0.05f, 0.9f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f))
+        FilterPreset.MATTE -> ColorMatrix(floatArrayOf(
+            0.85f, 0f, 0f, 0f, 25f,
+            0f, 0.85f, 0f, 0f, 25f,
+            0f, 0f, 0.85f, 0f, 30f,
+            0f, 0f, 0f, 1f, 0f)).apply { postConcat(ColorMatrix().apply { setSaturation(0.85f) }) }
+        FilterPreset.CYBER -> ColorMatrix(floatArrayOf(
+            1.1f, 0f, 0.2f, 0f, 10f,
+            0f, 0.85f, 0.1f, 0f, 0f,
+            0.1f, 0f, 1.3f, 0f, 20f,
+            0f, 0f, 0f, 1f, 0f)).apply { postConcat(ColorMatrix().apply { setSaturation(1.3f) }) }
+        FilterPreset.MONO_HI -> ColorMatrix().apply {
+            setSaturation(0f)
+            postConcat(ColorMatrix(floatArrayOf(
+                1.8f, 0f, 0f, 0f, -100f,
+                0f, 1.8f, 0f, 0f, -100f,
+                0f, 0f, 1.8f, 0f, -100f,
+                0f, 0f, 0f, 1f, 0f)))
+        }
+        FilterPreset.KODAK -> ColorMatrix(floatArrayOf(
+            1.1f, 0.05f, 0f, 0f, 8f,
+            0.02f, 1.02f, 0f, 0f, 4f,
+            0f, 0.05f, 0.9f, 0f, -4f,
+            0f, 0f, 0f, 1f, 0f))
         FilterPreset.INVERT -> ColorMatrix(floatArrayOf(
             -1f, 0f, 0f, 0f, 255f,
             0f, -1f, 0f, 0f, 255f,
