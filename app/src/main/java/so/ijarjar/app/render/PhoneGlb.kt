@@ -25,9 +25,16 @@ object PhoneGlb {
         val label: String get() = L.t(so, en)
     }
 
+    /** Width / height of the screen of a style (pictures are fitted to it, not stretched). */
+    fun screenAspect(style: Style): Float {
+        val w = 0.74f; val h = 1.56f; val bev = 0.012f
+        val inset = if (style == Style.ULTRA) 0.022f else 0.026f
+        return (w - 2 * (bev + inset)) / (h - 2 * (bev + inset))
+    }
+
     /** The .glb file for a style (made once, then reused). */
     fun file(context: Context, style: Style): File {
-        val f = File(File(context.filesDir, "phones").apply { mkdirs() }, "phone_${style.name.lowercase()}_v2.glb")
+        val f = File(File(context.filesDir, "phones").apply { mkdirs() }, "phone_${style.name.lowercase()}_v3.glb")
         if (!f.exists()) f.writeBytes(build(style))
         return f
     }
@@ -66,7 +73,7 @@ object PhoneGlb {
         val cx = o.map { it[0] }.average().toFloat(); val cy = o.map { it[1] }.average().toFloat()
         val nz = if (front) 1f else -1f
         fun uvOf(x: Float, y: Float): Pair<Float, Float> = if (uvBox == null) Pair(0f, 0f)
-            else Pair((x - uvBox[0]) / (uvBox[2] - uvBox[0]), (uvBox[3] - y) / (uvBox[3] - uvBox[1]))
+            else Pair((uvBox[2] - x) / (uvBox[2] - uvBox[0]), (y - uvBox[1]) / (uvBox[3] - uvBox[1]))
         val (cu, cv) = uvOf(cx, cy)
         val c = p.v(cx, cy, z, 0f, 0f, nz, cu, cv)
         val first = p.pos.size / 3
@@ -125,8 +132,9 @@ object PhoneGlb {
         val so = outline(0f, 0f, w - 2 * (bev + sInset), h - 2 * (bev + sInset), (r - bev - sInset * 0.6f).coerceAtLeast(0.02f), 12)
         val minX = so.minOf { it[0] }; val maxX = so.maxOf { it[0] }; val minY = so.minOf { it[1] }; val maxY = so.maxOf { it[1] }
         cap(prims[3], so, t / 2 + 0.0012f, true, floatArrayOf(minX, minY, maxX, maxY))
-        // front camera hole
-        cap(prims[5], circle(0f, maxY - 0.04f, 0.016f, 20), t / 2 + 0.0018f, true)
+        // front camera: a pill-shaped island on the Pro (iPhone style), a punch hole on the others
+        if (style == Style.PRO) cap(prims[5], outline(0f, maxY - 0.055f, 0.2f, 0.058f, 0.029f, 8), t / 2 + 0.0018f, true)
+        else cap(prims[5], circle(0f, maxY - 0.04f, 0.016f, 20), t / 2 + 0.0018f, true)
         // back
         cap(prims[0], inner, -t / 2, false)
         val zBack = -t / 2

@@ -86,6 +86,14 @@ object Model3D {
     }
 
     /** Filament reads texture rows bottom-up: flip pictures so they are the right way up on the model. */
+    /** Cuts the middle of a picture to [aspect] (width / height) so it fills a screen without stretching. */
+    private fun cover(b: Bitmap, aspect: Float): Bitmap {
+        if (aspect <= 0f) return b
+        val a = b.width.toFloat() / b.height
+        return if (a > aspect) { val w = (b.height * aspect).toInt().coerceAtLeast(1); Bitmap.createBitmap(b, (b.width - w) / 2, 0, w, b.height) }
+        else { val h = (b.width / aspect).toInt().coerceAtLeast(1); Bitmap.createBitmap(b, 0, (b.height - h) / 2, b.width, h) }
+    }
+
     private fun upright(b: Bitmap, flipV: Boolean = false, flipH: Boolean = false): Bitmap {
         val src = if (b.config == Bitmap.Config.ARGB_8888) b else b.copy(Bitmap.Config.ARGB_8888, false)
         val sy = if (flipV) 1f else -1f
@@ -93,12 +101,12 @@ object Model3D {
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, Matrix().apply { preScale(sx, sy) }, false)
     }
 
-    private fun textureFor(context: Context, uri: String, flipV: Boolean = false, flipH: Boolean = false): Texture? {
-        val tk = "$uri|$flipV|$flipH"
+    private fun textureFor(context: Context, uri: String, flipV: Boolean = false, flipH: Boolean = false, aspect: Float = 0f): Texture? {
+        val tk = "$uri|$flipV|$flipH|$aspect"
         textures[tk]?.let { return it }
         val e = engine ?: return null
         val bmp = so.ijarjar.app.media.MediaUtils.loadBitmap(context, Uri.parse(uri), 1024) ?: return null
-        val src = upright(bmp, flipV, flipH)
+        val src = upright(cover(bmp, aspect), flipV, flipH)
         val tex = Texture.Builder().width(src.width).height(src.height).levels(1)
             .sampler(Texture.Sampler.SAMPLER_2D).format(Texture.InternalFormat.SRGB8_A8).build(e)
         com.google.android.filament.android.TextureHelper.setBitmap(e, tex, 0, src)
@@ -108,7 +116,7 @@ object Model3D {
 
     /** What a part (material) of the model shows: a picture file, a live bitmap (video frame) and / or a colour. */
     class Look(val material: String, val texUri: String? = null, val bitmap: Bitmap? = null, val bitmapKey: String? = null, val color: Int = 0, val hidden: Boolean = false,
-               val flipV: Boolean = false, val flipH: Boolean = false)
+               val flipV: Boolean = false, val flipH: Boolean = false, val aspect: Float = 0f)
 
     private val dynTex = HashMap<String, Texture>()
     private val dynKeys = HashMap<String, String>()
@@ -119,9 +127,9 @@ object Model3D {
         com.google.android.filament.TextureSampler.MinFilter.LINEAR, com.google.android.filament.TextureSampler.MagFilter.LINEAR,
         com.google.android.filament.TextureSampler.WrapMode.CLAMP_TO_EDGE)
 
-    private fun uploadDyn(material: String, bmp: Bitmap, flipV: Boolean = false, flipH: Boolean = false): Texture? {
+    private fun uploadDyn(material: String, bmp: Bitmap, flipV: Boolean = false, flipH: Boolean = false, aspect: Float = 0f): Texture? {
         val e = engine ?: return null
-        val src = upright(bmp, flipV, flipH)
+        val src = upright(cover(bmp, aspect), flipV, flipH)
         var tex = dynTex[material]
         if (tex == null || tex.getWidth(0) != src.width || tex.getHeight(0) != src.height) {
             tex?.let { e.destroyTexture(it) }
@@ -165,7 +173,7 @@ object Model3D {
 
     /** Applies looks; returns false when the model must be reloaded first (a change was removed). */
     private fun applyLooks(context: Context, looks: List<Look>, highlight: String?): Boolean {
-        val mats = looks.map { "${it.material}|${it.texUri}|${it.color}|${it.bitmap != null}|${it.hidden}|${it.flipV}|${it.flipH}" }.toSet()
+        val mats = looks.map { "${it.material}|${it.texUri}|${it.color}|${it.bitmap != null}|${it.hidden}|${it.flipV}|${it.flipH}|${it.aspect}" }.toSet()
         val staticKey = mats.joinToString(";") + "|hl=$highlight"
         if (staticKey != appliedLook) {
             // something was taken away → start from the original materials
@@ -183,7 +191,7 @@ object Model3D {
                 }
                 for (lk in looks) {
                     if (lk.material.isNotEmpty() && lk.material != name) continue
-                    val tex = lk.texUri?.let { textureFor(context, it, lk.flipV, lk.flipH) }
+                    val tex = lk.texUri?.let { textureFor(context, it, lk.flipV, lk.flipH, lk.aspect) }
                     if (tex != null) setPicture(mi, tex, lk.color != 0)
                     if (lk.color != 0) factor(mi, android.graphics.Color.red(lk.color) / 255f, android.graphics.Color.green(lk.color) / 255f, android.graphics.Color.blue(lk.color) / 255f)
                 }
@@ -194,7 +202,7 @@ object Model3D {
             val bmp = lk.bitmap ?: continue
             val key = (lk.bitmapKey ?: bmp.generationId.toString()) + "|${lk.flipV}|${lk.flipH}"
             if (dynKeys[lk.material] == key) continue
-            val tex = uploadDyn(lk.material, bmp, lk.flipV, lk.flipH) ?: continue
+            val tex = uploadDyn(lk.material, bmp, lk.flipV, lk.flipH, lk.aspect) ?: continue
             dynKeys[lk.material] = key
             for ((_, mi) in materialInstances()) {
                 if (lk.material.isNotEmpty() && mi.name != lk.material) continue

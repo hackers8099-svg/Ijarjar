@@ -773,6 +773,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     // ------------------------------------------------------------------ commit / undo
 
     private fun reload() {
+        for (l in project.layers) {
+            val st = l.phoneStyle ?: continue
+            if (l.uri?.contains("_v3.glb") == true) continue
+            runCatching { l.uri = Uri.fromFile(so.ijarjar.app.render.PhoneGlb.file(this, so.ijarjar.app.render.PhoneGlb.Style.valueOf(st))).toString() }
+        }
         project.outputSize(1080).let { so.ijarjar.app.render.ExprEngine.compW = it.first.toDouble(); so.ijarjar.app.render.ExprEngine.compH = it.second.toDouble() }
         stage.project = project
         timeline.project = project

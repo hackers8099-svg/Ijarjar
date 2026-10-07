@@ -796,11 +796,14 @@ object LayerRenderer {
         val looks = ArrayList<Model3D.Look>()
         if (l.modelTexture != null || l.modelColor != 0) looks.add(Model3D.Look(l.modelMaterial ?: "", l.modelTexture, color = l.modelColor))
         var liveKey = ""
+        // pictures on a built-in phone screen keep their shape (cut to fit, never stretched)
+        val phoneAspect = l.phoneStyle?.let { st -> runCatching { PhoneGlb.screenAspect(PhoneGlb.Style.valueOf(st)) }.getOrNull() } ?: 0f
         for ((m, p) in l.parts) {
+            val asp = if (m == "Screen") phoneAspect else 0f
             if (p.hidden) { looks.add(Model3D.Look(m, hidden = true)); continue }
             if (p.video) {
-                if (content != null) { val k = "${(t - l.startMs) / 33}"; looks.add(Model3D.Look(m, bitmap = content, bitmapKey = k, color = p.color, flipV = p.flipV, flipH = p.flipH)); liveKey += "$m@$k" }
-            } else if (p.tex != null || p.color != 0) looks.add(Model3D.Look(m, p.tex, color = p.color, flipV = p.flipV, flipH = p.flipH))
+                if (content != null) { val k = "${(t - l.startMs) / 33}"; looks.add(Model3D.Look(m, bitmap = content, bitmapKey = k, color = p.color, flipV = p.flipV, flipH = p.flipH, aspect = asp)); liveKey += "$m@$k" }
+            } else if (p.tex != null || p.color != 0) looks.add(Model3D.Look(m, p.tex, color = p.color, flipV = p.flipV, flipH = p.flipH, aspect = asp))
         }
         val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}|${it.hidden}|${it.flipV}|${it.flipH}" } + "|$liveKey"
         // a few frames per layer are kept, so motion blur (earlier moments) doesn't re-render every time
