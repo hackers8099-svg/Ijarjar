@@ -2473,10 +2473,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         root.addView(list)
         d.show()
         io.execute {
-            val names = so.ijarjar.app.render.Model3D.materials(this, uri)
+            // parts whose name sounds like a screen come first
+            val screenWord = Regex("screen|display|lcd|wallpaper|monitor|panel|oled|ui", RegexOption.IGNORE_CASE)
+            val names = so.ijarjar.app.render.Model3D.materials(this, uri).sortedByDescending { screenWord.containsMatchIn(it) }
             main.post {
                 status.text = if (names.isEmpty()) tr("Qaybo lama helin.", "No parts found.")
-                    else tr("Qaybta casaanka ah ee sawirka ku jirta waa qaybtaas. Taabo magaca si aad u beddesho.", "The pink area in each picture is that part. Tap a name to rename it.")
+                    else tr("Qaybta casaanka ah ee sawir kasta waa qaybtaas — raadi midka shaashadda (hore) ka casaan ah, kadib 🖼 riix. Magaca taabo si aad u beddesho.",
+                        "The pink area in each picture is that part — find the one where the front screen turns pink, then tap 🖼. Tap a name to rename it.")
                 val thumbs = HashMap<String, ImageView>()
                 for (m in names) {
                     val part = l.parts[m]
@@ -2486,9 +2489,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     }
                     val iv = ImageView(this).apply { background = Ui.roundBg(0xFF15151A.toInt(), dp(8f).toFloat()) }
                     thumbs[m] = iv
-                    row.addView(iv, LinearLayout.LayoutParams(dp(64f), dp(64f)))
+                    row.addView(iv, LinearLayout.LayoutParams(dp(84f), dp(84f)))
                     val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10f), 0, 0, 0) }
-                    val title = Ui.text(this, part?.name?.takeIf { it.isNotBlank() && it != m } ?: m, 14f, Ui.TEXT, true)
+                    val title = Ui.text(this, (part?.name?.takeIf { it.isNotBlank() && it != m } ?: m) + if (screenWord.containsMatchIn(m)) "  📱" else "", 14f, Ui.TEXT, true)
                     title.setOnClickListener {
                         val input = editText(title.text.toString(), tr("Magac", "Name")) {}
                         MaterialAlertDialogBuilder(this).setTitle(tr("Magaca qaybta", "Part name")).setView(input)
