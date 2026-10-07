@@ -60,6 +60,7 @@ class TimelineView(context: Context) : View(context) {
     var timeMs: Long = 0
         set(v) { field = v; invalidate() }
     var selection: Sel? = null
+        set(v) { field = v; invalidate() }   // show the pick at once
     /** "Select" mode: ids of clips, audio and layers that are picked. */
     var multi: Set<String> = emptySet()
         set(v) { field = v; invalidate() }
@@ -466,10 +467,16 @@ class TimelineView(context: Context) : View(context) {
     }
 
     private fun drawSelection(canvas: Canvas, r: RectF, color: Int, handles: Boolean = true) {
-        paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(2f); paint.color = color
+        // dark edge under the bright frame: visible on white / bright clips too
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(5f); paint.color = 0x99000000.toInt()
+        canvas.drawRoundRect(r, dp(4f), dp(4f), paint)
+        paint.strokeWidth = dp(2.5f); paint.color = color
         canvas.drawRoundRect(r, dp(4f), dp(4f), paint)
         paint.style = Paint.Style.FILL
         if (handles) {
+            paint.color = 0x99000000.toInt()
+            canvas.drawRoundRect(RectF(r.left - handleW - dp(1.5f), r.top - dp(1.5f), r.left, r.bottom + dp(1.5f)), dp(4f), dp(4f), paint)
+            canvas.drawRoundRect(RectF(r.right, r.top - dp(1.5f), r.right + handleW + dp(1.5f), r.bottom + dp(1.5f)), dp(4f), dp(4f), paint)
             paint.color = color
             canvas.drawRoundRect(RectF(r.left - handleW, r.top, r.left, r.bottom), dp(3f), dp(3f), paint)
             canvas.drawRoundRect(RectF(r.right, r.top, r.right + handleW, r.bottom), dp(3f), dp(3f), paint)
@@ -753,6 +760,7 @@ class TimelineView(context: Context) : View(context) {
     }
 
     private fun select(s: Sel?) {
+        if (s != null) performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP)
         selection = s
         listener?.onSelect(s)
     }
