@@ -2812,9 +2812,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             tr("Garaaf", "Graph") to { body: LinearLayout ->
                 val graph = GraphView(this, l, { live() }) { t -> onKeyframeTap(t); refreshNav() }
                 activeGraph = graph
-                graph.selected = LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.filter { it.t <= timeMs - l.startMs }.maxByOrNull { it.t } ?: l.keyframes.minByOrNull { it.t }
+                // no keyframe is picked until you tap one, so scrolling never bends a curve by accident
+                graph.selected = null
                 graph.playheadMs = timeMs
-                refreshBody = { graph.playheadMs = timeMs; graph.selected = LayerRenderer.keyframeAt(l, timeMs) ?: graph.selected; graph.invalidate() }
+                refreshBody = { graph.playheadMs = timeMs; graph.invalidate() }
                 body.addView(Ui.choiceRow(this, KEY_PROPS, 0) { graph.prop = it })
                 val zr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
                 zr.addView(Ui.text(this, tr("Zoom (laba farood ama):", "Zoom (two fingers, or):"), 12f, Ui.TEXT2), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
@@ -2844,13 +2845,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         else -> setEase(Easing.ELASTIC, null, all)
                     }
                 })
-                val k0 = graph.selected
+                val k0 = graph.selected ?: LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.minByOrNull { it.t }
                 if (k0 != null) {
                     body.addView(Ui.sliderRow(this, tr("Saameyn bax %", "Influence out %"), 0f, 100f, (if (k0.ease == Easing.CUSTOM) k0.bx1 else 0.333f) * 100) { v ->
-                        graph.selected?.let { k -> if (k.ease != Easing.CUSTOM) { k.ease = Easing.CUSTOM; k.bx1 = 0.333f; k.by1 = 0f; k.bx2 = 0.667f; k.by2 = 1f }; k.bx1 = v / 100f; live(); graph.invalidate() }
+                        (graph.selected ?: LayerRenderer.keyframeAt(l, timeMs) ?: k0).let { k -> if (k.ease != Easing.CUSTOM) { k.ease = Easing.CUSTOM; k.bx1 = 0.333f; k.by1 = 0f; k.bx2 = 0.667f; k.by2 = 1f }; k.bx1 = v / 100f; live(); graph.invalidate() }
                     })
                     body.addView(Ui.sliderRow(this, tr("Saameyn gal %", "Influence in %"), 0f, 100f, (1f - (if (k0.ease == Easing.CUSTOM) k0.bx2 else 0.667f)) * 100) { v ->
-                        graph.selected?.let { k -> if (k.ease != Easing.CUSTOM) { k.ease = Easing.CUSTOM; k.bx1 = 0.333f; k.by1 = 0f; k.bx2 = 0.667f; k.by2 = 1f }; k.bx2 = 1f - v / 100f; live(); graph.invalidate() }
+                        (graph.selected ?: LayerRenderer.keyframeAt(l, timeMs) ?: k0).let { k -> if (k.ease != Easing.CUSTOM) { k.ease = Easing.CUSTOM; k.bx1 = 0.333f; k.by1 = 0f; k.bx2 = 0.667f; k.by2 = 1f }; k.bx2 = 1f - v / 100f; live(); graph.invalidate() }
                     })
                 }
             },
