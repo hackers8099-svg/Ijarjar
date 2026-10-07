@@ -82,6 +82,18 @@ object LayerRenderer {
             L.t("Cidhiidhi", "Condensed"), L.t("Khafiif", "Light"), L.t("Culus", "Black"), L.t("Dhexe", "Medium"),
             L.t("Khafiif-cidhiidhi", "Thin"), "Casual")
 
+    private val fileFonts = HashMap<String, Typeface?>()
+
+    /** The layer's typeface: an imported font file, or one of the built-in ones. */
+    fun fontFor(l: Layer): Typeface {
+        val path = l.fontPath
+        if (path != null) {
+            val tf = synchronized(fileFonts) { fileFonts.getOrPut(path) { runCatching { Typeface.createFromFile(path) }.getOrNull() } }
+            if (tf != null) return if (l.bold) Typeface.create(tf, Typeface.BOLD) else tf
+        }
+        return typeface(l.font, l.bold)
+    }
+
     fun typeface(font: Int, bold: Boolean): Typeface {
         val style = if (bold) Typeface.BOLD else Typeface.NORMAL
         return when (font) {
@@ -268,7 +280,7 @@ object LayerRenderer {
 
     private fun textKey(l: Layer, canvasW: Int) =
         "${l.text}|${l.textColor}|${l.textColor2}|${l.strokeColor}|${l.strokeWidth}|${l.bgColor}|${l.textSizeFrac}|" +
-            "${l.bold}|${l.font}|${l.align}|${l.shadow}|${l.depth}|${l.depthColor}|${l.letterSpacing}|$canvasW|${l.kind}"
+            "${l.bold}|${l.font}|${l.fontPath}|${l.align}|${l.shadow}|${l.depth}|${l.depthColor}|${l.letterSpacing}|$canvasW|${l.kind}"
 
     fun textSpec(l: Layer, canvasW: Int): TextSpec {
         val key = textKey(l, canvasW)
@@ -276,7 +288,7 @@ object LayerRenderer {
         val textPx = (l.textSizeFrac * canvasW).coerceAtLeast(6f)
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             textSize = textPx
-            typeface = typeface(l.font, l.bold)
+            typeface = fontFor(l)
             color = l.textColor
             letterSpacing = l.letterSpacing
         }
@@ -489,6 +501,38 @@ object LayerRenderer {
             }
             if (s.points.size == 2) path.lineTo(s.points[0] * cw + 0.1f, s.points[1] * ch)
             else path.lineTo(s.points[s.points.size - 2] * cw, s.points[s.points.size - 1] * ch)
+            if (!s.eraser && s.type >= 5) {
+                when (s.type) {
+                    5 -> { // calligraphy: a flat, slanted nib
+                        p.strokeCap = Paint.Cap.BUTT; val w = p.strokeWidth; p.strokeWidth = w * 0.25f
+                        for (k in -4..4) { canvas.save(); canvas.translate(k * w * 0.09f, -k * w * 0.09f); canvas.drawPath(path, p); canvas.restore() }
+                    }
+                    6 -> { // pencil: thin grainy lines
+                        val w = p.strokeWidth; p.strokeWidth = maxOf(1f, w * 0.35f); p.alpha = p.alpha * 170 / 255
+                        for (k in 0 until 3) { canvas.save(); canvas.translate((k - 1) * w * 0.12f, ((k * 7) % 3 - 1) * w * 0.1f); canvas.drawPath(path, p); canvas.restore() }
+                    }
+                    7 -> { // airbrush: soft edges
+                        p.maskFilter = BlurMaskFilter(p.strokeWidth * 0.6f, BlurMaskFilter.Blur.NORMAL); p.alpha = p.alpha * 200 / 255
+                        canvas.drawPath(path, p)
+                    }
+                    8 -> { // dots
+                        p.pathEffect = android.graphics.DashPathEffect(floatArrayOf(0.1f, p.strokeWidth * 1.8f), 0f)
+                        canvas.drawPath(path, p)
+                    }
+                    9 -> { // rainbow
+                        val b = RectF(); path.computeBounds(b, true)
+                        p.shader = LinearGradient(b.left, b.top, b.right.coerceAtLeast(b.left + 1f), b.bottom, intArrayOf(0xFFFF3B30.toInt(), 0xFFFF9500.toInt(), 0xFFFFCC00.toInt(),
+                            0xFF34C759.toInt(), 0xFF007AFF.toInt(), 0xFFAF52DE.toInt()), null, Shader.TileMode.MIRROR)
+                        canvas.drawPath(path, p); p.shader = null
+                    }
+                    else -> { // outline: coloured edge, empty middle
+                        canvas.drawPath(path, p)
+                        val hole = Paint(p).apply { strokeWidth = p.strokeWidth * 0.55f; xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+                        canvas.drawPath(path, hole)
+                    }
+                }
+                continue
+            }
             if (!s.eraser && s.type == 2) {
                 // neon: wide soft glow + white core
                 val glow = Paint(p).apply { strokeWidth = p.strokeWidth * 2.5f; maskFilter = BlurMaskFilter(p.strokeWidth * 1.2f, BlurMaskFilter.Blur.NORMAL) }

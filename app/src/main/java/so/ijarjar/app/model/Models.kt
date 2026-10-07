@@ -388,6 +388,7 @@ class Layer(
     var textSizeFrac: Float = 0.07f,
     var bold: Boolean = true,
     var font: Int = 0,
+    var fontPath: String? = null,        // imported .ttf / .otf (overrides [font])
     var align: Int = 1,
     var cx: Float = 0.5f,
     var cy: Float = 0.5f,

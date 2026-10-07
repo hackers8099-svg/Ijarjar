@@ -223,13 +223,23 @@ object Ui {
         sv.addView(row)
         val colors = (if (allowNone) intArrayOf(0) else intArrayOf()) + PALETTE
         val views = ArrayList<View>()
+        lateinit var custom: TextView
         fun paint(sel: Int) {
             views.forEachIndexed { i, v ->
                 val col = colors[i]
                 v.background = roundBg(if (col == 0) SURFACE2 else col, dp(c, 16f).toFloat(),
                     dp(c, if (col == sel) 3f else 1f), if (col == sel) ACCENT else 0x44FFFFFF)
             }
+            val isCustom = sel != 0 && sel !in colors
+            custom.background = if (isCustom) roundBg(sel, dp(c, 16f).toFloat(), dp(c, 3f), ACCENT)
+            else GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xFFFF3B30.toInt(), 0xFFFFCC00.toInt(), 0xFF34C759.toInt(), 0xFF007AFF.toInt(), 0xFFAF52DE.toInt())).apply { cornerRadius = dp(c, 16f).toFloat() }
         }
+        // "+" = any colour (hue / saturation / brightness / hex)
+        custom = TextView(c).apply {
+            gravity = Gravity.CENTER; text = "+"; setTextColor(Color.WHITE); textSize = 18f
+            setOnClickListener { pickColor(c, 0xFF19D3C5.toInt()) { col -> paint(col); onPick(col) } }
+        }
+        row.addView(custom, LinearLayout.LayoutParams(dp(c, 32f), dp(c, 32f)).apply { marginEnd = dp(c, 8f) })
         for (col in colors) {
             val v = TextView(c).apply {
                 gravity = Gravity.CENTER
@@ -245,6 +255,40 @@ object Ui {
         paint(selected)
         return sv
     }
+}
+
+/** A colour picker dialog: hue, saturation, brightness, opacity and a hex code. */
+fun pickColor(c: Context, initial: Int, onPick: (Int) -> Unit) {
+    val hsv = FloatArray(3); Color.colorToHSV(initial, hsv)
+    var alpha = Color.alpha(initial).coerceAtLeast(1)
+    val box = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(Ui.dp(c, 20f), Ui.dp(c, 12f), Ui.dp(c, 20f), 0) }
+    val preview = View(c)
+    val hex = android.widget.EditText(c).apply { setTextColor(Ui.TEXT); textSize = 15f; isSingleLine = true }
+    var updating = false
+    fun cur() = Color.HSVToColor(alpha, hsv)
+    fun refresh(fromHex: Boolean = false) {
+        preview.background = Ui.roundBg(cur(), Ui.dp(c, 12f).toFloat(), Ui.dp(c, 1f), 0x44FFFFFF)
+        if (!fromHex) { updating = true; hex.setText(String.format("#%08X", cur())); updating = false }
+    }
+    box.addView(preview, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Ui.dp(c, 54f)))
+    val hue = Ui.sliderRow(c, "Hue", 0f, 360f, hsv[0]) { hsv[0] = it; refresh() }
+    val sat = Ui.sliderRow(c, "Saturation", 0f, 1f, hsv[1]) { hsv[1] = it; refresh() }
+    val bri = Ui.sliderRow(c, "Brightness", 0f, 1f, hsv[2]) { hsv[2] = it; refresh() }
+    val opa = Ui.sliderRow(c, "Opacity", 0f, 255f, alpha.toFloat()) { alpha = it.toInt(); refresh() }
+    box.addView(hue); box.addView(sat); box.addView(bri); box.addView(opa)
+    hex.addTextChangedListener(object : android.text.TextWatcher {
+        override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+        override fun onTextChanged(s: CharSequence?, a: Int, b: Int, d: Int) {}
+        override fun afterTextChanged(e: android.text.Editable?) {
+            if (updating) return
+            val col = runCatching { Color.parseColor(e.toString().trim().let { if (it.startsWith("#")) it else "#$it" }) }.getOrNull() ?: return
+            Color.colorToHSV(col, hsv); alpha = Color.alpha(col); refresh(true)
+        }
+    })
+    box.addView(hex)
+    refresh()
+    com.google.android.material.dialog.MaterialAlertDialogBuilder(c).setTitle(so.ijarjar.app.L.t("Midab", "Colour")).setView(box)
+        .setPositiveButton("OK") { _, _ -> onPick(cur()) }.setNegativeButton(so.ijarjar.app.L.t("Jooji", "Cancel"), null).show()
 }
 
 /** Implemented by the screen that shows panels. */

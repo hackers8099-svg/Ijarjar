@@ -265,6 +265,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
         top.addView(Ui.iconButton(this, R.drawable.ic_close) { save(); finish() })
         top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        if (!project.isPhoto) top.addView(Ui.iconButton(this, R.drawable.ic_background, 22f) { showVideoBackground() })
         aspectBtn = Ui.text(this, project.aspect, 13f).apply {
             background = Ui.roundBg(Ui.SURFACE2, dp(14f).toFloat())
             setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
@@ -1502,6 +1503,25 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         })
     }
 
+    private var fontTarget: Layer? = null
+    private val pickFont = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val l = fontTarget ?: return@registerForActivityResult
+        if (uri == null) return@registerForActivityResult
+        io.execute {
+            val name = MediaUtils.displayName(this, uri).replace(Regex("[^A-Za-z0-9._ -]"), "_")
+            val ext = name.substringAfterLast('.', "").lowercase()
+            val dir = File(filesDir, "fonts").apply { mkdirs() }
+            val f = File(dir, if (ext == "ttf" || ext == "otf") name else "$name.ttf")
+            val ok = runCatching { contentResolver.openInputStream(uri)?.use { i -> f.outputStream().use { i.copyTo(it) } }; android.graphics.Typeface.createFromFile(f) }.isSuccess
+            main.post {
+                if (!ok) { f.delete(); toast(tr("Font-kan lama furi karo", "This font can't be opened")); return@post }
+                l.fontPath = f.absolutePath; commit()
+                toast(tr("Font-ka waa la soo geliyay ✓", "Font imported ✓"))
+                showTextEditor(l)
+            }
+        }
+    }
+
     private fun showTextEditor(l: Layer) {
         val (d, root) = Ui.sheet(this, if (l.kind == LayerKind.STICKER) "Sticker" else tr("Qoraal", "Text")) { commit() }
         d.top.addView(editText(l.text, tr("Qor halkan…", "Type here…")) { l.text = it; live() }.apply { maxLines = 3 },
@@ -1528,7 +1548,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.sliderRow(this, tr("Cabbirka", "Size"), 0.02f, 0.3f, l.textSizeFrac.coerceIn(0.02f, 0.3f)) { l.textSizeFrac = it; live() })
             },
             tr("Farta", "Font") to { body: LinearLayout ->
-                body.addView(Ui.choiceRow(this, LayerRenderer.FONTS, l.font) { l.font = it; live() })
+                body.addView(Ui.choiceRow(this, LayerRenderer.FONTS, if (l.fontPath == null) l.font else -1) { l.font = it; l.fontPath = null; live() })
+                val mine = File(filesDir, "fonts").listFiles()?.filter { it.extension.lowercase() in setOf("ttf", "otf") }?.sortedBy { it.name }.orEmpty()
+                if (mine.isNotEmpty()) {
+                    body.addView(Ui.label(this, tr("Fonts-kaaga", "Your fonts")))
+                    body.addView(Ui.choiceRow(this, mine.map { it.nameWithoutExtension.take(18) }, mine.indexOfFirst { it.absolutePath == l.fontPath }) { i -> l.fontPath = mine[i].absolutePath; live() })
+                }
+                buttonRow(body, tr("+ Soo geli font (.ttf / .otf)", "+ Import font (.ttf / .otf)") to { fontTarget = l; pickFont.launch(arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/octet-stream", "*/*")) })
                 body.addView(Ui.choiceRow(this, listOf(tr("Adag", "Bold"), tr("Caadi", "Regular")), if (l.bold) 0 else 1) { l.bold = it == 0; live() })
                 body.addView(Ui.choiceRow(this, listOf(tr("Bidix", "Left"), tr("Dhexe", "Center"), tr("Midig", "Right")), l.align) { l.align = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Kala fogaan", "Spacing"), -0.1f, 0.5f, l.letterSpacing.coerceIn(-0.1f, 0.5f)) { l.letterSpacing = it; live() })
@@ -1880,7 +1906,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun showDraw(l: Layer) {
         val brush = StageView.Brush(l.id, 0xFFFFFFFF.toInt(), 0.012f)
         val (d, root) = Ui.sheet(this, tr("Sawir gacmeed", "Draw")) { stage.brush = null; commit() }
-        root.addView(Ui.choiceRow(this, listOf(tr("Qalin", "Pen"), "Highlighter", "Neon", "Spray", tr("Xariiq go'an", "Dashed")), 0) { brush.type = it; brush.eraser = false })
+        root.addView(Ui.choiceRow(this, listOf(tr("Qalin", "Pen"), "Highlighter", "Neon", "Spray", tr("Xariiq go'an", "Dashed"),
+            tr("Khad (calligraphy)", "Calligraphy"), tr("Qalin rasaas", "Pencil"), "Airbrush", tr("Dhibco", "Dots"), "Rainbow", tr("Xariiq laba", "Outline")), 0) { brush.type = it; brush.eraser = false })
         root.addView(Ui.colorRow(this, brush.color, false) { brush.color = it; brush.eraser = false })
         root.addView(Ui.sliderRow(this, tr("Ballac", "Size"), 0.002f, 0.06f, brush.width) { brush.width = it })
         buttonRow(root,
@@ -3205,6 +3232,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
     }
 
+    private fun gcd(a: Int, b: Int): Int = if (b == 0) a.coerceAtLeast(1) else gcd(b, a % b)
+
     private val aspects = listOf("9:16", "16:9", "1:1", "4:5", "4:3", "3:4", "2:3", "3:2", "21:9")
 
     private fun closestAspect(r: Float): String = aspects.minByOrNull {
@@ -3226,6 +3255,41 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     // ------------------------------------------------------------------ aspect & export
 
+    /** A colour (or picture) background for videos, so you can start without any footage. */
+    private fun showVideoBackground() {
+        val (d, root) = Ui.sheet(this, tr("Gadaal (background)", "Background"))
+        var color = 0xFF101014.toInt(); var color2 = 0
+        var secs = 5f
+        root.addView(Ui.label(this, tr("Midab", "Colour")))
+        root.addView(Ui.colorRow(this, color, false) { color = it })
+        root.addView(Ui.label(this, tr("Midab labaad (gradient)", "Second colour (gradient)")))
+        root.addView(Ui.colorRow(this, color2, true) { color2 = it })
+        root.addView(Ui.sliderRow(this, tr("Dherer (s)", "Length (s)"), 1f, 60f, secs, 1f) { secs = it })
+        buttonRow(root,
+            tr("+ Ku dar midab", "+ Add colour") to {
+                d.dismiss()
+                io.execute {
+                    val (w, h) = project.outputSize(720)
+                    val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    val c = android.graphics.Canvas(b)
+                    if (color2 != 0) c.drawPaint(android.graphics.Paint().apply { shader = android.graphics.LinearGradient(0f, 0f, 0f, h.toFloat(), color, color2, android.graphics.Shader.TileMode.CLAMP) })
+                    else c.drawColor(color)
+                    val f = File(File(filesDir, "backgrounds").apply { mkdirs() }, "bg_${System.currentTimeMillis()}.png")
+                    FileOutputStream(f).use { b.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                    val ms = (secs * 1000).toLong()
+                    main.post {
+                        val clip = Clip(uri = Uri.fromFile(f).toString(), kind = MediaKind.IMAGE, sourceDurationMs = ms, trimStartMs = 0, trimEndMs = ms, width = w, height = h)
+                        val at = (selectedClipIndex().takeIf { it >= 0 }?.plus(1)) ?: project.clips.size
+                        project.clips.add(at.coerceIn(0, project.clips.size), clip)
+                        commit(); toast(tr("Gadaal midab ah waa lagu daray", "Colour background added"))
+                    }
+                }
+            },
+            tr("+ Sawir", "+ Picture") to { d.dismiss(); insertAfter = selectedClipIndex(); pickClipsG.launch(imagesOnly()) })
+        root.addView(Ui.label(this, tr("Kadib qoraal, sticker, shapes iyo 3D ku dar korkiisa.", "Then add text, stickers, shapes or 3D on top.")))
+        d.show()
+    }
+
     private fun showAspect() {
         val labels = listOf("9:16  TikTok", "16:9  YouTube", "1:1", "4:5  Instagram", "4:3", "3:4", "2:3", "3:2", "21:9")
         val (d, root) = Ui.sheet(this, tr("Saamiga shaashadda", "Aspect ratio"))
@@ -3234,6 +3298,23 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             stage.requestLayout()
             commit()
         })
+        // custom ratio / size (e.g. 1080 × 1350 or 5 : 7)
+        root.addView(Ui.label(this, tr("Cabbir gaar ah (ballac × dherer)", "Custom (width × height)")))
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val cur = project.aspect.split(":")
+        val wIn = editText(cur.getOrElse(0) { "9" }, "W") {}.apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER }
+        val hIn = editText(cur.getOrElse(1) { "16" }, "H") {}.apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER }
+        row.addView(wIn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(Ui.text(this, "  ×  ", 16f, Ui.TEXT2))
+        row.addView(hIn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(Ui.button(this, "OK") {
+            val w = wIn.text.toString().toIntOrNull() ?: 0; val h = hIn.text.toString().toIntOrNull() ?: 0
+            if (w <= 0 || h <= 0 || w.toFloat() / h > 8f || h.toFloat() / w > 8f) { toast(tr("Lambar sax ah geli", "Enter valid numbers")); return@button }
+            val g = gcd(w, h)
+            project.aspect = "${w / g}:${h / g}"
+            stage.requestLayout(); commit(); d.dismiss()
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8f) })
+        root.addView(row)
         d.show()
     }
 
