@@ -78,6 +78,12 @@ class StageView(context: Context) : FrameLayout(context) {
         set(v) { field = v; overlay.invalidate() }
     /** When set, the next tap picks a colour from the selected layer's picture. */
     var colorPicker: ((Int) -> Unit)? = null
+    /** On-screen editing of a layer's mask (drag = move, pinch = size) or crop (drag the edges). */
+    var editMask: Layer? = null
+        set(v) { field = v; overlay.invalidate() }
+    var editCrop: Layer? = null
+        set(v) { field = v; overlay.invalidate() }
+    var onEditChanged: (() -> Unit)? = null
 
     val mainTexture = TextureView(context)
     val imageView = ImageView(context).apply { scaleType = ImageView.ScaleType.FIT_CENTER; visibility = View.GONE }
@@ -138,6 +144,7 @@ class StageView(context: Context) : FrameLayout(context) {
             return
         }
         refreshMainClip(p, w, h)
+        canvasVideos = videosOnCanvas(p)
         for (l in p.layers) {
             if (l.kind != LayerKind.VIDEO) continue
             val tv = videoLayerViews[l.id] ?: continue
@@ -155,10 +162,24 @@ class StageView(context: Context) : FrameLayout(context) {
             tv.scaleY = pose.scale * pose.sy
             tv.rotation = pose.rotation
             // keyed / masked / cropped overlay videos are drawn by the overlay view instead
-            tv.alpha = if (drawnByOverlay(l)) 0.01f else pose.opacity
+            tv.alpha = if (drawnByOverlay(l) || l.id in canvasVideos) 0.01f else pose.opacity
             tv.visibility = if (l.isActive(timeMs)) View.VISIBLE else View.INVISIBLE
         }
         overlay.invalidate()
+    }
+
+    /** Overlay videos that sit above a picture / text must be drawn on the canvas to keep the order. */
+    private var canvasVideos: Set<String> = emptySet()
+
+    private fun videosOnCanvas(p: Project): Set<String> {
+        val out = HashSet<String>()
+        var canvasStarted = false
+        for (l in p.layers) {
+            if (l.isEffect()) continue
+            if (l.kind == LayerKind.VIDEO) { if (canvasStarted || drawnByOverlay(l)) { out.add(l.id); canvasStarted = true } }
+            else canvasStarted = true
+        }
+        return out
     }
 
     private fun drawnByOverlay(l: Layer) = l.mask != MaskKind.NONE || l.chroma || l.hasCrop() || l.outlineColor != 0 || l.shadow ||
@@ -295,7 +316,7 @@ class StageView(context: Context) : FrameLayout(context) {
             for (l in LayerRenderer.drawOrder(p.layers)) {
                 if (!l.isActive(timeMs)) continue
                 if (l.kind == LayerKind.VIDEO) {
-                    if (!drawnByOverlay(l)) continue
+                    if (!drawnByOverlay(l) && l.id !in canvasVideos) continue
                     val fr = videoFrame(l, w) ?: continue
                     LayerRenderer.draw(context, canvas, l, timeMs, w, h, fr)
                     continue
@@ -313,6 +334,7 @@ class StageView(context: Context) : FrameLayout(context) {
                 // title-safe area (90 %)
                 canvas.drawRect(w * 0.05f, h * 0.05f, w * 0.95f, h * 0.95f, safePaint)
             }
+            if (editMask != null || editCrop != null) { drawEdit(canvas, w, h); return }
             if (selectedLayerId == null) canvasTarget?.let { drawTargetBox(canvas, it, w, h) }
             val sel = p.layers.firstOrNull { it.id == selectedLayerId } ?: return
             if (sel.isEffect() || brush != null) return
@@ -430,6 +452,85 @@ class StageView(context: Context) : FrameLayout(context) {
         private val poses = HashMap<String, Pose>()
         private var stroke: Stroke? = null
 
+        private var editLast: FloatArray? = null
+        private var editSpan = 0f
+        private var cropEdge = -1
+
+        private fun editTouch(e: MotionEvent, w: Int, h: Int) {
+            val m = editMask
+            val c = editCrop
+            val l = m ?: c ?: return
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    editLast = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y)
+                    if (c != null) {
+                        val k = LayerRenderer.corners(l, LayerRenderer.basePose(l, timeMs), w, h)
+                        val mids = listOf(floatArrayOf((k[0] + k[6]) / 2, (k[1] + k[7]) / 2), floatArrayOf((k[0] + k[2]) / 2, (k[1] + k[3]) / 2),
+                            floatArrayOf((k[2] + k[4]) / 2, (k[3] + k[5]) / 2), floatArrayOf((k[4] + k[6]) / 2, (k[5] + k[7]) / 2))
+                        cropEdge = mids.indices.minByOrNull { hypot(e.x - mids[it][0], e.y - mids[it][1]) } ?: -1
+                    }
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> if (e.pointerCount >= 2) editSpan = span(e)
+                MotionEvent.ACTION_MOVE -> {
+                    if (m != null && e.pointerCount >= 2) {
+                        val sp = span(e)
+                        if (editSpan > 0f) { m.maskSize = (m.maskSize * sp / editSpan).coerceIn(0.05f, 3f) }
+                        editSpan = sp
+                        onEditChanged?.invoke(); invalidate(); return
+                    }
+                    val cur = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y) ?: return
+                    val last = editLast ?: cur
+                    val dx = cur[0] - last[0]; val dy = cur[1] - last[1]
+                    if (m != null) {
+                        m.maskX = (m.maskX + dx).coerceIn(-0.5f, 1.5f); m.maskY = (m.maskY + dy).coerceIn(-0.5f, 1.5f)
+                    } else if (c != null) {
+                        val cw = (1f - c.cropL - c.cropR).coerceAtLeast(0.05f); val ch = (1f - c.cropT - c.cropB).coerceAtLeast(0.05f)
+                        when (cropEdge) {
+                            0 -> c.cropL = (c.cropL + dx * cw).coerceIn(0f, 0.9f - c.cropR)
+                            1 -> c.cropT = (c.cropT + dy * ch).coerceIn(0f, 0.9f - c.cropB)
+                            2 -> c.cropR = (c.cropR - dx * cw).coerceIn(0f, 0.9f - c.cropL)
+                            3 -> c.cropB = (c.cropB - dy * ch).coerceIn(0f, 0.9f - c.cropT)
+                        }
+                        val nw = (1f - c.cropL - c.cropR).coerceAtLeast(0.05f); val nh = (1f - c.cropT - c.cropB).coerceAtLeast(0.05f)
+                        c.contentAspect = c.srcAspect * nh / nw
+                    }
+                    editLast = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y)
+                    onEditChanged?.invoke(); invalidate()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { editLast = null; editSpan = 0f; cropEdge = -1 }
+            }
+        }
+
+        private val editPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE; color = 0xFF19D3C5.toInt(); strokeWidth = dp(2f); pathEffect = DashPathEffect(floatArrayOf(dp(8f), dp(5f)), 0f)
+        }
+        private val editDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+
+        private fun drawEdit(canvas: Canvas, w: Int, h: Int) {
+            val m = editMask
+            if (m != null && m.mask != MaskKind.NONE) {
+                val (cw, ch) = LayerRenderer.contentSize(m, w)
+                val mat = LayerRenderer.matrix(m, LayerRenderer.basePose(m, timeMs), w, h)
+                canvas.save(); canvas.concat(mat)
+                val cx = cw * m.maskX; val cy = ch * m.maskY; val st = m.maskStretch.coerceIn(0.1f, 10f)
+                val r = minOf(cw, ch) * m.maskSize / 2f
+                val rect = if (m.mask == MaskKind.RECT) RectF(cx - cw * m.maskSize / 2f * st, cy - ch * m.maskSize / 2f, cx + cw * m.maskSize / 2f * st, cy + ch * m.maskSize / 2f)
+                else RectF(cx - r * st, cy - r, cx + r * st, cy + r)
+                if (m.mask == MaskKind.RECT) canvas.drawRect(rect, editPaint) else canvas.drawOval(rect, editPaint)
+                canvas.drawCircle(cx, cy, dp(5f), editDot)
+                canvas.restore()
+            }
+            val c = editCrop
+            if (c != null) {
+                val k = LayerRenderer.corners(c, LayerRenderer.basePose(c, timeMs), w, h)
+                val path = Path().apply { moveTo(k[0], k[1]); lineTo(k[2], k[3]); lineTo(k[4], k[5]); lineTo(k[6], k[7]); close() }
+                canvas.drawPath(path, editPaint)
+                val mids = listOf((k[0] + k[6]) / 2 to (k[1] + k[7]) / 2, (k[0] + k[2]) / 2 to (k[1] + k[3]) / 2,
+                    (k[2] + k[4]) / 2 to (k[3] + k[5]) / 2, (k[4] + k[6]) / 2 to (k[5] + k[7]) / 2)
+                for ((x, y) in mids) { canvas.drawCircle(x, y, dp(9f), editDot); canvas.drawCircle(x, y, dp(9f), handleRing) }
+            }
+        }
+
         private fun pickColor(p: Project, x: Float, y: Float): Boolean {
             val cb = colorPicker ?: return false
             val l = p.layers.firstOrNull { it.id == selectedLayerId } ?: return true
@@ -469,6 +570,7 @@ class StageView(context: Context) : FrameLayout(context) {
                 invalidate()
                 return true
             }
+            if (editMask != null || editCrop != null) { editTouch(e, w, h); return true }
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     if (colorPicker != null) { pickColor(p, e.x, e.y); return true }

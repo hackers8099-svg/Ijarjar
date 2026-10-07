@@ -31,6 +31,9 @@ object Mockups {
         return when (k) {
             MockupKind.PHONE -> Pair(RectF(s * 0.045f, s * 0.045f, s * 0.045f, s * 0.045f), floatArrayOf(s * 0.16f, s * 0.12f))
             MockupKind.PHONE_ROUND -> Pair(RectF(s * 0.06f, s * 0.12f, s * 0.06f, s * 0.12f), floatArrayOf(s * 0.18f, s * 0.04f))
+            MockupKind.PHONE_PRO -> Pair(RectF(s * 0.035f, s * 0.035f, s * 0.035f, s * 0.035f), floatArrayOf(s * 0.17f, s * 0.14f))
+            MockupKind.PHONE_ULTRA -> Pair(RectF(s * 0.03f, s * 0.03f, s * 0.03f, s * 0.03f), floatArrayOf(s * 0.05f, s * 0.035f))
+            MockupKind.PHONE_BAR -> Pair(RectF(s * 0.04f, s * 0.04f, s * 0.04f, s * 0.04f), floatArrayOf(s * 0.15f, s * 0.12f))
             MockupKind.TABLET -> Pair(RectF(s * 0.05f, s * 0.05f, s * 0.05f, s * 0.05f), floatArrayOf(s * 0.07f, s * 0.03f))
             MockupKind.LAPTOP -> Pair(RectF(s * 0.035f, s * 0.045f, s * 0.035f, s * 0.035f), floatArrayOf(s * 0.04f, s * 0.006f))
             MockupKind.BROWSER -> Pair(RectF(s * 0.006f, s * 0.09f, s * 0.006f, s * 0.006f), floatArrayOf(s * 0.03f, s * 0.006f))
@@ -38,6 +41,72 @@ object Mockups {
             MockupKind.TV -> Pair(RectF(s * 0.02f, s * 0.02f, s * 0.02f, s * 0.02f), floatArrayOf(s * 0.015f, s * 0.004f))
             MockupKind.POLAROID -> Pair(RectF(s * 0.07f, s * 0.07f, s * 0.07f, s * 0.28f), floatArrayOf(s * 0.015f, 0f))
             MockupKind.NONE -> Pair(RectF(), floatArrayOf(0f, 0f))
+        }
+    }
+
+    /** A camera lens: metal ring, dark glass, small reflection. */
+    private fun lens(canvas: Canvas, x: Float, y: Float, r: Float, base: Int, alpha: Int) {
+        paint.shader = null; paint.style = Paint.Style.FILL
+        paint.color = lighter(darker(base, 0.8f), 0.3f); paint.alpha = alpha
+        canvas.drawCircle(x, y, r, paint)
+        paint.color = 0xFF0B0B10.toInt(); paint.alpha = alpha
+        canvas.drawCircle(x, y, r * 0.8f, paint)
+        paint.shader = android.graphics.RadialGradient(x - r * 0.2f, y - r * 0.2f, r * 0.6f, 0xFF3A4A7A.toInt(), 0xFF0B0B10.toInt(), Shader.TileMode.CLAMP)
+        canvas.drawCircle(x, y, r * 0.55f, paint)
+        paint.shader = null
+        paint.color = Color.WHITE; paint.alpha = alpha * 140 / 255
+        canvas.drawCircle(x - r * 0.25f, y - r * 0.25f, r * 0.12f, paint)
+    }
+
+    /** Back of a phone (seen when turned around): body + camera module in the chosen style. */
+    private fun drawBack(canvas: Canvas, kind: MockupKind, body: RectF, bodyR: Float, base: Int, alpha: Int, cw: Float, ch: Float, s: Float) {
+        paint.style = Paint.Style.FILL
+        paint.shader = LinearGradient(body.right, body.top, body.left, body.bottom, lighter(base, 0.18f), darker(base, 0.8f), Shader.TileMode.CLAMP)
+        paint.color = base; paint.alpha = alpha
+        canvas.drawRoundRect(body, bodyR, bodyR, paint)
+        paint.shader = null
+        paint.style = Paint.Style.STROKE; paint.strokeWidth = s * 0.008f; paint.color = lighter(base, 0.4f); paint.alpha = alpha
+        canvas.drawRoundRect(body, bodyR, bodyR, paint)
+        paint.style = Paint.Style.FILL
+        // seen from behind the picture is mirrored, so "top-left of the back" is at the right in our coordinates
+        val r = s * 0.075f
+        when (kind) {
+            MockupKind.PHONE_PRO -> {
+                val box = RectF(cw - s * 0.47f, s * 0.04f, cw - s * 0.04f, s * 0.47f)
+                paint.color = lighter(base, 0.12f); paint.alpha = alpha
+                canvas.drawRoundRect(box, s * 0.1f, s * 0.1f, paint)
+                lens(canvas, box.left + box.width() * 0.3f, box.top + box.height() * 0.28f, r, base, alpha)
+                lens(canvas, box.left + box.width() * 0.3f, box.top + box.height() * 0.72f, r, base, alpha)
+                lens(canvas, box.left + box.width() * 0.72f, box.top + box.height() * 0.5f, r, base, alpha)
+                paint.color = 0xFFFFF4D6.toInt(); paint.alpha = alpha
+                canvas.drawCircle(box.left + box.width() * 0.75f, box.top + box.height() * 0.18f, s * 0.025f, paint)
+            }
+            MockupKind.PHONE_ULTRA -> {
+                val x = cw - s * 0.16f
+                for (i in 0 until 3) lens(canvas, x, s * 0.14f + i * s * 0.2f, r * 1.05f, base, alpha)
+                lens(canvas, x - s * 0.17f, s * 0.14f, r * 0.55f, base, alpha)
+                lens(canvas, x - s * 0.17f, s * 0.3f, r * 0.55f, base, alpha)
+                paint.color = 0xFFFFF4D6.toInt(); paint.alpha = alpha
+                canvas.drawCircle(x - s * 0.17f, s * 0.44f, s * 0.022f, paint)
+            }
+            MockupKind.PHONE_BAR -> {
+                val bar = RectF(body.left, ch * 0.12f, body.right, ch * 0.12f + s * 0.2f)
+                paint.color = darker(base, 0.35f); paint.alpha = alpha
+                canvas.drawRoundRect(bar, s * 0.1f, s * 0.1f, paint)
+                val pill = RectF(cw - s * 0.58f, bar.top + s * 0.035f, cw - s * 0.1f, bar.bottom - s * 0.035f)
+                paint.color = 0xFF111116.toInt(); paint.alpha = alpha
+                canvas.drawRoundRect(pill, pill.height() / 2, pill.height() / 2, paint)
+                lens(canvas, pill.right - pill.height() * 0.5f, pill.centerY(), pill.height() * 0.38f, base, alpha)
+                lens(canvas, pill.right - pill.height() * 1.4f, pill.centerY(), pill.height() * 0.38f, base, alpha)
+                lens(canvas, pill.left + pill.height() * 0.6f, pill.centerY(), pill.height() * 0.3f, base, alpha)
+            }
+            else -> {
+                val box = RectF(cw - s * 0.36f, s * 0.04f, cw - s * 0.04f, s * 0.36f)
+                paint.color = lighter(base, 0.1f); paint.alpha = alpha
+                canvas.drawRoundRect(box, s * 0.08f, s * 0.08f, paint)
+                lens(canvas, box.left + box.width() * 0.3f, box.top + box.height() * 0.3f, r * 0.9f, base, alpha)
+                lens(canvas, box.left + box.width() * 0.7f, box.top + box.height() * 0.7f, r * 0.9f, base, alpha)
+            }
         }
     }
 
@@ -50,18 +119,39 @@ object Mockups {
         val s = minOf(cw, ch)
 
         // thickness: copies of the body slightly behind, only visible when turned in 3D
+        val phone = kind == MockupKind.PHONE || kind == MockupKind.PHONE_ROUND || kind == MockupKind.PHONE_PRO ||
+            kind == MockupKind.PHONE_ULTRA || kind == MockupKind.PHONE_BAR
+        val m = LayerRenderer.matrix(l, pose, canvasW, canvasH)
+        // which side faces us? (mirrored mapping = we look at the back)
+        val pts = floatArrayOf(0f, 0f, cw, 0f, 0f, ch)
+        m.mapPoints(pts)
+        val cross = (pts[2] - pts[0]) * (pts[5] - pts[1]) - (pts[3] - pts[1]) * (pts[4] - pts[0])
+        val back = cross < 0f
         if (pose.rx != 0f || pose.ry != 0f) {
-            val steps = 10
-            for (k in steps downTo 1) {
-                val m = LayerRenderer.matrix(l, pose, canvasW, canvasH, k * 0.0016f)
-                canvas.save(); canvas.concat(m)
+            // the body's thickness: many thin slices = a solid metal edge
+            val depth = if (phone) 0.022f else 0.016f
+            @Suppress("UNUSED_VARIABLE") val unused = 0
+            val steps = 16
+            // farthest slice first: from the back plate when we see the front, from the front when we see the back
+            val order = if (back) (0 until steps).toList() else (steps downTo 1).toList()
+            for (k in order) {
+                val z = k * depth / steps
+                val mk = LayerRenderer.matrix(l, pose, canvasW, canvasH, z)
+                canvas.save(); canvas.concat(mk)
                 paint.shader = null; paint.style = Paint.Style.FILL
-                paint.color = darker(base, 0.55f + 0.03f * (steps - k)); paint.alpha = alpha
+                val f = k.toFloat() / steps
+                paint.color = if (f in 0.35f..0.65f) lighter(darker(base, 0.9f), 0.25f) else darker(base, 0.55f + 0.25f * (1f - f))
+                paint.alpha = alpha
                 canvas.drawRoundRect(body, bodyR, bodyR, paint)
                 canvas.restore()
             }
         }
-        val m = LayerRenderer.matrix(l, pose, canvasW, canvasH)
+        if (back && phone) {
+            canvas.save(); canvas.concat(LayerRenderer.matrix(l, pose, canvasW, canvasH, if (pose.rx != 0f || pose.ry != 0f) 0.022f else 0f))
+            drawBack(canvas, kind, body, bodyR, base, alpha, cw, ch, s)
+            canvas.restore()
+            return
+        }
         canvas.save()
         canvas.concat(m)
 
@@ -82,7 +172,7 @@ object Mockups {
                 canvas.drawPath(stand, paint)
                 canvas.drawRoundRect(RectF(cw * 0.25f, body.bottom + ch * 0.11f, cw * 0.75f, body.bottom + ch * 0.14f), s * 0.01f, s * 0.01f, paint)
             }
-            MockupKind.PHONE, MockupKind.PHONE_ROUND -> {
+            MockupKind.PHONE, MockupKind.PHONE_ROUND, MockupKind.PHONE_PRO, MockupKind.PHONE_ULTRA, MockupKind.PHONE_BAR -> {
                 paint.color = darker(base, 0.7f); paint.alpha = alpha
                 canvas.drawRoundRect(RectF(body.right - s * 0.004f, ch * 0.18f, body.right + s * 0.012f, ch * 0.3f), s * 0.006f, s * 0.006f, paint)
                 canvas.drawRoundRect(RectF(body.left - s * 0.012f, ch * 0.16f, body.left + s * 0.004f, ch * 0.21f), s * 0.006f, s * 0.006f, paint)
@@ -117,9 +207,13 @@ object Mockups {
 
         // details on top
         when (kind) {
-            MockupKind.PHONE -> { // dynamic island
+            MockupKind.PHONE, MockupKind.PHONE_PRO -> { // pill cut-out
                 paint.color = Color.BLACK; paint.alpha = alpha
                 canvas.drawRoundRect(RectF(cw * 0.36f, ch * 0.015f, cw * 0.64f, ch * 0.015f + s * 0.07f), s * 0.035f, s * 0.035f, paint)
+            }
+            MockupKind.PHONE_ULTRA, MockupKind.PHONE_BAR -> { // punch-hole camera
+                paint.color = Color.BLACK; paint.alpha = alpha
+                canvas.drawCircle(cw / 2f, ch * 0.022f + s * 0.02f, s * 0.022f, paint)
             }
             MockupKind.PHONE_ROUND -> {
                 paint.color = darker(base, 0.5f); paint.alpha = alpha

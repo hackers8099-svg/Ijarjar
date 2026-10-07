@@ -354,15 +354,19 @@ object LayerRenderer {
         val scaleDown = (1024f / maxOf(cw, ch)).coerceAtMost(1f)
         val w = (cw * scaleDown).toInt().coerceAtLeast(4)
         val h = (ch * scaleDown).toInt().coerceAtLeast(4)
-        val key = "shape|${l.shape}|${l.textColor}|${l.textColor2}|${l.strokeColor}|${l.strokeWidth}|${l.shadow}|$w|$h"
+        val key = "shape|${l.shape}|${l.textColor}|${l.textColor2}|${l.strokeColor}|${l.strokeWidth}|${l.shadow}|${l.shapeRound}|$w|$h"
         textCache.get(key)?.let { return it }
         val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(b)
         val sw = if (l.strokeColor != 0) minOf(w, h) * l.strokeWidth.coerceIn(0.01f, 0.3f) * 0.5f else 0f
         val inset = sw / 2f + 1f
         val r = RectF(inset, inset, w - inset, h - inset)
-        val path = shapePath(l.shape, r)
+        val path = shapePath(l.shape, r, l.shapeRound)
+        // rounded corners on pointy shapes (triangle, star, hexagon, arrow, bubble)
+        val cornerFx = if (l.shapeRound > 0f && l.shape !in setOf(ShapeKind.RECT, ShapeKind.ROUND_RECT, ShapeKind.CIRCLE, ShapeKind.RING, ShapeKind.LINE, ShapeKind.HEART))
+            android.graphics.CornerPathEffect(minOf(w, h) * 0.3f * l.shapeRound) else null
         val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            pathEffect = cornerFx
             color = l.textColor
             if (l.textColor2 != 0) shader = LinearGradient(0f, 0f, 0f, h.toFloat(), l.textColor, l.textColor2, Shader.TileMode.CLAMP)
             if (l.shape == ShapeKind.LINE) { style = Paint.Style.STROKE; strokeWidth = h * 0.8f; strokeCap = Paint.Cap.ROUND }
@@ -374,19 +378,22 @@ object LayerRenderer {
         } else c.drawPath(path, fill)
         if (sw > 0f && l.shape != ShapeKind.LINE) {
             c.drawPath(path, Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.STROKE; strokeWidth = sw; color = l.strokeColor; strokeJoin = Paint.Join.ROUND
+                style = Paint.Style.STROKE; strokeWidth = sw; color = l.strokeColor; strokeJoin = Paint.Join.ROUND; pathEffect = cornerFx
             })
         }
         textCache.put(key, b)
         return b
     }
 
-    fun shapePath(kind: ShapeKind, r: RectF): Path {
+    fun shapePath(kind: ShapeKind, r: RectF, round: Float = -1f): Path {
         val p = Path()
         val cx = r.centerX(); val cy = r.centerY()
         when (kind) {
-            ShapeKind.RECT -> p.addRect(r, Path.Direction.CW)
-            ShapeKind.ROUND_RECT -> { val rad = minOf(r.width(), r.height()) * 0.2f; p.addRoundRect(r, rad, rad, Path.Direction.CW) }
+            ShapeKind.RECT, ShapeKind.ROUND_RECT -> {
+                val k = if (round >= 0f) round else if (kind == ShapeKind.ROUND_RECT) 0.4f else 0f
+                val rad = minOf(r.width(), r.height()) * 0.5f * k.coerceIn(0f, 1f)
+                if (rad <= 0.5f) p.addRect(r, Path.Direction.CW) else p.addRoundRect(r, rad, rad, Path.Direction.CW)
+            }
             ShapeKind.CIRCLE, ShapeKind.RING -> p.addOval(r, Path.Direction.CW)
             ShapeKind.TRIANGLE -> { p.moveTo(cx, r.top); p.lineTo(r.right, r.bottom); p.lineTo(r.left, r.bottom); p.close() }
             ShapeKind.HEXAGON -> {
@@ -618,9 +625,8 @@ object LayerRenderer {
 
     /** Overlay videos first, then drawn effects, then everything else in list order. */
     fun drawOrder(layers: List<Layer>): List<Layer> =
-        layers.filter { it.kind == LayerKind.VIDEO } +
-            layers.filter { it.isEffect() } +
-            layers.filter { it.kind != LayerKind.VIDEO && !it.isEffect() }
+        // effects first, then pictures / videos / text in the user's order (so a video can be above or below)
+        layers.filter { it.isEffect() } + layers.filter { !it.isEffect() }
 
     private val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
 
@@ -780,7 +786,7 @@ object LayerRenderer {
         val aspect = (ch / cw.coerceAtLeast(1f)).coerceIn(0.05f, 20f)
         val mw = if (aspect <= 1f) 384 else (384 / aspect).toInt().coerceAtLeast(8)
         val mh = (mw * aspect).toInt().coerceAtLeast(8)
-        val key = "${l.mask}|${l.maskSize}|${l.maskFeather}|${l.maskInvert}|$mw|$mh"
+        val key = "${l.mask}|${l.maskSize}|${l.maskFeather}|${l.maskInvert}|${l.maskX}|${l.maskY}|${l.maskStretch}|$mw|$mh"
         maskCache.get(key)?.let { return it }
         val b = Bitmap.createBitmap(mw, mh, Bitmap.Config.ARGB_8888)
         val c = Canvas(b)
@@ -797,12 +803,13 @@ object LayerRenderer {
             c.drawColor(Color.WHITE)
             paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT)
         }
-        val cx = mw / 2f; val cy = mh / 2f
+        val cx = mw * l.maskX; val cy = mh * l.maskY
+        val st = l.maskStretch.coerceIn(0.1f, 10f)
         when (l.mask) {
             MaskKind.NONE -> c.drawColor(Color.WHITE)
-            MaskKind.CIRCLE -> c.drawCircle(cx, cy, minSide * size / 2f, paint)
+            MaskKind.CIRCLE -> { val r = minSide * size / 2f; c.drawOval(RectF(cx - r * st, cy - r, cx + r * st, cy + r), paint) }
             MaskKind.RECT -> {
-                val hw = mw * size / 2f; val hh = mh * size / 2f
+                val hw = mw * size / 2f * st; val hh = mh * size / 2f
                 c.drawRoundRect(RectF(cx - hw, cy - hh, cx + hw, cy + hh), minSide * 0.06f, minSide * 0.06f, paint)
             }
             MaskKind.HEART -> c.drawPath(shapePath(ShapeKind.HEART,

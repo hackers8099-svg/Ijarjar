@@ -20,7 +20,16 @@ import kotlin.math.sqrt
  */
 @UnstableApi
 class AudioFx(private val settings: () -> Pair<Float, Boolean>,
-              private val voice: () -> so.ijarjar.app.model.VoiceFx = { so.ijarjar.app.model.VoiceFx.NONE }) : BaseAudioProcessor() {
+              private val voice: () -> so.ijarjar.app.model.VoiceFx = { so.ijarjar.app.model.VoiceFx.NONE },
+              private val room: () -> so.ijarjar.app.model.SoundFx? = { null }) : BaseAudioProcessor() {
+    // custom echo + room
+    private var echoBuf = Array(2) { FloatArray(1) }
+    private var ePos = 0
+    private val combs = Array(2) { Array(4) { FloatArray(1) } }
+    private val combPos = IntArray(4)
+    private val combLen = IntArray(4)
+    private val curLen = IntArray(4) { 8 }
+    private val combLp = Array(2) { FloatArray(4) }
 
     private class Biquad {
         var b0 = 1.0; var b1 = 0.0; var b2 = 0.0; var a1 = 0.0; var a2 = 0.0
@@ -66,6 +75,12 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
         lp.lowPass(fs, minOf(9000.0, fs * 0.45))
         presence.peak(fs, 3000.0, 4.0)
         delay = Array(inputAudioFormat.channelCount.coerceIn(1, 8)) { FloatArray((fs * 0.6).toInt()) }
+        val chs = inputAudioFormat.channelCount.coerceIn(1, 8)
+        echoBuf = Array(chs) { FloatArray((fs * 1.3).toInt()) }; ePos = 0
+        val base = intArrayOf(1116, 1188, 1277, 1356)   // Freeverb comb lengths at 44.1 kHz
+        for (i in 0 until 4) combLen[i] = (base[i] * fs / 44100.0 * 2.2).toInt()
+        for (c in combs.indices) combs[c] = Array(4) { FloatArray(combLen[it] + 1) }
+        combPos.fill(0)
         dPos = 0; vMode = -1
         return inputAudioFormat
     }
@@ -82,8 +97,13 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
         val src = inputBuffer.order(ByteOrder.LITTLE_ENDIAN)
         out.order(ByteOrder.LITTLE_ENDIAN)
         val mode = voice().mode
+        val rm = room()?.takeIf { it.on }
+        if (rm != null) for (k in 0 until 4) {
+            curLen[k] = (combLen[k] * (0.45 + 0.55 * rm.roomSize.coerceIn(0f, 1f))).toInt().coerceIn(8, combLen[k])
+            if (combPos[k] >= curLen[k]) combPos[k] = 0
+        }
         if (mode != vMode) setupVoice(mode, fs)
-        if (noise <= 0f && !enhance && mode == 0) {
+        if (noise <= 0f && !enhance && mode == 0 && rm == null) {
             out.put(src)
             out.flip()
             return
@@ -121,6 +141,11 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
                 dPos++; if (dPos >= delay[0].size) dPos = 0
                 phase += 1.0 / fs
             }
+            if (rm != null) {
+                for (c in 0 until ch) sample[c] = roomSample(rm, sample[c], c, fs)
+                ePos++; if (ePos >= echoBuf[0].size) ePos = 0
+                for (k in 0 until 4) { combPos[k]++; if (combPos[k] >= curLen[k]) combPos[k] = 0 }
+            }
             for (c in 0 until ch) {
                 var y = sample[c] * g
                 if (y > 0.98) y = 0.98 + (y - 0.98) * 0.1 else if (y < -0.98) y = -0.98 + (y + 0.98) * 0.1
@@ -130,6 +155,34 @@ class AudioFx(private val settings: () -> Pair<Float, Boolean>,
         // any odd leftover bytes
         while (src.hasRemaining()) out.put(src.get())
         out.flip()
+    }
+
+    /** Custom echo (delay + feedback) and a small room reverb (4 damped combs). */
+    private fun roomSample(r: so.ijarjar.app.model.SoundFx, x: Double, c: Int, fs: Double): Double {
+        var y = x
+        if (r.echoMix > 0.001f) {
+            val b = echoBuf[c.coerceAtMost(echoBuf.size - 1)]
+            val dl = (r.echoMs.coerceIn(30f, 1200f) / 1000.0 * fs).toInt().coerceIn(1, b.size - 1)
+            var i = ePos - dl; if (i < 0) i += b.size
+            val d = b[i].toDouble()
+            b[ePos] = (x + d * r.echoFb.coerceIn(0f, 0.92f)).toFloat()
+            y += d * r.echoMix
+        }
+        if (r.roomMix > 0.001f) {
+            val cc = c.coerceAtMost(1)
+            val fb = 0.7 + 0.27 * r.roomSize.coerceIn(0f, 1f)
+            var wet = 0.0
+            for (k in 0 until 4) {
+                val buf = combs[cc][k]
+                val i = combPos[k].coerceIn(0, buf.size - 1)
+                val out = buf[i].toDouble()
+                combLp[cc][k] = (out * 0.7 + combLp[cc][k] * 0.3).toFloat()
+                buf[i] = (x + combLp[cc][k] * fb).toFloat()
+                wet += out
+            }
+            y = y * (1 - r.roomMix * 0.4) + wet * 0.25 * r.roomMix
+        }
+        return y
     }
 
     private fun setupVoice(mode: Int, fs: Double) {

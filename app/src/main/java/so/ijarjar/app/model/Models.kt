@@ -197,6 +197,9 @@ enum class MockupKind(val so: String, val en: String) {
     NONE("Midna", "None"),
     PHONE("Taleefan", "Phone"),
     PHONE_ROUND("Taleefan 2", "Phone 2"),
+    PHONE_PRO("Pro · 3 kamarad", "Pro · 3 cameras"),
+    PHONE_ULTRA("Ultra · 5 lens", "Ultra · 5 lenses"),
+    PHONE_BAR("Bar kamarad", "Camera bar"),
     TABLET("Tablet", "Tablet"),
     LAPTOP("Laptop", "Laptop"),
     BROWSER("Browser", "Browser"),
@@ -323,6 +326,7 @@ class Clip(
     var denoise: Float = 0f,
     var enhanceVoice: Boolean = false,
     var voice: VoiceFx = VoiceFx.NONE,
+    var sfx: SoundFx = SoundFx(),
     // stabilisation: correction (x, y) per 100 ms of source, as a fraction of the frame
     var stab: Boolean = false,
     var stabPath: MutableList<Float> = mutableListOf(),
@@ -408,6 +412,9 @@ class Layer(
     var maskSize: Float = 0.8f,
     var maskFeather: Float = 0.1f,
     var maskInvert: Boolean = false,
+    var maskX: Float = 0.5f,            // mask centre inside the layer (0..1)
+    var maskY: Float = 0.5f,
+    var maskStretch: Float = 1f,        // mask width / height factor
     var animLoop: LoopAnim = LoopAnim.NONE,
     var effect: EffectKind = EffectKind.SHAKE,
     var isCaption: Boolean = false,
@@ -423,6 +430,7 @@ class Layer(
     var textLoop: TextLoop = TextLoop.NONE,
     var highlightColor: Int = 0xFFFFE600.toInt(),
     var exprCode: MutableMap<String, String> = mutableMapOf(),   // AE-style expression code per property
+    var shapeRound: Float = -1f,         // shape corner roundness 0..1 (-1 = shape's default)
     var hlRound: Float = 0.5f,          // word highlight box: 0 = square … 1 = pill
     var hlAnim: Int = 0,                // 0 pop, 1 slide from word to word, 2 fade, 3 grow from left, 4 none
     var hlTextColor: Int = 0,           // text colour on the highlighted word (0 = keep)
@@ -514,7 +522,8 @@ class AudioTrack(
     var fromVideo: Boolean = false,
     var denoise: Float = 0f,
     var enhanceVoice: Boolean = false,
-    var voice: VoiceFx = VoiceFx.NONE
+    var voice: VoiceFx = VoiceFx.NONE,
+    var sfx: SoundFx = SoundFx()
 ) {
     val endMs: Long get() = startMs + durationMs
     fun isActive(t: Long) = t >= startMs && t < endMs
@@ -612,4 +621,15 @@ enum class VoiceFx(val so: String, val en: String, val pitch: Float, val mode: I
     PHONE("Telefoon", "Telephone", 1f, 5),
     MEGAPHONE("Sameecad", "Megaphone", 1f, 8);
     val label: String get() = L.t(so, en)
+}
+
+/** Custom echo and room (reverb) settings for a clip or audio track. */
+class SoundFx(
+    var echoMix: Float = 0f,      // 0 = off
+    var echoMs: Float = 280f,
+    var echoFb: Float = 0.4f,
+    var roomMix: Float = 0f,      // 0 = off
+    var roomSize: Float = 0.5f
+) {
+    val on: Boolean get() = echoMix > 0.001f || roomMix > 0.001f
 }

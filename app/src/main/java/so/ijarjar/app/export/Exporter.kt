@@ -166,7 +166,7 @@ class Exporter(
         val audio = mutableListOf<AudioProcessor>()
         if (a.volume != 1f) audio.add(volumeProcessor(a.volume))
         if (a.voice.pitch != 1f) audio.add(androidx.media3.common.audio.SonicAudioProcessor().apply { setPitch(a.voice.pitch) })
-        if (a.denoise > 0f || a.enhanceVoice || a.voice.mode != 0) { val d = a.denoise; val e = a.enhanceVoice; val v = a.voice; audio.add(AudioFx({ Pair(d, e) }, { v })) }
+        if (a.denoise > 0f || a.enhanceVoice || a.voice.mode != 0 || a.sfx.on) { val d = a.denoise; val e = a.enhanceVoice; val v = a.voice; val r = a.sfx; audio.add(AudioFx({ Pair(d, e) }, { v }, { r })) }
         list.add(EditedMediaItem.Builder(item).setRemoveVideo(true).setEffects(Effects(audio, emptyList())).build())
         return EditedMediaItemSequence(list)
     }
@@ -225,7 +225,7 @@ class Exporter(
         }
         if (c.volume != 1f) audio.add(volumeProcessor(c.volume))
         if (c.voice.pitch != 1f) audio.add(androidx.media3.common.audio.SonicAudioProcessor().apply { setPitch(c.voice.pitch) })
-        if (c.denoise > 0f || c.enhanceVoice || c.voice.mode != 0) { val d = c.denoise; val e = c.enhanceVoice; val v = c.voice; audio.add(AudioFx({ Pair(d, e) }, { v })) }
+        if (c.denoise > 0f || c.enhanceVoice || c.voice.mode != 0 || c.sfx.on) { val d = c.denoise; val e = c.enhanceVoice; val v = c.voice; val r = c.sfx; audio.add(AudioFx({ Pair(d, e) }, { v }, { r })) }
         video.addAll(Filters.exportEffects(c.adjust, c.width.coerceAtLeast(16)))
         if (c.adjust.lutUri != null || c.adjust.hasTone()) Filters.lutFor(context, c.adjust)?.let { lut -> video.add(SingleColorLut.createFromCube(lut.toCube(1f))) }
         if (project.layers.any { it.isEffect() && it.effect.group == 2 }) video.add(EffectColor(clipStartMs))

@@ -135,6 +135,21 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private val pickClips = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) addClips(uris)
     }
+    // gallery pickers (open the phone's photos & videos straight away)
+    private fun media() = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)
+    private fun imagesOnly() = PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+    private val pickClipsG = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(50)) { uris ->
+        if (uris.isNotEmpty()) addClips(uris)
+    }
+    private val pickOverlayG = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(20)) { uris ->
+        if (uris.isNotEmpty()) addOverlay(uris) else mockupNext = false
+    }
+    private val pickReplaceG = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) replaceClip(uri)
+    }
+    private val pickBackgroundG = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) setBackgroundImage(uri)
+    }
     private val pickOverlay = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) addOverlay(uris)
     }
@@ -185,7 +200,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         engine.onEnded = { updatePlayButton() }
         history.push(ProjectStore.toJson(project))
         reload()
-        if (!photo && project.clips.isEmpty()) main.postDelayed({ pickClips.launch(arrayOf("video/*", "image/*")) }, 300)
+        if (!photo && project.clips.isEmpty()) main.postDelayed({ pickClipsG.launch(media()) }, 300)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -314,7 +329,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             setPadding(dp(8f), dp(8f), dp(8f), dp(8f))
             setOnClickListener {
                 insertAfter = -1
-                pickClips.launch(arrayOf("video/*", "image/*"))
+                pickClipsG.launch(media())
             }
         }
         tb.addView(add, FrameLayout.LayoutParams(dp(40f), dp(40f), Gravity.END or Gravity.TOP).apply { topMargin = dp(35f); marginEnd = dp(8f) })
@@ -398,6 +413,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
         stage.brush = null
         stage.colorPicker = null
+        stage.editMask = null
+        stage.editCrop = null
     }
 
     private fun updatePlayButton() {
@@ -549,7 +566,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_trim, tr("Gooy", "Trim")) { showTrim(c) }
                 if (c.kind == MediaKind.VIDEO) t(R.drawable.ic_speed, tr("Xawaare", "Speed"), c.hasCurve || c.speed != 1f) { showSpeed(c) }
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showVolume(c) }
-                t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceIndex = s.index; pickReplace.launch(arrayOf("video/*", "image/*")) }
+                t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceIndex = s.index; pickReplaceG.launch(media()) }
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { duplicateClip(s.index) }
                 t(R.drawable.ic_delete, tr("Tirtir", "Delete")) { deleteClip(s.index) }
                 group(tr("Muuqaal", "Look"))
@@ -561,14 +578,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     group(tr("Dheeraad", "More"))
                     t(R.drawable.ic_reverse, tr("Dib u celi", "Reverse"), c.reversed) { reverseClip(s.index) }
                     t(R.drawable.ic_freeze, tr("Qabooji", "Freeze")) { freezeFrame(s.index) }
-                    t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), c.voice != VoiceFx.NONE) { showVoiceChanger(c.voice, project.clipStartMs(s.index)) { c.voice = it } }
+                    t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), c.voice != VoiceFx.NONE || c.sfx.on) { showVoiceChanger(c.voice, project.clipStartMs(s.index), c.sfx) { c.voice = it } }
                     t(R.drawable.ic_voice, tr("Nadiifi codka", "Clean voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
                     t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
                 }
                 group(tr("Habee", "Arrange"))
                 t(R.drawable.ic_left, tr("Bidix u dhaqaaji", "Move left")) { moveClip(s.index, -1) }
                 t(R.drawable.ic_right, tr("Midig u dhaqaaji", "Move right")) { moveClip(s.index, 1) }
-                t(R.drawable.ic_add, tr("Ku dar ka dib", "Add after")) { insertAfter = s.index; pickClips.launch(arrayOf("video/*", "image/*")) }
+                t(R.drawable.ic_add, tr("Ku dar ka dib", "Add after")) { insertAfter = s.index; pickClipsG.launch(media()) }
             }
             s is TimelineView.Sel.LayerSel && selectedLayer() != null -> {
                 val l = selectedLayer()!!
@@ -641,7 +658,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 val a = selectedAudio()!!
                 group(tr("Cod", "Audio"))
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showAudioVolume(a) }
-                t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), a.voice != VoiceFx.NONE) { showVoiceChanger(a.voice, a.startMs) { a.voice = it } }
+                t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), a.voice != VoiceFx.NONE || a.sfx.on) { showVoiceChanger(a.voice, a.startMs, a.sfx) { a.voice = it } }
                 t(R.drawable.ic_voice, tr("Nadiifi codka", "Clean voice"), a.denoise > 0f || a.enhanceVoice) { showVoiceFx(a.denoise, a.enhanceVoice) { d, e -> a.denoise = d; a.enhanceVoice = e } }
                 t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitAudio(a) }
                 t(R.drawable.ic_start_here, tr("Bilow halkan", "Start here")) { a.startMs = timeMs; commit() }
@@ -657,7 +674,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_ratio, tr("Cabbir", "Size")) { showAspect() }
                 group(tr("Ku dar", "Add"))
                 t(R.drawable.ic_text, tr("Qoraal", "Text")) { addText() }
-                t(R.drawable.ic_image_add, tr("Sawir", "Image")) { pickOverlay.launch(arrayOf("image/*", "application/json", "application/octet-stream")) }
+                t(R.drawable.ic_image_add, tr("Sawir", "Image")) { pickOverlayG.launch(imagesOnly()) }
+                t(R.drawable.ic_model3d, "3D") { pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream")) }
                 t(R.drawable.ic_sticker, "Sticker") { showStickers() }
                 t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
@@ -674,6 +692,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_caption, tr("Qoraal-hoosaad", "Captions")) { showCaptions() }
                 t(R.drawable.ic_sticker, "Sticker") { showStickers() }
                 t(R.drawable.ic_overlay, "Overlay") { showOverlayMenu() }
+                t(R.drawable.ic_model3d, "3D") { pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream")) }
                 t(R.drawable.ic_effects, tr("Saameyn", "Effects")) { showEffects(null) }
                 t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
@@ -1400,7 +1419,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 fitBase(l, info.width, info.height)
                 if (mockupNext) {
                     mockupNext = false
-                    l.mockup = so.ijarjar.app.model.MockupKind.PHONE
+                    l.mockup = so.ijarjar.app.model.MockupKind.PHONE_PRO; l.mockupColor = 0xFF8A8F98.toInt()
                     l.baseW = (0.55f / (l.contentAspect * project.aspectRatio())).coerceAtMost(0.5f)
                     l.rotY = -20f; l.rotX = 6f
                 }
@@ -1415,7 +1434,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     private var replaceLayerTarget: Layer? = null
-    private val pickLayerImage = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    private val pickLayerImage = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         val l = replaceLayerTarget ?: return@registerForActivityResult
         if (uri == null) return@registerForActivityResult
         keep(uri)
@@ -1437,7 +1456,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun replaceLayerImage(l: Layer) {
         replaceLayerTarget = l
-        pickLayerImage.launch(arrayOf("image/*"))
+        pickLayerImage.launch(imagesOnly())
     }
 
     private class TextPreset(val so: String, val en: String, val fn: (Layer) -> Unit)
@@ -1573,6 +1592,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         Ui.tabs(this, root, listOf(
             tr("Qaab", "Shape") to { body: LinearLayout ->
                 body.addView(Ui.choiceRow(this, ShapeKind.entries.map { it.label }, ShapeKind.entries.indexOf(l.shape)) { l.shape = ShapeKind.entries[it]; live() })
+                val defRound = if (l.shape == ShapeKind.ROUND_RECT) 0.4f else 0f
+                body.addView(Ui.sliderRow(this, tr("Geesaha wareeg", "Corner round"), 0f, 1f, (if (l.shapeRound < 0f) defRound else l.shapeRound).coerceIn(0f, 1f)) { l.shapeRound = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Ballac", "Width"), 0.05f, 3f, l.stretchX.coerceIn(0.05f, 3f)) { v ->
                     val p = LayerRenderer.basePose(l, timeMs); p.sx = v; LayerRenderer.writePose(l, timeMs, p); live()
                 })
@@ -1709,9 +1730,15 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         chipRow(root, MaskKind.entries.map { (when (it) { MaskKind.NONE -> R.drawable.ic_close; MaskKind.CIRCLE -> R.drawable.ic_circle; else -> R.drawable.ic_mask }) to it.label }) { i ->
             l.mask = MaskKind.entries[i]; live()
         }
-        root.addView(Ui.sliderRow(this, tr("Cabbirka", "Size"), 0.1f, 1.5f, l.maskSize.coerceIn(0.1f, 1.5f)) { l.maskSize = it; live() })
+        root.addView(Ui.label(this, tr("Shaashadda: farta ku jiid si aad maaskarada u dhaqaajiso, laba farood ku weyneey/yaree.",
+            "On screen: drag to move the mask, pinch with two fingers to resize.")))
         root.addView(Ui.sliderRow(this, "Feather", 0f, 1f, l.maskFeather) { l.maskFeather = it; live() })
+        root.addView(Ui.sliderRow(this, tr("Ballac / dherer", "Width / height"), 0.3f, 3f, l.maskStretch.coerceIn(0.3f, 3f)) { l.maskStretch = it; live() })
         root.addView(Ui.choiceRow(this, listOf(tr("Caadi", "Normal"), tr("Rogan", "Invert")), if (l.maskInvert) 1 else 0) { l.maskInvert = it == 1; live() })
+        buttonRow(root, tr("Dhexda ku celi", "Re-centre") to { l.maskX = 0.5f; l.maskY = 0.5f; l.maskStretch = 1f; live() })
+        if (l.mask == MaskKind.NONE) { l.mask = MaskKind.CIRCLE }
+        stage.editMask = l
+        stage.onEditChanged = { live() }
         d.show()
     }
 
@@ -1755,6 +1782,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             else { val keep = src / target; l.cropT = (1 - keep) / 2; l.cropB = (1 - keep) / 2; l.cropL = 0f; l.cropR = 0f }
             apply()
         })
+        root.addView(Ui.label(this, tr("Shaashadda: jiid barahaas cad ee dhinacyada si aad u jarto.", "On screen: drag the white dots on the sides to crop.")))
+        stage.editCrop = l
+        stage.onEditChanged = { live() }
         root.addView(Ui.sliderRow(this, tr("Bidix", "Left"), 0f, 0.45f, l.cropL.coerceIn(0f, 0.45f)) { l.cropL = it; apply() })
         root.addView(Ui.sliderRow(this, tr("Midig", "Right"), 0f, 0.45f, l.cropR.coerceIn(0f, 0.45f)) { l.cropR = it; apply() })
         root.addView(Ui.sliderRow(this, tr("Kor", "Top"), 0f, 0.45f, l.cropT.coerceIn(0f, 0.45f)) { l.cropT = it; apply() })
@@ -2162,13 +2192,20 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         buttonRow(root,
             tr("Toos", "Flat") to { l.rotX = 0f; l.rotY = 0f; live() },
             tr("Janjeer", "Tilted") to { l.rotX = 8f; l.rotY = -22f; live() },
-            tr("Wareeg", "Turntable") to {
+            tr("Gadaal", "Back") to { l.rotX = 0f; l.rotY = 180f; l.keyframes.clear(); live() },
+            tr("Wareeg 360°", "Spin 360°") to {
                 l.keyframes.clear()
-                l.keyframes.add(Keyframe(0, l.cx, l.cy, l.scale, l.rotation, l.opacity, ease = Easing.EASE_IN_OUT, ry = -30f, rx = 6f))
-                l.keyframes.add(Keyframe(l.durationMs, l.cx, l.cy, l.scale, l.rotation, l.opacity, ease = Easing.EASE_IN_OUT, ry = 30f, rx = 6f))
+                l.keyframes.add(Keyframe(0, l.cx, l.cy, l.scale, l.rotation, l.opacity, ease = Easing.EASE_IN_OUT, ry = 0f, rx = 6f))
+                l.keyframes.add(Keyframe(l.durationMs, l.cx, l.cy, l.scale, l.rotation, l.opacity, ease = Easing.EASE_IN_OUT, ry = 360f, rx = 6f))
                 live()
             })
-        root.addView(Ui.label(this, tr("Muuqaalkaaga ama sawirkaaga ayaa gudaha shaashadda qalabka ka muuqanaya.", "Your video or picture plays inside the device screen.")))
+        buttonRow(root, "XYZ (3D)" to { d.dismiss(); show3D(l) })
+        root.addView(Ui.label(this, tr("Midabyo: titanium, madow, cad, buluug…", "Colours: titanium, black, white, blue…")))
+        root.addView(Ui.choiceRow(this, listOf("Titanium", tr("Madow", "Black"), tr("Cad", "White"), tr("Buluug", "Blue"), tr("Dahab", "Gold"), tr("Casaan", "Red")), -1) { i ->
+            l.mockupColor = intArrayOf(0xFF8A8F98.toInt(), 0xFF1C1C1E.toInt(), 0xFFE8E8EA.toInt(), 0xFF2D3E5C.toInt(), 0xFFC9B48A.toInt(), 0xFF8E1F2B.toInt())[i]; live()
+        })
+        root.addView(Ui.label(this, tr("Muuqaalkaaga ama sawirkaaga ayaa shaashadda ka ciyaaraya. Y-ga ka wareeji 90° si aad u aragto gadaashiisa iyo kamaradaha.",
+            "Your video or picture plays on the screen. Turn Y past 90° to see the back and cameras.")))
         d.show()
     }
 
@@ -2546,7 +2583,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     /** Voice changer: chipmunk, deep, robot, echo, radio… (tap = hear it). */
-    private fun showVoiceChanger(current: VoiceFx, startMs: Long, set: (VoiceFx) -> Unit) {
+    private fun showVoiceChanger(current: VoiceFx, startMs: Long, sfx: so.ijarjar.app.model.SoundFx, set: (VoiceFx) -> Unit) {
         val (d, root) = Ui.sheet(this, tr("Beddel codka", "Voice changer")) { main.removeCallbacks(stopPreview); commit() }
         root.addView(Ui.label(this, tr("Taabo cod si aad isla markiiba u maqasho.", "Tap a voice to hear it straight away.")))
         val from = if (timeMs >= startMs) timeMs else startMs
@@ -2563,6 +2600,25 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
         paint(current)
         root.addView(sv)
+        // custom echo + room
+        root.addView(Ui.label(this, tr("Echo (adiga dooro)", "Echo (custom)")))
+        root.addView(Ui.sliderRow(this, tr("Xoog", "Mix"), 0f, 1f, sfx.echoMix) { sfx.echoMix = it; live() })
+        root.addView(Ui.sliderRow(this, tr("Daahitaan ms", "Delay ms"), 30f, 1200f, sfx.echoMs.coerceIn(30f, 1200f)) { sfx.echoMs = it; live() })
+        root.addView(Ui.sliderRow(this, tr("Soo noqosho", "Feedback"), 0f, 0.9f, sfx.echoFb.coerceIn(0f, 0.9f)) { sfx.echoFb = it; live() })
+        root.addView(Ui.label(this, tr("Qol (reverb)", "Room (reverb)")))
+        root.addView(Ui.sliderRow(this, tr("Xoog", "Mix"), 0f, 1f, sfx.roomMix) { sfx.roomMix = it; live() })
+        root.addView(Ui.sliderRow(this, tr("Cabbirka qolka", "Room size"), 0f, 1f, sfx.roomSize) { sfx.roomSize = it; live() })
+        root.addView(Ui.choiceRow(this, listOf(tr("Qol yar", "Small room"), tr("Hool", "Hall"), tr("Masjid", "Mosque"), tr("Echo buur", "Mountain echo"), tr("Dami", "Off")), -1) { i ->
+            when (i) {
+                0 -> { sfx.roomMix = 0.35f; sfx.roomSize = 0.25f; sfx.echoMix = 0f }
+                1 -> { sfx.roomMix = 0.55f; sfx.roomSize = 0.75f; sfx.echoMix = 0f }
+                2 -> { sfx.roomMix = 0.7f; sfx.roomSize = 1f; sfx.echoMix = 0.15f; sfx.echoMs = 420f; sfx.echoFb = 0.3f }
+                3 -> { sfx.echoMix = 0.55f; sfx.echoMs = 650f; sfx.echoFb = 0.45f; sfx.roomMix = 0.1f }
+                else -> { sfx.echoMix = 0f; sfx.roomMix = 0f }
+            }
+            d.dismiss(); showVoiceChanger(current, startMs, sfx, set); previewSound(from)
+        })
+        buttonRow(root, tr("▶ Dhageyso", "▶ Listen") to { previewSound(from) })
         d.show()
     }
 
@@ -2674,20 +2730,22 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun showOverlayMenu() {
         val (d, root) = Ui.sheet(this, "Overlay")
         chipRow(root, listOf(
-            R.drawable.ic_overlay to tr("Fayl", "Media file"),
-            R.drawable.ic_dlink to tr("Mashruuc sawir", "Photo project"),
-            R.drawable.ic_model3d to tr("Model 3D (.glb)", "3D model (.glb)"),
-            R.drawable.ic_mockup to tr("Taleefan mockup", "Phone mockup"))) { k ->
+            R.drawable.ic_image_add to tr("Gallery", "Gallery"),
+            R.drawable.ic_overlay to tr("Fayl (MOV, GIF…)", "File (MOV, GIF…)"),
+            R.drawable.ic_model3d to tr("Model 3D", "3D model"),
+            R.drawable.ic_mockup to tr("Taleefan 3D", "3D phone"),
+            R.drawable.ic_dlink to tr("Mashruuc sawir", "Photo project"))) { k ->
             d.dismiss()
             when (k) {
-                0 -> pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream"))
-                1 -> linkPhotoProject()
+                0 -> pickOverlayG.launch(media())
+                1 -> pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream", "*/*"))
                 2 -> pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream"))
-                else -> { mockupNext = true; pickOverlay.launch(arrayOf("video/*", "image/*")) }
+                3 -> { mockupNext = true; pickOverlayG.launch(media()) }
+                else -> linkPhotoProject()
             }
         }
-        root.addView(Ui.label(this, tr("Muuqaal, sawir, GIF, PNG sequence, MOV hufan (alpha), Lottie (.json) — ama mashruuc sawir ah oo si toos ah u cusboonaada (dynamic link).",
-            "Video, picture, GIF, PNG sequence, transparent MOV (alpha), Lottie (.json) — or a photo project that updates live (dynamic link).")))
+        root.addView(Ui.label(this, tr("Gallery: sawir iyo muuqaal. Fayl: MOV hufan (alpha), GIF, PNG sequence, Lottie (.json).",
+            "Gallery: photos and videos. File: transparent MOV (alpha), GIF, PNG sequence, Lottie (.json).")))
         d.show()
     }
 
@@ -3158,9 +3216,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         root.addView(Ui.colorRow(this, project.bgColor, false) { project.bgColor = it; live() })
         root.addView(Ui.label(this, tr("Midab labaad (gradient)", "Second colour (gradient)")))
         root.addView(Ui.colorRow(this, project.bgColor2, true) { project.bgColor2 = it; live() })
-        if (project.bgImageUri == null) buttonRow(root, tr("Dooro sawir", "Choose picture") to { d.dismiss(); pickBackground.launch(arrayOf("image/*")) })
+        if (project.bgImageUri == null) buttonRow(root, tr("Dooro sawir", "Choose picture") to { d.dismiss(); pickBackgroundG.launch(imagesOnly()) })
         else buttonRow(root,
-            tr("Beddel sawirka", "Change") to { d.dismiss(); pickBackground.launch(arrayOf("image/*")) },
+            tr("Beddel sawirka", "Change") to { d.dismiss(); pickBackgroundG.launch(imagesOnly()) },
             tr("Muraayad", "Mirror") to { project.bgMirror = !project.bgMirror; live() },
             tr("Ka saar", "Remove") to { project.bgImageUri = null; d.dismiss() })
         d.show()

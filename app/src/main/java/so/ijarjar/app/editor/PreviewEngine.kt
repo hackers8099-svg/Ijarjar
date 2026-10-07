@@ -31,10 +31,11 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         private set
 
     /** A player whose sound goes through the voice clean-up processor. */
-    private fun playerWithFx(settings: () -> Pair<Float, Boolean>, voice: () -> so.ijarjar.app.model.VoiceFx): ExoPlayer {
+    private fun playerWithFx(settings: () -> Pair<Float, Boolean>, voice: () -> so.ijarjar.app.model.VoiceFx,
+                             room: () -> so.ijarjar.app.model.SoundFx? = { null }): ExoPlayer {
         val rf = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
-                DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf<AudioProcessor>(AudioFx(settings, voice))).build()
+                DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf<AudioProcessor>(AudioFx(settings, voice, room))).build()
         }
         return ExoPlayer.Builder(context, rf).build()
     }
@@ -42,7 +43,8 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     private val main: ExoPlayer = playerWithFx({
         val c = project.clips.getOrNull(currentIndexSafe)
         if (c == null) Pair(0f, false) else Pair(c.denoise, c.enhanceVoice)
-    }, { project.clips.getOrNull(currentIndexSafe)?.voice ?: so.ijarjar.app.model.VoiceFx.NONE })
+    }, { project.clips.getOrNull(currentIndexSafe)?.voice ?: so.ijarjar.app.model.VoiceFx.NONE },
+        { project.clips.getOrNull(currentIndexSafe)?.sfx })
     @Volatile private var currentIndexSafe = 0
     private val audioPlayers = HashMap<String, ExoPlayer>()
     private val audioSignature = HashMap<String, String>()
@@ -122,7 +124,8 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             val pl = playerWithFx({
                 val t = project.audios.firstOrNull { it.id == id }
                 if (t == null) Pair(0f, false) else Pair(t.denoise, t.enhanceVoice)
-            }, { project.audios.firstOrNull { it.id == id }?.voice ?: so.ijarjar.app.model.VoiceFx.NONE })
+            }, { project.audios.firstOrNull { it.id == id }?.voice ?: so.ijarjar.app.model.VoiceFx.NONE },
+                { project.audios.firstOrNull { it.id == id }?.sfx })
             pl.setMediaItem(MediaItem.fromUri(Uri.parse(a.uri)))
             pl.volume = a.volume.coerceIn(0f, 1f)
             pl.playbackParameters = PlaybackParameters(1f, a.voice.pitch)
