@@ -147,6 +147,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private val pickReplaceG = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) replaceClip(uri)
     }
+    /** Takes just the sound out of a video from the gallery. */
+    private val pickVideoAudio = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) addAudio(uri, AudioKind.EXTRACTED)
+    }
     private val pickBackgroundG = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri != null) setBackgroundImage(uri)
     }
@@ -704,6 +708,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
                     else askMic.launch(Manifest.permission.RECORD_AUDIO)
                 }
+                t(R.drawable.ic_waveform, tr("Codka video", "Audio from video")) { pickVideoAudio.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
                 t(R.drawable.ic_audio, tr("Kale", "More")) { showAudioMenu() }
                 group(tr("Mashruuc", "Project"))
                 t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit clip")) {
@@ -3047,7 +3052,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             R.drawable.ic_music to tr("Muusik", "Music"),
             R.drawable.ic_sfx to tr("Dhawaaqyo", "Sound FX"),
             R.drawable.ic_mic to tr("Cod-duub", "Voiceover"),
-            R.drawable.ic_waveform to tr("Ka soo saar", "Extract"),
+            R.drawable.ic_waveform to tr("Codka video", "Audio from video"),
             R.drawable.ic_sound to tr("Fayl cod", "Audio file"))) { k ->
             d.dismiss()
             when (k) {
@@ -3055,7 +3060,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 1 -> showSfx()
                 2 -> if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
                      else askMic.launch(Manifest.permission.RECORD_AUDIO)
-                3 -> { addAudioKind = AudioKind.EXTRACTED; pickAudio.launch(arrayOf("video/*")) }
+                3 -> pickVideoAudio.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
                 else -> { addAudioKind = AudioKind.SOUND; pickAudio.launch(arrayOf("audio/*")) }
             }
         }
@@ -3116,7 +3121,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             main.post {
                 val src = info?.durationMs ?: 0L
                 val start = if (kind == AudioKind.MUSIC && project.audios.none { it.kind == AudioKind.MUSIC }) 0L else timeMs
-                val room = (project.durationMs - start).coerceAtLeast(1000)
+                val room = (project.durationMs - start).coerceAtLeast(if (project.clips.isEmpty()) maxOf(src, 1000L) else 1000L)
                 val a = AudioTrack(uri = uri.toString(), name = name, kind = kind, startMs = start, trimStartMs = 0,
                     durationMs = if (src > 0) minOf(src, room) else room, sourceDurationMs = src, fromVideo = kind == AudioKind.EXTRACTED)
                 project.audios.add(a)
