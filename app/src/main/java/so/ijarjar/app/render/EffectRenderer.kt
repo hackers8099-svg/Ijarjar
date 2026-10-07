@@ -101,6 +101,16 @@ object EffectRenderer {
                         0f, 0f, 0f, 1f, 0f))
                 }
                 EffectKind.RAINBOW -> hueRotate((t - l.startMs) / 1000f * 120f * k)
+                EffectKind.DREAMY -> ColorMatrix(floatArrayOf(
+                    1f - 0.15f * k, 0f, 0f, 0f, 40f * k,
+                    0f, 1f - 0.15f * k, 0f, 0f, 30f * k,
+                    0f, 0f, 1f - 0.15f * k, 0f, 45f * k,
+                    0f, 0f, 0f, 1f, 0f)).apply { postConcat(ColorMatrix().apply { setSaturation(1f + 0.25f * k) }) }
+                EffectKind.BLOOM -> ColorMatrix(floatArrayOf(
+                    1f + 0.35f * k, 0f, 0f, 0f, 10f * k,
+                    0f, 1f + 0.35f * k, 0f, 0f, 10f * k,
+                    0f, 0f, 1f + 0.3f * k, 0f, 12f * k,
+                    0f, 0f, 0f, 1f, 0f))
                 EffectKind.NEON -> ColorMatrix().apply {
                     setSaturation(1f + 1.2f * k)
                     postConcat(ColorMatrix(floatArrayOf(
@@ -271,6 +281,58 @@ object EffectRenderer {
                 canvas.drawText("REC", m * 1.6f + W * 0.03f, m * 1.9f + W * 0.014f, paint)
                 val sec = (u / 1000).toInt()
                 canvas.drawText("%02d:%02d".format(sec / 60, sec % 60), W - m - W * 0.16f, m * 1.9f + W * 0.014f, paint)
+            }
+            EffectKind.LENS_FLARE -> {
+                val ph = u / 4000f
+                val fx = (0.15f + 0.7f * ((sin(ph * PI.toFloat()) + 1f) / 2f)) * W
+                val fy = H * 0.22f
+                paint.shader = RadialGradient(fx, fy, W * 0.35f, intArrayOf(Color.argb((200 * k).toInt(), 255, 245, 220), Color.argb((60 * k).toInt(), 255, 200, 120), Color.TRANSPARENT),
+                    floatArrayOf(0f, 0.25f, 1f), Shader.TileMode.CLAMP)
+                canvas.drawRect(0f, 0f, W, H, paint); paint.shader = null
+                // ghosts along the line through the centre
+                val cx = W / 2; val cy = H / 2
+                for (i in 1..5) {
+                    val f = i * 0.45f
+                    val gx = fx + (cx - fx) * f * 2f; val gy = fy + (cy - fy) * f * 2f
+                    paint.color = Color.HSVToColor((40 * k).toInt(), floatArrayOf((i * 60f) % 360f, 0.5f, 1f))
+                    canvas.drawCircle(gx, gy, W * (0.02f + 0.015f * i), paint)
+                }
+                paint.strokeWidth = maxOf(1f, W * 0.003f); paint.color = Color.argb((120 * k).toInt(), 255, 240, 200)
+                canvas.drawLine(fx - W * 0.4f, fy, fx + W * 0.4f, fy, paint)
+            }
+            EffectKind.GLOW_EDGES -> {
+                val hue = (u / 20f) % 360f
+                val c = Color.HSVToColor(floatArrayOf(hue, 0.7f, 1f))
+                paint.style = Paint.Style.STROKE
+                for (i in 0 until 6) {
+                    paint.strokeWidth = W * 0.012f * (6 - i)
+                    paint.color = c; paint.alpha = (35 * k).toInt()
+                    canvas.drawRect(0f, 0f, W, H, paint)
+                }
+                paint.style = Paint.Style.FILL
+            }
+            EffectKind.SPARKLE_GLOW -> {
+                for (i in 0 until 60) {
+                    val x = rnd(i, 11) * W; val y = rnd(i, 12) * H
+                    val tw = (0.5f + 0.5f * sin(u / 1000f * (3f + rnd(i, 13) * 6f) + i)).coerceIn(0f, 1f)
+                    val sz = (W * 0.004f + rnd(i, 14) * W * 0.01f) * tw
+                    paint.color = Color.argb((80 * k * tw).toInt(), 255, 230, 160)
+                    canvas.drawCircle(x, y, sz * 3f, paint)
+                    paint.color = Color.argb((255 * k * tw).toInt(), 255, 255, 255)
+                    canvas.drawPath(sparkle(x, y, sz), paint)
+                }
+            }
+            EffectKind.BOKEH -> {
+                for (i in 0 until 18) {
+                    val x = (rnd(i, 21) * W + sin(u / 3000f + i) * W * 0.03f)
+                    val y = (rnd(i, 22) * H + cos(u / 3500f + i) * H * 0.03f)
+                    val r = W * (0.03f + rnd(i, 23) * 0.06f)
+                    val c = Color.HSVToColor(floatArrayOf(20f + rnd(i, 24) * 40f, 0.5f, 1f))
+                    paint.shader = RadialGradient(x, y, r, intArrayOf(Color.argb((110 * k).toInt(), Color.red(c), Color.green(c), Color.blue(c)), Color.argb((60 * k).toInt(), Color.red(c), Color.green(c), Color.blue(c)), Color.TRANSPARENT),
+                        floatArrayOf(0f, 0.8f, 1f), Shader.TileMode.CLAMP)
+                    canvas.drawCircle(x, y, r, paint)
+                }
+                paint.shader = null
             }
             EffectKind.SPOTLIGHT -> {
                 val x = (0.5f + 0.25f * sin(u / 1500f)) * W

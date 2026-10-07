@@ -180,6 +180,50 @@ object Filters {
         return gl
     }
 
+    private val lutCache = java.util.concurrent.ConcurrentHashMap<String, Lut>()
+
+    fun lutKey(a: Adjust) = "${a.lutUri}|${a.lutStrength}|${a.highlights}|${a.shadows}|${a.vibrance}|${a.fade}"
+
+    /** Shadows / highlights / vibrance / fade curve on one colour (0..1). */
+    private fun tone(a: Adjust, rgb: FloatArray) {
+        val l = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2]
+        val ws = (1f - l) * (1f - l); val wh = l * l
+        val add = a.shadows * 0.35f * ws + a.highlights * 0.35f * wh
+        for (i in 0..2) rgb[i] += add
+        if (a.vibrance != 0f) {
+            val mx = maxOf(rgb[0], rgb[1], rgb[2]); val mn = minOf(rgb[0], rgb[1], rgb[2])
+            val sat = if (mx <= 0f) 0f else (mx - mn) / mx
+            val k = 1f + a.vibrance * (1f - sat)
+            val g = 0.299f * rgb[0] + 0.587f * rgb[1] + 0.114f * rgb[2]
+            for (i in 0..2) rgb[i] = g + (rgb[i] - g) * k
+        }
+        if (a.fade > 0f) for (i in 0..2) rgb[i] = a.fade * 0.15f + rgb[i] * (1f - a.fade * 0.15f)
+        for (i in 0..2) rgb[i] = rgb[i].coerceIn(0f, 1f)
+    }
+
+    /** One LUT with the tone curve + the imported .cube file (strength baked in), or null. */
+    fun lutFor(context: android.content.Context, a: Adjust): Lut? {
+        val file = a.lutUri?.let { Lut.load(context, it) }
+        if (!a.hasTone() && (file == null || a.lutStrength >= 0.999f)) return file
+        val key = lutKey(a)
+        lutCache[key]?.let { return it }
+        val n = 25
+        val data = FloatArray(n * n * n * 3)
+        val c = FloatArray(3); val o = FloatArray(3)
+        for (b in 0 until n) for (g in 0 until n) for (r in 0 until n) {
+            c[0] = r / (n - 1f); c[1] = g / (n - 1f); c[2] = b / (n - 1f)
+            if (a.hasTone()) tone(a, c)
+            if (file != null) {
+                file.lookup(c[0], c[1], c[2], o)
+                val s = a.lutStrength.coerceIn(0f, 1f)
+                for (i in 0..2) c[i] = c[i] + (o[i] - c[i]) * s
+            }
+            val idx = ((b * n + g) * n + r) * 3
+            data[idx] = c[0]; data[idx + 1] = c[1]; data[idx + 2] = c[2]
+        }
+        return Lut(n, data).also { lutCache[key] = it }
+    }
+
     /** Blur radius in preview pixels for a given 0..1 strength. */
     fun blurRadiusPx(strength: Float, viewWidth: Int): Float = strength * viewWidth * 0.03f
 

@@ -59,7 +59,7 @@ class StageView(context: Context) : FrameLayout(context) {
     )
 
     /** Brush settings while drawing. */
-    class Brush(var layerId: String, var color: Int, var width: Float, var eraser: Boolean = false)
+    class Brush(var layerId: String, var color: Int, var width: Float, var eraser: Boolean = false, var type: Int = 0)
 
     var project: Project? = null
     var timeMs: Long = 0
@@ -156,7 +156,9 @@ class StageView(context: Context) : FrameLayout(context) {
         overlay.invalidate()
     }
 
-    private fun drawnByOverlay(l: Layer) = l.mask != MaskKind.NONE || l.chroma || l.hasCrop() || l.outlineColor != 0 || l.shadow
+    private fun drawnByOverlay(l: Layer) = l.mask != MaskKind.NONE || l.chroma || l.hasCrop() || l.outlineColor != 0 || l.shadow ||
+        l.mockup != so.ijarjar.app.model.MockupKind.NONE || l.glowColor != 0 || l.rotX != 0f || l.rotY != 0f || l.posZ != 0f ||
+        l.keyframes.any { it.rx != 0f || it.ry != 0f || it.z != 0f } || !l.adjust.isIdentity() || l.motionBlur
 
     private fun refreshMainClip(p: Project, w: Int, h: Int) {
         if (p.clips.isEmpty()) {
@@ -224,9 +226,8 @@ class StageView(context: Context) : FrameLayout(context) {
             }
         }
         // LUT preview: the frame is graded on the CPU and shown on top of the video
-        val lutUri = a.lutUri
-        if (lutUri != null) {
-            val lut = Lut.load(context, lutUri)
+        if (a.lutUri != null || a.hasTone()) {
+            val lut = Filters.lutFor(context, a)
             if (lut != null) {
                 val lp = lutView.layoutParams as LayoutParams
                 if (lp.width != fw || lp.height != fh) { lp.width = fw; lp.height = fh; lutView.layoutParams = lp }
@@ -239,7 +240,7 @@ class StageView(context: Context) : FrameLayout(context) {
                         if (mainTexture.isAvailable) mainTexture.getBitmap(g!!) else null
                     }
                     if (src != null) {
-                        lutBmp = lut.apply(src, a.lutStrength, if (c.kind == MediaKind.IMAGE) null else lutBmp)
+                        lutBmp = lut.apply(src, 1f, if (c.kind == MediaKind.IMAGE) null else lutBmp)
                         lutView.setImageBitmap(lutBmp)
                         lutView.invalidate()
                     }
@@ -425,7 +426,7 @@ class StageView(context: Context) : FrameLayout(context) {
                 val loc = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y) ?: return true
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
-                        val s = Stroke(color = b.color, width = b.width, eraser = b.eraser)
+                        val s = Stroke(color = b.color, width = b.width, eraser = b.eraser, type = b.type)
                         s.points.add(loc[0]); s.points.add(loc[1])
                         l.strokes.add(s); stroke = s
                     }

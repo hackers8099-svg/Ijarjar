@@ -62,7 +62,7 @@ object BackgroundRenderer {
         m.postRotate(p.bgRot)
         m.postTranslate(w / 2f + p.bgX * w, h / 2f + p.bgY * h)
         Filters.colorFilter(p.bgAdjust)?.let { paint.colorFilter = it }
-        p.bgAdjust.lutUri?.let { u -> Lut.load(context, u)?.let { lut -> bmp = lutCache(lut, bmp, p.bgAdjust.lutStrength, "$uri@$maxImageDim") } }
+        if (p.bgAdjust.lutUri != null || p.bgAdjust.hasTone()) Filters.lutFor(context, p.bgAdjust)?.let { lut -> bmp = lutCache(lut, bmp, 1f, "$uri@$maxImageDim|${Filters.lutKey(p.bgAdjust)}") }
         canvas.drawBitmap(bmp, m, paint)
     }
 

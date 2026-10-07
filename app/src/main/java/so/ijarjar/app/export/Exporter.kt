@@ -224,7 +224,7 @@ class Exporter(
         if (c.volume != 1f) audio.add(volumeProcessor(c.volume))
         if (c.denoise > 0f || c.enhanceVoice) { val d = c.denoise; val e = c.enhanceVoice; audio.add(AudioFx { Pair(d, e) }) }
         video.addAll(Filters.exportEffects(c.adjust, c.width.coerceAtLeast(16)))
-        c.adjust.lutUri?.let { u -> Lut.load(context, u)?.let { lut -> video.add(SingleColorLut.createFromCube(lut.toCube(c.adjust.lutStrength))) } }
+        if (c.adjust.lutUri != null || c.adjust.hasTone()) Filters.lutFor(context, c.adjust)?.let { lut -> video.add(SingleColorLut.createFromCube(lut.toCube(1f))) }
         if (project.layers.any { it.isEffect() && it.effect.group == 2 }) video.add(EffectColor(clipStartMs))
         video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
         video.add(ClipTransform(index, w.toFloat() / h))

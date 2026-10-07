@@ -48,7 +48,10 @@ class Pose(
     var blur: Float = 0f,       // 0..1, whole-layer blur animation
     var flipX: Float = 1f,      // squash for the "flip" animation
     var sx: Float = 1f,         // width stretch
-    var sy: Float = 1f          // height stretch
+    var sy: Float = 1f,         // height stretch
+    var rx: Float = 0f,         // 3D tilt (degrees around X)
+    var ry: Float = 0f,         // 3D turn (degrees around Y)
+    var z: Float = 0f           // 3D depth (canvas widths)
 )
 
 /** Everything needed to draw a text layer (shared by the bitmap and the letter-by-letter paths). */
@@ -110,7 +113,7 @@ object LayerRenderer {
     /** Base transform at time t from keyframes (or the static values). Used for editing. */
     fun basePose(l: Layer, t: Long): Pose {
         val ks = l.keyframes
-        if (ks.isEmpty()) return Pose(l.cx, l.cy, l.scale, l.rotation, l.opacity, sx = l.stretchX, sy = l.stretchY)
+        if (ks.isEmpty()) return Pose(l.cx, l.cy, l.scale, l.rotation, l.opacity, sx = l.stretchX, sy = l.stretchY, rx = l.rotX, ry = l.rotY, z = l.posZ)
         var rel = t - l.startMs
         val sorted = ks.sortedBy { it.t }
         val first = sorted.first(); val last = sorted.last()
@@ -131,13 +134,13 @@ object LayerRenderer {
                 val f = Ease.apply(a.ease, x, a.bx1, a.by1, a.bx2, a.by2)
                 return Pose(lerp(a.cx, b.cx, f), lerp(a.cy, b.cy, f), lerp(a.scale, b.scale, f),
                     lerpAngle(a.rotation, b.rotation, f), lerp(a.opacity, b.opacity, f).coerceIn(0f, 1f),
-                    sx = lerp(a.sx, b.sx, f), sy = lerp(a.sy, b.sy, f))
+                    sx = lerp(a.sx, b.sx, f), sy = lerp(a.sy, b.sy, f), rx = lerp(a.rx, b.rx, f), ry = lerp(a.ry, b.ry, f), z = lerp(a.z, b.z, f))
             }
         }
         return poseOf(last)
     }
 
-    private fun poseOf(k: Keyframe) = Pose(k.cx, k.cy, k.scale, k.rotation, k.opacity, sx = k.sx, sy = k.sy)
+    private fun poseOf(k: Keyframe) = Pose(k.cx, k.cy, k.scale, k.rotation, k.opacity, sx = k.sx, sy = k.sy, rx = k.rx, ry = k.ry, z = k.z)
 
     /** Full pose: keyframes + in/out + loop animations. Used for drawing. */
     fun poseAt(l: Layer, t: Long): Pose {
@@ -400,6 +403,24 @@ object LayerRenderer {
             p.color = s.color
             p.alpha = if (s.eraser) 255 else (Color.alpha(s.color) * alpha / 255)
             p.xfermode = if (s.eraser) PorterDuffXfermode(PorterDuff.Mode.CLEAR) else null
+            p.maskFilter = null; p.pathEffect = null; p.strokeCap = Paint.Cap.ROUND
+            if (!s.eraser && s.type == 3) {
+                // spray: dots scattered around the path
+                val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = s.color; this.alpha = p.alpha }
+                var i = 0
+                while (i + 1 < s.points.size) {
+                    val x = s.points[i] * cw; val y = s.points[i + 1] * ch
+                    for (k in 0 until 10) {
+                        val a = ((i * 31 + k * 97) % 360) * PI.toFloat() / 180f
+                        val r = ((i * 17 + k * 53) % 100) / 100f * p.strokeWidth
+                        canvas.drawCircle(x + cos(a) * r, y + sin(a) * r, maxOf(1f, p.strokeWidth * 0.06f), dot)
+                    }
+                    i += 2
+                }
+                continue
+            }
+            if (!s.eraser && s.type == 1) { p.alpha = p.alpha * 90 / 255; p.strokeCap = Paint.Cap.SQUARE; p.strokeWidth *= 2.2f }
+            if (!s.eraser && s.type == 4) p.pathEffect = android.graphics.DashPathEffect(floatArrayOf(p.strokeWidth * 2f, p.strokeWidth * 1.5f), 0f)
             val path = Path()
             path.moveTo(s.points[0] * cw, s.points[1] * ch)
             var i = 2
@@ -411,6 +432,15 @@ object LayerRenderer {
             }
             if (s.points.size == 2) path.lineTo(s.points[0] * cw + 0.1f, s.points[1] * ch)
             else path.lineTo(s.points[s.points.size - 2] * cw, s.points[s.points.size - 1] * ch)
+            if (!s.eraser && s.type == 2) {
+                // neon: wide soft glow + white core
+                val glow = Paint(p).apply { strokeWidth = p.strokeWidth * 2.5f; maskFilter = BlurMaskFilter(p.strokeWidth * 1.2f, BlurMaskFilter.Blur.NORMAL) }
+                canvas.drawPath(path, glow)
+                canvas.drawPath(path, p)
+                val core = Paint(p).apply { color = Color.WHITE; this.alpha = p.alpha; strokeWidth = p.strokeWidth * 0.35f }
+                canvas.drawPath(path, core)
+                continue
+            }
             canvas.drawPath(path, p)
         }
         canvas.restoreToCount(save)
@@ -444,10 +474,10 @@ object LayerRenderer {
                 Bitmap.createBitmap(b, x, y, w, h).also { if (static) picCache.put(ck, it) }
             }
         }
-        l.adjust.lutUri?.let { u ->
-            Lut.load(context, u)?.let { lut ->
-                val lk = "lut|$key|$u|${l.adjust.lutStrength}"
-                b = (if (static) picCache.get(lk) else null) ?: lut.apply(b, l.adjust.lutStrength).also { if (static) picCache.put(lk, it) }
+        if (l.adjust.lutUri != null || l.adjust.hasTone()) {
+            Filters.lutFor(context, l.adjust)?.let { lut ->
+                val lk = "lut|$key|${Filters.lutKey(l.adjust)}"
+                b = (if (static) picCache.get(lk) else null) ?: lut.apply(b, 1f).also { if (static) picCache.put(lk, it) }
             }
         }
         if (l.chroma) {
@@ -477,11 +507,27 @@ object LayerRenderer {
     }
 
     /** Maps layer-local content coordinates (0..cw, 0..ch) to canvas pixels. */
-    fun matrix(l: Layer, p: Pose, canvasW: Int, canvasH: Int): Matrix {
+    fun matrix(l: Layer, p: Pose, canvasW: Int, canvasH: Int, extraZ: Float = 0f): Matrix {
         val (cw, ch) = contentSize(l, canvasW)
         return Matrix().apply {
             postTranslate(-cw / 2f, -ch / 2f)
             postScale((if (l.flipH) -p.scale else p.scale) * p.flipX * p.sx, p.scale * p.sy)
+            val z = p.z + extraZ
+            if (p.rx != 0f || p.ry != 0f || z != 0f) {
+                // 3D: perspective that looks the same at any resolution
+                val k = 1000f / canvasW.coerceAtLeast(1)
+                postScale(k, k)
+                val cam = android.graphics.Camera()
+                cam.save()
+                cam.translate(0f, 0f, z * 1000f)
+                cam.rotateX(p.rx)
+                cam.rotateY(p.ry)
+                val m3 = Matrix()
+                cam.getMatrix(m3)
+                cam.restore()
+                postConcat(m3)
+                postScale(1f / k, 1f / k)
+            }
             postRotate(p.rotation)
             postTranslate(p.cx * canvasW, p.cy * canvasH)
         }
@@ -570,6 +616,11 @@ object LayerRenderer {
         }
         val pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
         pre.postConcat(m)
+        if (l.glowColor != 0) drawGlow(canvas, bmp, pre, l, alpha)
+        if (l.mockup != so.ijarjar.app.model.MockupKind.NONE && l.isPicture()) {
+            Mockups.draw(canvas, l, pose, canvasW, canvasH, bmp, alpha, cw, ch)
+            return
+        }
         bmpPaint.alpha = alpha
         bmpPaint.maskFilter = null
         bmpPaint.colorFilter = if (l.isPicture()) Filters.colorFilter(l.adjust) else null
@@ -624,6 +675,20 @@ object LayerRenderer {
         mpre.postConcat(m)
         canvas.drawBitmap(mask, mpre, maskPaint)
         canvas.restoreToCount(save)
+    }
+
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+    /** Soft coloured light behind the layer (After Effects "Glow"). */
+    private fun drawGlow(canvas: Canvas, bmp: Bitmap, pre: Matrix, l: Layer, alpha: Int) {
+        val a = bmp.extractAlpha()
+        glowPaint.color = l.glowColor
+        glowPaint.alpha = alpha
+        val r = (l.glowSize.coerceIn(0.02f, 1f) * minOf(bmp.width, bmp.height) * 0.25f).coerceAtLeast(1f)
+        glowPaint.maskFilter = BlurMaskFilter(r, BlurMaskFilter.Blur.NORMAL)
+        canvas.drawBitmap(a, pre, glowPaint)
+        glowPaint.maskFilter = BlurMaskFilter(r * 0.4f, BlurMaskFilter.Blur.NORMAL)
+        canvas.drawBitmap(a, pre, glowPaint)
     }
 
     // ------------------------------------------------------------------ masks
@@ -694,15 +759,16 @@ object LayerRenderer {
         if (l.keyframes.isEmpty()) {
             l.cx = p.cx; l.cy = p.cy; l.scale = p.scale; l.rotation = p.rotation; l.opacity = p.opacity
             l.stretchX = p.sx; l.stretchY = p.sy
+            l.rotX = p.rx; l.rotY = p.ry; l.posZ = p.z
             return
         }
         val rel = (t - l.startMs).coerceIn(0, l.durationMs)
         val k = l.keyframes.firstOrNull { abs(it.t - rel) < 60 }
-        if (k != null) { k.cx = p.cx; k.cy = p.cy; k.scale = p.scale; k.rotation = p.rotation; k.opacity = p.opacity; k.sx = p.sx; k.sy = p.sy }
+        if (k != null) { k.cx = p.cx; k.cy = p.cy; k.scale = p.scale; k.rotation = p.rotation; k.opacity = p.opacity; k.sx = p.sx; k.sy = p.sy; k.rx = p.rx; k.ry = p.ry; k.z = p.z }
         else {
             // new keyframes copy the curve of the keyframe before them
             val prev = l.keyframes.filter { it.t < rel }.maxByOrNull { it.t }
-            l.keyframes.add(Keyframe(rel, p.cx, p.cy, p.scale, p.rotation, p.opacity, p.sx, p.sy).also { nk ->
+            l.keyframes.add(Keyframe(rel, p.cx, p.cy, p.scale, p.rotation, p.opacity, p.sx, p.sy, rx = p.rx, ry = p.ry, z = p.z).also { nk ->
                 if (prev != null) { nk.ease = prev.ease; nk.bx1 = prev.bx1; nk.by1 = prev.by1; nk.bx2 = prev.bx2; nk.by2 = prev.by2 }
             })
         }

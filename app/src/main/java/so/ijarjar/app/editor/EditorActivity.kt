@@ -483,6 +483,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceLayerImage(l) }
                     }
                     if (l.isPicture() || l.kind == LayerKind.SHAPE) t(R.drawable.ic_outline, tr("Xariiq & hadh", "Outline"), l.outlineColor != 0 || l.shadow) { showOutline(l) }
+                    t(R.drawable.ic_glow, "Glow", l.glowColor != 0) { showGlow(l) }
+                    t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
+                    if (l.isPicture()) t(R.drawable.ic_mockup, "Mockup", l.mockup != so.ijarjar.app.model.MockupKind.NONE) { showMockup(l) }
+                    if (!photo && project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
                     t(R.drawable.ic_opacity, tr("Daahsoon", "Opacity")) { showOpacity(l, tr("Daahsoonaan", "Opacity")) }
                     t(R.drawable.ic_flip, tr("Rog", "Flip")) { for (g in project.linkedWith(l)) g.flipH = !g.flipH; commit() }
                 }
@@ -903,9 +907,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.sliderRow(this, tr("Midab", "Saturation"), -1f, 1f, a.saturation) { a.saturation = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Diirimaad", "Temperature"), -1f, 1f, a.temperature) { a.temperature = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Midab-dhexe", "Tint"), -1f, 1f, a.tint) { a.tint = it; live() })
+                body.addView(Ui.sliderRow(this, "Highlights", -1f, 1f, a.highlights) { a.highlights = it; live() })
+                body.addView(Ui.sliderRow(this, tr("Hadhka", "Shadows"), -1f, 1f, a.shadows) { a.shadows = it; live() })
+                body.addView(Ui.sliderRow(this, "Vibrance", -1f, 1f, a.vibrance) { a.vibrance = it; live() })
+                body.addView(Ui.sliderRow(this, "Fade", 0f, 1f, a.fade) { a.fade = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Qariin", "Blur"), 0f, 1f, a.blur) { a.blur = it; live() })
                 buttonRow(body, tr("Dib u celi", "Reset") to {
-                    a.brightness = 0f; a.contrast = 0f; a.saturation = 0f; a.temperature = 0f; a.tint = 0f; a.blur = 0f; a.preset = FilterPreset.NONE; d.dismiss()
+                    a.brightness = 0f; a.contrast = 0f; a.saturation = 0f; a.temperature = 0f; a.tint = 0f; a.blur = 0f; a.preset = FilterPreset.NONE
+                    a.highlights = 0f; a.shadows = 0f; a.vibrance = 0f; a.fade = 0f; d.dismiss()
                 })
             },
             "LUT" to { body: LinearLayout ->
@@ -991,6 +1000,28 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     private fun addText() {
+        if (photo) { addPlainText(); return }
+        val (d, root) = Ui.sheet(this, tr("Qoraal", "Text"))
+        buttonRow(root, tr("+ Qoraal cusub", "+ Add text") to { d.dismiss(); addPlainText() })
+        Ui.tabs(this, root, so.ijarjar.app.data.TitleTemplates.groups.mapIndexed { gi, name ->
+            name to { body: LinearLayout ->
+                tileRow(body, so.ijarjar.app.data.TitleTemplates.all.filter { it.group == gi }, { false }, { it.label }, { tpl -> TitleTile(this, tpl) }, 76f) { tpl ->
+                    d.dismiss()
+                    val total = project.durationMs.coerceAtLeast(3000)
+                    val st = timeMs.coerceAtMost((total - 500).coerceAtLeast(0))
+                    val layers = tpl.build(st, (st + 4000).coerceAtMost(maxOf(total, st + 1000)))
+                    project.layers.addAll(layers)
+                    setSelection(TimelineView.Sel.LayerSel(layers.first { it.kind == LayerKind.TEXT }.id))
+                    commit()
+                    previewAnim(layers.first(), true)
+                    toast(tr("Layer-adu waa isku xiran yihiin — qoraalka taabo si aad u beddesho", "The layers are linked — tap the text to edit it"))
+                }
+            }
+        })
+        d.show()
+    }
+
+    private fun addPlainText() {
         val l = Layer(kind = LayerKind.TEXT, text = tr("Qoraal", "Text"))
         newLayerTimes(l, 3000)
         addLayer(l)
@@ -1350,6 +1381,25 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 }
                 body.addView(Ui.sliderRow(this, tr("Mudada", "Duration"), 0.1f, 3f, (l.animOutMs / 1000f).coerceIn(0.1f, 3f), 0.1f) { l.animOutMs = (it * 1000).toLong() })
             },
+            tr("Gaar ah", "Custom") to { body: LinearLayout ->
+                if (!isText) { body.addView(Ui.label(this, tr("Qeybtan waxay u shaqeysaa qoraalka.", "This is for text layers."))); return@to }
+                body.addView(Ui.choiceRow(this, listOf(tr("Xaraf", "Letters"), tr("Eray", "Words"), tr("Sadar", "Lines")), l.taUnit) { l.taUnit = it; previewAnim(l, true) })
+                body.addView(Ui.choiceRow(this, listOf(tr("Hore", "Forward"), tr("Gadaal", "Backward"), tr("Dhexda", "From centre"), tr("Kala firdhi", "Random")), l.taOrder) { l.taOrder = it; previewAnim(l, true) })
+                body.addView(Ui.sliderRow(this, tr("Isku dhafan", "Overlap"), 0.03f, 1f, l.taOverlap.coerceIn(0.03f, 1f)) { l.taOverlap = it })
+                body.addView(Ui.sliderRow(this, "X", -3f, 3f, l.taDx.coerceIn(-3f, 3f)) { l.taDx = it })
+                body.addView(Ui.sliderRow(this, "Y", -3f, 3f, l.taDy.coerceIn(-3f, 3f)) { l.taDy = it })
+                body.addView(Ui.sliderRow(this, tr("Cabbir", "Scale"), 0f, 4f, l.taScale.coerceIn(0f, 4f)) { l.taScale = it })
+                body.addView(Ui.sliderRow(this, tr("Wareeg", "Rotation"), -360f, 360f, l.taRot.coerceIn(-360f, 360f)) { l.taRot = it })
+                body.addView(Ui.sliderRow(this, tr("Daahsoon", "Opacity"), 0f, 1f, l.taOpacity.coerceIn(0f, 1f)) { l.taOpacity = it })
+                body.addView(Ui.sliderRow(this, tr("Qariin", "Blur"), 0f, 1f, l.taBlur.coerceIn(0f, 1f)) { l.taBlur = it })
+                body.addView(Ui.choiceRow(this, Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }.map { it.label },
+                    Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }.indexOf(l.taEase)) { i ->
+                    l.taEase = Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }[i]
+                })
+                buttonRow(body,
+                    tr("U isticmaal Gal", "Use as In") to { l.textIn = TextAnim.CUSTOM; l.animIn = LayerAnim.NONE; previewAnim(l, true) },
+                    tr("U isticmaal Bax", "Use as Out") to { l.textOut = TextAnim.CUSTOM; l.animOut = LayerAnim.NONE; previewAnim(l, false) })
+            },
             tr("Wareeg", "Loop") to { body: LinearLayout ->
                 if (isText) {
                     body.addView(Ui.label(this, tr("Xarfaha / erayada", "Letters / words")))
@@ -1558,7 +1608,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun showDraw(l: Layer) {
         val brush = StageView.Brush(l.id, 0xFFFFFFFF.toInt(), 0.012f)
         val (d, root) = Ui.sheet(this, tr("Sawir gacmeed", "Draw")) { stage.brush = null; commit() }
-        root.addView(Ui.label(this, tr("Farta ku sawir sawirka korka.", "Draw with your finger on the preview.")))
+        root.addView(Ui.choiceRow(this, listOf(tr("Qalin", "Pen"), "Highlighter", "Neon", "Spray", tr("Xariiq go'an", "Dashed")), 0) { brush.type = it; brush.eraser = false })
         root.addView(Ui.colorRow(this, brush.color, false) { brush.color = it; brush.eraser = false })
         root.addView(Ui.sliderRow(this, tr("Ballac", "Size"), 0.002f, 0.06f, brush.width) { brush.width = it })
         buttonRow(root,
@@ -1694,6 +1744,109 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun unlink(l: Layer) { l.linkGroup = null; cleanupGroups(); commit() }
 
+    // ------------------------------------------------------------------ glow, 3D, mockups, tracking
+
+    private fun showGlow(l: Layer) {
+        val (d, root) = Ui.sheet(this, "Glow") { commit() }
+        root.addView(Ui.colorRow(this, l.glowColor, true) { l.glowColor = it; live() })
+        root.addView(Ui.sliderRow(this, tr("Cabbir", "Size"), 0.02f, 1f, l.glowSize.coerceIn(0.02f, 1f)) { l.glowSize = it; live() })
+        d.show()
+    }
+
+    private fun show3D(l: Layer) {
+        val (d, root) = Ui.sheet(this, "3D") { commit() }
+        val p0 = LayerRenderer.basePose(l, timeMs)
+        fun upd(f: (so.ijarjar.app.render.Pose) -> Unit) { val p = LayerRenderer.basePose(l, timeMs); f(p); LayerRenderer.writePose(l, timeMs, p); live() }
+        root.addView(Ui.sliderRow(this, tr("Wareeg X", "Rotate X"), -180f, 180f, p0.rx.coerceIn(-180f, 180f)) { v -> upd { it.rx = v } })
+        root.addView(Ui.sliderRow(this, tr("Wareeg Y", "Rotate Y"), -180f, 180f, p0.ry.coerceIn(-180f, 180f)) { v -> upd { it.ry = v } })
+        root.addView(Ui.sliderRow(this, tr("Wareeg Z", "Rotate Z"), -180f, 180f, p0.rotation.let { if (it > 180) it - 360 else it }.coerceIn(-180f, 180f)) { v -> upd { it.rotation = v } })
+        root.addView(Ui.sliderRow(this, tr("Fog Z", "Position Z"), -0.8f, 3f, p0.z.coerceIn(-0.8f, 3f)) { v -> upd { it.z = v } })
+        buttonRow(root,
+            tr("Dib u celi", "Reset") to { upd { it.rx = 0f; it.ry = 0f; it.z = 0f }; d.dismiss() },
+            tr("Wareeg 360°", "Spin 360°") to {
+                // a full turn around Y over the layer's duration
+                val b = LayerRenderer.basePose(l, l.startMs)
+                l.keyframes.clear()
+                l.keyframes.add(Keyframe(0, b.cx, b.cy, b.scale, b.rotation, b.opacity, b.sx, b.sy, Easing.EASE_IN_OUT, ry = 0f))
+                l.keyframes.add(Keyframe(l.durationMs, b.cx, b.cy, b.scale, b.rotation, b.opacity, b.sx, b.sy, Easing.EASE_IN_OUT, ry = 360f))
+                d.dismiss()
+            })
+        root.addView(Ui.label(this, tr("Talo: Keyframe ku dar si 3D-gu u dhaqaaqo.", "Tip: add keyframes to animate in 3D.")))
+        d.show()
+    }
+
+    private fun showMockup(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Mockup (3D)", "Mockup (3D)")) { commit() }
+        chipRow(root, so.ijarjar.app.model.MockupKind.entries.map { (if (it == so.ijarjar.app.model.MockupKind.NONE) R.drawable.ic_close else R.drawable.ic_mockup) to it.label }) { i ->
+            val k = so.ijarjar.app.model.MockupKind.entries[i]
+            l.mockup = k
+            if (k != so.ijarjar.app.model.MockupKind.NONE && l.rotY == 0f && l.keyframes.isEmpty()) { l.rotY = -18f; l.rotX = 6f; l.scale = 0.8f }
+            live()
+        }
+        root.addView(Ui.label(this, tr("Midabka", "Colour")))
+        root.addView(Ui.colorRow(this, l.mockupColor, false) { l.mockupColor = it; live() })
+        buttonRow(root,
+            tr("Toos", "Flat") to { l.rotX = 0f; l.rotY = 0f; live() },
+            tr("Janjeer", "Tilted") to { l.rotX = 8f; l.rotY = -22f; live() },
+            tr("Wareeg", "Turntable") to {
+                l.keyframes.clear()
+                l.keyframes.add(Keyframe(0, l.cx, l.cy, l.scale, l.rotation, l.opacity, ease = Easing.EASE_IN_OUT, ry = -30f, rx = 6f))
+                l.keyframes.add(Keyframe(l.durationMs, l.cx, l.cy, l.scale, l.rotation, l.opacity, ease = Easing.EASE_IN_OUT, ry = 30f, rx = 6f))
+                live()
+            })
+        root.addView(Ui.label(this, tr("Muuqaalkaaga ama sawirkaaga ayaa gudaha shaashadda qalabka ka muuqanaya.", "Your video or picture plays inside the device screen.")))
+        d.show()
+    }
+
+    /** Auto track: the layer follows a moving object in the video. */
+    private fun showTrack(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Raac shay (auto track)", "Auto track")) { commit() }
+        root.addView(Ui.label(this, tr("1) Layer-ka dhig shayga aad rabto inuu raaco (bilowga layer-ka).\n2) Riix Bilow.",
+            "1) Put the layer on the object at the layer's start.\n2) Tap Start.")))
+        var box = 0.12f
+        root.addView(Ui.sliderRow(this, tr("Cabbirka sanduuqa", "Box size"), 0.05f, 0.3f, box) { box = it })
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; visibility = View.GONE }
+        root.addView(bar)
+        var cancelled = false
+        d.setOnDismissListener { cancelled = true; commit() }
+        buttonRow(root, tr("Bilow", "Start") to {
+            val ci = project.clipIndexAt(l.startMs)
+            val c = project.clips.getOrNull(ci)
+            if (c == null || c.kind != MediaKind.VIDEO) { toast(tr("Layer-ku waa inuu ku jiraa muuqaal", "The layer must be over a video clip")); return@to }
+            val clipStart = project.clipStartMs(ci)
+            val end = minOf(l.endMs, clipStart + c.outDurationMs)
+            val p0 = LayerRenderer.basePose(l, l.startMs)
+            // canvas position -> video frame position (fit + canvas transform, no rotation)
+            val ca = c.width.toFloat().coerceAtLeast(1f) / c.height.coerceAtLeast(1)
+            val r = project.aspectRatio()
+            val fw = (if (ca > r) 1f else ca / r) * c.tScale
+            val fh = (if (ca > r) r / ca else 1f) * c.tScale
+            val u0 = ((p0.cx - 0.5f - c.tX) / fw + 0.5f).coerceIn(0f, 1f)
+            val v0 = ((p0.cy - 0.5f - c.tY) / fh + 0.5f).coerceIn(0f, 1f)
+            val outTimes = ArrayList<Long>(); var t = l.startMs
+            while (t < end) { outTimes.add(t); t += 100 }
+            val srcTimes = outTimes.map { c.trimStartMs + so.ijarjar.app.render.SpeedMap.outToSrc(c, it - clipStart) }
+            bar.visibility = View.VISIBLE
+            io.execute {
+                val path = so.ijarjar.app.media.Tracker.track(this, Uri.parse(c.uri), srcTimes, u0, v0, box) { pr -> main.post { bar.progress = pr } }
+                main.post {
+                    if (cancelled) return@post
+                    if (path == null || path.isEmpty()) { toast(tr("Lama raaci karo", "Could not track")); return@post }
+                    l.keyframes.clear()
+                    for ((i, uv) in path.withIndex()) {
+                        val cx = 0.5f + c.tX + (uv[0] - 0.5f) * fw
+                        val cy = 0.5f + c.tY + (uv[1] - 0.5f) * fh
+                        l.keyframes.add(Keyframe(outTimes[i] - l.startMs, cx + (p0.cx - (0.5f + c.tX + (u0 - 0.5f) * fw)), cy + (p0.cy - (0.5f + c.tY + (v0 - 0.5f) * fh)),
+                            p0.scale, p0.rotation, p0.opacity, p0.sx, p0.sy, Easing.LINEAR))
+                    }
+                    d.dismiss()
+                    toast(tr("Waa la raacay ✓ (${path.size} keyframe)", "Tracked ✓ (${path.size} keyframes)"))
+                }
+            }
+        })
+        d.show()
+    }
+
     // ------------------------------------------------------------------ keyframes (Motion Tools style)
 
     private fun showKeyframes(l: Layer) {
@@ -1728,6 +1881,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.sliderRow(this, tr("Wareeg", "Rotation"), -360f, 360f, p0.rotation.let { if (it > 180) it - 360 else it }.coerceIn(-360f, 360f)) { v -> upd { it.rotation = v } })
                 body.addView(Ui.sliderRow(this, tr("Daahsoon", "Opacity"), 0f, 1f, p0.opacity.coerceIn(0f, 1f)) { v -> upd { it.opacity = v } })
                 body.addView(Ui.sliderRow(this, tr("Ballac", "Width"), 0.05f, 4f, p0.sx.coerceIn(0.05f, 4f)) { v -> upd { it.sx = v } })
+                body.addView(Ui.sliderRow(this, tr("Wareeg X (3D)", "Rotate X (3D)"), -180f, 180f, p0.rx.coerceIn(-180f, 180f)) { v -> upd { it.rx = v } })
+                body.addView(Ui.sliderRow(this, tr("Wareeg Y (3D)", "Rotate Y (3D)"), -180f, 180f, p0.ry.coerceIn(-180f, 180f)) { v -> upd { it.ry = v } })
+                body.addView(Ui.sliderRow(this, tr("Fog Z (3D)", "Position Z (3D)"), -0.8f, 3f, p0.z.coerceIn(-0.8f, 3f)) { v -> upd { it.z = v } })
                 body.addView(Ui.sliderRow(this, tr("Dherer", "Height"), 0.05f, 4f, p0.sy.coerceIn(0.05f, 4f)) { v -> upd { it.sy = v } })
             },
             tr("Qalooc", "Easing") to { body: LinearLayout ->

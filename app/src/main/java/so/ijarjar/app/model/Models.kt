@@ -7,7 +7,7 @@ import java.util.UUID
 enum class MediaKind { VIDEO, IMAGE }
 
 /** ANIMATED = GIF or PNG sequence (transparent motion graphics). DRAW = brush drawing. */
-enum class LayerKind { VIDEO, IMAGE, TEXT, STICKER, EFFECT, SHAPE, ANIMATED, DRAW }
+enum class LayerKind { VIDEO, IMAGE, TEXT, STICKER, EFFECT, SHAPE, ANIMATED, DRAW, MODEL3D }
 
 enum class AudioKind { MUSIC, VOICE, EXTRACTED, SOUND }
 
@@ -61,6 +61,7 @@ enum class LayerAnim(val so: String, val en: String) {
 enum class TextAnim(val so: String, val en: String) {
     NONE("Midna", "None"),
     APPLE("Apple", "Apple blur"),
+    CUSTOM("Gaar ah", "Custom"),
     LETTER_FADE("Xaraf-xaraf", "Letter fade"),
     LETTER_RISE("Xaraf kor", "Letter rise"),
     LETTER_DROP("Xaraf dhac", "Letter drop"),
@@ -163,7 +164,13 @@ enum class EffectKind(val so: String, val en: String, val group: Int) {
     LIGHT_LEAK("Iftiin daadan", "Light leak", 3),
     VHS("VHS", "VHS", 3),
     REC("Kamarad", "Camera REC", 3),
-    SPOTLIGHT("Iftiin dhexe", "Spotlight", 3);
+    SPOTLIGHT("Iftiin dhexe", "Spotlight", 3),
+    DREAMY("Riyo", "Dreamy glow", 2),
+    BLOOM("Iftiin badan", "Bloom", 2),
+    LENS_FLARE("Lens flare", "Lens flare", 3),
+    GLOW_EDGES("Cidhif iftiin", "Glow frame", 3),
+    SPARKLE_GLOW("Dhalaal", "Glitter", 3),
+    BOKEH("Bokeh", "Bokeh", 3);
 
     val label: String get() = L.t(so, en)
 }
@@ -181,6 +188,21 @@ enum class ShapeKind(val so: String, val en: String) {
     BUBBLE("Hadal", "Speech bubble"),
     HEXAGON("Lix-geesle", "Hexagon"),
     RING("Giraan", "Ring");
+
+    val label: String get() = L.t(so, en)
+}
+
+/** Device frames for 3D mockups. */
+enum class MockupKind(val so: String, val en: String) {
+    NONE("Midna", "None"),
+    PHONE("Taleefan", "Phone"),
+    PHONE_ROUND("Taleefan 2", "Phone 2"),
+    TABLET("Tablet", "Tablet"),
+    LAPTOP("Laptop", "Laptop"),
+    BROWSER("Browser", "Browser"),
+    WATCH("Saacad", "Watch"),
+    TV("TV", "TV"),
+    POLAROID("Polaroid", "Polaroid");
 
     val label: String get() = L.t(so, en)
 }
@@ -260,11 +282,16 @@ class Adjust(
     var preset: FilterPreset = FilterPreset.NONE,
     var lutUri: String? = null,   // .cube colour lookup table
     var lutName: String = "",
-    var lutStrength: Float = 1f
+    var lutStrength: Float = 1f,
+    var highlights: Float = 0f,   // -1..1
+    var shadows: Float = 0f,      // -1..1
+    var vibrance: Float = 0f,     // -1..1
+    var fade: Float = 0f          // 0..1 (lifted blacks)
 ) {
     fun isColorIdentity() = brightness == 0f && contrast == 0f && saturation == 0f &&
         temperature == 0f && tint == 0f && (preset == FilterPreset.NONE)
-    fun isIdentity() = isColorIdentity() && blur == 0f && lutUri == null
+    fun hasTone() = highlights != 0f || shadows != 0f || vibrance != 0f || fade != 0f
+    fun isIdentity() = isColorIdentity() && blur == 0f && lutUri == null && !hasTone()
     fun copy(): Adjust = gsonCopy(this, Adjust::class.java)
 }
 
@@ -326,7 +353,10 @@ class Keyframe(
     var bx1: Float = 0.42f,
     var by1: Float = 0f,
     var bx2: Float = 0.58f,
-    var by2: Float = 1f
+    var by2: Float = 1f,
+    var rx: Float = 0f,    // 3D tilt around X
+    var ry: Float = 0f,    // 3D turn around Y
+    var z: Float = 0f      // depth (positive = further away)
 ) {
     fun copy(): Keyframe = gsonCopy(this, Keyframe::class.java)
 }
@@ -336,7 +366,8 @@ class Stroke(
     var color: Int = 0xFFFFFFFF.toInt(),
     var width: Float = 0.01f,
     var points: MutableList<Float> = mutableListOf(),
-    var eraser: Boolean = false
+    var eraser: Boolean = false,
+    var type: Int = 0   // 0 pen, 1 marker (highlighter), 2 neon, 3 spray, 4 dashed
 )
 
 /** A free layer on top of the main track. */
@@ -426,7 +457,30 @@ class Layer(
     var isLottie: Boolean = false,
     var lottieText: String = "",
     // dynamic link: a photo project shown live as this layer
-    var linkedProject: String? = null
+    var linkedProject: String? = null,
+    // 3D transform (keyframable)
+    var rotX: Float = 0f,
+    var rotY: Float = 0f,
+    var posZ: Float = 0f,
+    // glow around text / shapes / pictures
+    var glowColor: Int = 0,
+    var glowSize: Float = 0.3f,
+    // device mockup around a picture or video
+    var mockup: MockupKind = MockupKind.NONE,
+    var mockupColor: Int = 0xFF1C1C1E.toInt(),
+    // custom text animator (letters / words)
+    var taUnit: Int = 0,          // 0 letters, 1 words, 2 lines
+    var taDx: Float = 0f,         // offsets in text heights
+    var taDy: Float = 0.8f,
+    var taScale: Float = 1f,
+    var taRot: Float = 0f,
+    var taOpacity: Float = 0f,
+    var taBlur: Float = 0.5f,
+    var taOverlap: Float = 0.35f, // 0.05 = one by one, 1 = all together
+    var taOrder: Int = 0,         // 0 forward, 1 backward, 2 from centre, 3 random
+    var taEase: Easing = Easing.EASE_OUT,
+    // 3D model (.glb)
+    var modelSpin: Float = 0f
 ) {
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     fun isActive(t: Long) = t >= startMs && t < endMs

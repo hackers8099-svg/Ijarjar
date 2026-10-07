@@ -248,3 +248,13 @@ fun tileWithLabel(context: Context, tile: View, label: String, sizeDp: Float = 6
 
 @Suppress("unused")
 private fun unusedRefs(a: LayerAnim, b: TextAnim, c: TextLoop, d: LoopAnim) = listOf(a, b, c, d)
+
+/** Preview of an animated title template (several linked layers). */
+class TitleTile(context: Context, tpl: so.ijarjar.app.data.TitleTemplate) : LoopTile(context, 3200) {
+    private val layers = tpl.build(0, 2600)
+    override fun drawContent(canvas: Canvas, t: Long) {
+        val p = Paint(); p.color = 0xFF3A3F55.toInt()
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), p)
+        for (l in LayerRenderer.drawOrder(layers)) if (l.isActive(t)) LayerRenderer.draw(context, canvas, l, t, width, height, null, 256)
+    }
+}

@@ -36,15 +36,24 @@ object TextAnimator {
         fun reset() { alpha = 1f; dx = 0f; dy = 0f; scale = 1f; rot = 0f; blur = 0f; color = null; box = 0 }
     }
 
-    private fun wordBased(a: TextAnim) = a == TextAnim.WORD_FADE_UP || a == TextAnim.WORD_FADE_DOWN ||
+    private fun wordBased(a: TextAnim, l: Layer? = null) = (a == TextAnim.CUSTOM && l != null && l.taUnit == 1) || a == TextAnim.WORD_FADE_UP || a == TextAnim.WORD_FADE_DOWN ||
         a == TextAnim.WORD_SLIDE_LEFT || a == TextAnim.WORD_SLIDE_RIGHT || a == TextAnim.WORD_POP
 
     private fun wordLoop(a: TextLoop) = a == TextLoop.KARAOKE || a == TextLoop.WORD_HIGHLIGHT || a == TextLoop.WORD_POP
 
-    private fun units(sp: TextSpec, words: Boolean): List<Unit> {
+    private fun units(sp: TextSpec, words: Boolean, lines: Boolean = false): List<Unit> {
         val text = sp.raw
         val lay = sp.layout
         val list = ArrayList<Unit>()
+        if (lines) {
+            for (ln in 0 until lay.lineCount) {
+                val s0 = lay.getLineStart(ln); val e0 = lay.getLineEnd(ln)
+                if (text.substring(s0, e0).isBlank()) continue
+                val x0 = lay.getLineLeft(ln); val x1 = lay.getLineRight(ln)
+                list.add(Unit(s0, e0, x0, x1 - x0, lay.getLineBaseline(ln).toFloat(), lay.getLineTop(ln).toFloat(), lay.getLineBottom(ln).toFloat()))
+            }
+            return list
+        }
         val rtl = Bidi.requiresBidi(text.toCharArray(), 0, text.length)
         val it = if (words || rtl) BreakIterator.getWordInstance() else BreakIterator.getCharacterInstance()
         it.setText(text)
@@ -95,6 +104,15 @@ object TextAnimator {
         when (a) {
             TextAnim.NONE -> {}
             TextAnim.APPLE -> { st.alpha *= f; st.blur = maxOf(st.blur, g); st.dy += g * px * 0.12f }
+            TextAnim.CUSTOM -> {
+                val e = Ease.apply(l.taEase, u)
+                val h = 1f - e
+                st.dx += h * l.taDx * px; st.dy += h * l.taDy * px
+                st.scale *= l.taScale + (1f - l.taScale) * e
+                st.rot += h * l.taRot
+                st.alpha *= (l.taOpacity + (1f - l.taOpacity) * e).coerceIn(0f, 1f)
+                st.blur = maxOf(st.blur, h * l.taBlur)
+            }
             TextAnim.LETTER_FADE -> st.alpha *= f
             TextAnim.LETTER_RISE -> { st.dy += g * px * 0.7f; st.alpha *= f }
             TextAnim.LETTER_DROP -> {
@@ -164,18 +182,27 @@ object TextAnimator {
         val until = l.endMs - t
         val inActive = l.textIn != TextAnim.NONE && since < inMs
         val outActive = l.textOut != TextAnim.NONE && until < outMs
-        val words = (inActive && wordBased(l.textIn)) || (outActive && wordBased(l.textOut)) ||
+        val words = (inActive && wordBased(l.textIn, l)) || (outActive && wordBased(l.textOut, l)) ||
             (!inActive && !outActive && wordLoop(l.textLoop)) || wordLoop(l.textLoop)
-        val list = units(sp, words)
+        val lines = ((inActive && l.textIn == TextAnim.CUSTOM) || (outActive && l.textOut == TextAnim.CUSTOM)) && l.taUnit == 2
+        val list = units(sp, words, lines)
         val n = list.size
         val px = sp.textPx
         val inP = if (inActive) since.toFloat() / inMs else 1f
         val outP = if (outActive) until.toFloat() / outMs else 1f
         val order = IntArray(n) { it }
-        if ((inActive && l.textIn == TextAnim.RANDOM) || (outActive && l.textOut == TextAnim.RANDOM)) {
+        val custom = (inActive && l.textIn == TextAnim.CUSTOM) || (outActive && l.textOut == TextAnim.CUSTOM)
+        if ((inActive && l.textIn == TextAnim.RANDOM) || (outActive && l.textOut == TextAnim.RANDOM) || (custom && l.taOrder == 3)) {
             val sorted = (0 until n).sortedBy { hash(it, 42) }
             for ((rank, idx) in sorted.withIndex()) order[idx] = rank
+        } else if (custom && l.taOrder == 1) {
+            for (i in 0 until n) order[i] = n - 1 - i
+        } else if (custom && l.taOrder == 2) {
+            val c = (n - 1) / 2f
+            val sorted = (0 until n).sortedBy { abs(it - c) }
+            for ((rank, idx) in sorted.withIndex()) order[idx] = rank
         }
+        val window = if (custom) l.taOverlap.coerceIn(0.03f, 1f) else 0.35f
 
         canvas.save()
         canvas.concat(m)
@@ -194,6 +221,10 @@ object TextAnimator {
         } else null
         val depth = if (sp.depthPx > 0) TextPaint(sp.paint).apply { color = l.depthColor } else null
         val shadow = if (l.shadow) TextPaint(sp.paint).apply { color = 0x99000000.toInt(); maskFilter = BlurMaskFilter(px * 0.08f, BlurMaskFilter.Blur.NORMAL) } else null
+        val glow = if (l.glowColor != 0) TextPaint(sp.paint).apply {
+            color = l.glowColor; maskFilter = BlurMaskFilter(px * (0.1f + l.glowSize * 0.5f), BlurMaskFilter.Blur.NORMAL)
+            style = Paint.Style.FILL_AND_STROKE; strokeWidth = px * 0.08f
+        } else null
         val st = State()
         val s = since / 1000f
         val center = (n - 1) / 2f
@@ -204,13 +235,13 @@ object TextAnimator {
                 if (l.textIn == TextAnim.TRACKING) {
                     val f = Ease.apply(Easing.EASE_OUT, inP)
                     st.dx += (i - center) * (1f - f) * px * 0.6f; st.alpha *= f; st.blur = maxOf(st.blur, (1f - f) * 0.5f)
-                } else applyAnim(st, l.textIn, stagger(inP, order[i], n), i, n, px, l, t)
+                } else applyAnim(st, l.textIn, stagger(inP, order[i], n, if (l.textIn == TextAnim.CUSTOM) window else 0.35f), i, n, px, l, t)
             }
             if (outActive) {
                 if (l.textOut == TextAnim.TRACKING) {
                     val f = Ease.apply(Easing.EASE_OUT, outP)
                     st.dx += (i - center) * (1f - f) * px * 0.6f; st.alpha *= f
-                } else applyAnim(st, l.textOut, stagger(outP, n - 1 - order[i], n), i, n, px, l, t)
+                } else applyAnim(st, l.textOut, stagger(outP, n - 1 - order[i], n, if (l.textOut == TextAnim.CUSTOM) window else 0.35f), i, n, px, l, t)
             }
             applyLoop(st, l.textLoop, s, i, n, px, l, u, sp.layoutW.toFloat())
             if (st.alpha <= 0.004f) continue
@@ -229,6 +260,10 @@ object TextAnimator {
             if (depth != null) {
                 depth.alpha = a; depth.maskFilter = blur
                 for (k in sp.depthPx downTo 1) canvas.drawText(sp.raw, u.start, u.end, u.x + k, u.baseline + k, depth)
+            }
+            if (glow != null) {
+                glow.alpha = a
+                canvas.drawText(sp.raw, u.start, u.end, u.x, u.baseline, glow)
             }
             if (shadow != null) { shadow.alpha = a * 150 / 255; canvas.drawText(sp.raw, u.start, u.end, u.x + px * 0.05f, u.baseline + px * 0.07f, shadow) }
             if (stroke != null) {
