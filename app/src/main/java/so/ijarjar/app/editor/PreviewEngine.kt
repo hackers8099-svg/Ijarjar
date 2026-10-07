@@ -152,11 +152,8 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         main.playbackParameters = PlaybackParameters(if (c.kind == MediaKind.VIDEO) c.speed else 1f)
         main.volume = c.volume.coerceIn(0f, 1f)
         val filter = Filters.colorFilter(c.adjust)
-        if (filter != null) {
-            stage.mainTexture.setLayerType(View.LAYER_TYPE_HARDWARE, Paint().apply { colorFilter = filter })
-        } else {
-            stage.mainTexture.setLayerType(View.LAYER_TYPE_NONE, null)
-        }
+        // TextureView ignores setLayerType but honours a layer paint, which carries the colour filter.
+        stage.mainTexture.setLayerPaint(if (filter != null) Paint().apply { colorFilter = filter } else null)
         if (c.kind == MediaKind.IMAGE) {
             val bmp = MediaUtils.loadBitmapCached(context, Uri.parse(c.uri), 1600)
             stage.imageView.setImageBitmap(bmp)
