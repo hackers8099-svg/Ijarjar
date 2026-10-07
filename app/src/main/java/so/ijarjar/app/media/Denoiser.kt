@@ -99,6 +99,6 @@ class Denoiser(sampleRate: Int) {
             }
             len = len shl 1
         }
-        if (inverse) for (i in 0 until size) { re[i] /= size; im[i] /= size }
+        if (inverse) { val inv = 1f / size; for (i in 0 until size) { re[i] = re[i] * inv; im[i] = im[i] * inv } }
     }
 }
