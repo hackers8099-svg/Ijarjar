@@ -485,6 +485,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.isPicture() || l.kind == LayerKind.SHAPE) t(R.drawable.ic_outline, tr("Xariiq & hadh", "Outline"), l.outlineColor != 0 || l.shadow) { showOutline(l) }
                     t(R.drawable.ic_glow, "Glow", l.glowColor != 0) { showGlow(l) }
                     t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
+                    if (l.kind == LayerKind.MODEL3D) t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
                     if (l.isPicture()) t(R.drawable.ic_mockup, "Mockup", l.mockup != so.ijarjar.app.model.MockupKind.NONE) { showMockup(l) }
                     if (!photo && project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
                     t(R.drawable.ic_opacity, tr("Daahsoon", "Opacity")) { showOpacity(l, tr("Daahsoonaan", "Opacity")) }
@@ -1099,6 +1100,17 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
     }
 
+    private var mockupNext = false
+    private val pickModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        keep(uri)
+        val name = MediaUtils.displayName(this, uri)
+        if (!name.lowercase().endsWith(".glb")) toast(tr("Fiiro: faylasha .glb ayaa ugu fiican (.gltf leh faylal kale ma shaqeeyo)", "Tip: .glb files work best (.gltf with extra files won't load)"))
+        val l = Layer(kind = LayerKind.MODEL3D, uri = uri.toString(), name = name, baseW = 0.7f, contentAspect = 1f, modelSpin = 0.25f)
+        newLayerTimes(l, 4000)
+        addLayer(l)
+    }
+
     private fun fitBase(l: Layer, w: Int, h: Int) {
         l.contentAspect = h.toFloat().coerceAtLeast(1f) / w.coerceAtLeast(1)
         l.srcAspect = l.contentAspect
@@ -1164,6 +1176,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 if (info == null) { toast(tr("Faylka lama furi karo", "Could not open the file")); return@post }
                 val l = Layer(kind = if (info.isVideo) LayerKind.VIDEO else LayerKind.IMAGE, uri = uri.toString(), name = name)
                 fitBase(l, info.width, info.height)
+                if (mockupNext) {
+                    mockupNext = false
+                    l.mockup = so.ijarjar.app.model.MockupKind.PHONE
+                    l.baseW = (0.55f / (l.contentAspect * project.aspectRatio())).coerceAtMost(0.5f)
+                    l.rotY = -20f; l.rotX = 6f
+                }
                 if (info.isVideo) {
                     l.sourceDurationMs = info.durationMs
                     newLayerTimes(l, info.durationMs)
@@ -1775,6 +1793,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
+    private fun showSpin(l: Layer) {
+        val (d, root) = Ui.sheet(this, tr("Wareeg joogto", "Auto spin")) { commit() }
+        root.addView(Ui.sliderRow(this, tr("Xawaare", "Turns / sec"), -1f, 1f, l.modelSpin.coerceIn(-1f, 1f)) { l.modelSpin = it; live() })
+        buttonRow(root, tr("Jooji", "Stop") to { l.modelSpin = 0f; d.dismiss() })
+        d.show()
+    }
+
     private fun showMockup(l: Layer) {
         val (d, root) = Ui.sheet(this, tr("Mockup (3D)", "Mockup (3D)")) { commit() }
         chipRow(root, so.ijarjar.app.model.MockupKind.entries.map { (if (it == so.ijarjar.app.model.MockupKind.NONE) R.drawable.ic_close else R.drawable.ic_mockup) to it.label }) { i ->
@@ -1985,10 +2010,16 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val (d, root) = Ui.sheet(this, "Overlay")
         chipRow(root, listOf(
             R.drawable.ic_overlay to tr("Fayl", "Media file"),
-            R.drawable.ic_dlink to tr("Mashruuc sawir", "Photo project"))) { k ->
+            R.drawable.ic_dlink to tr("Mashruuc sawir", "Photo project"),
+            R.drawable.ic_model3d to tr("Model 3D (.glb)", "3D model (.glb)"),
+            R.drawable.ic_mockup to tr("Taleefan mockup", "Phone mockup"))) { k ->
             d.dismiss()
-            if (k == 0) pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream"))
-            else linkPhotoProject()
+            when (k) {
+                0 -> pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream"))
+                1 -> linkPhotoProject()
+                2 -> pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream"))
+                else -> { mockupNext = true; pickOverlay.launch(arrayOf("video/*", "image/*")) }
+            }
         }
         root.addView(Ui.label(this, tr("Muuqaal, sawir, GIF, PNG sequence, Lottie (.json) — ama mashruuc sawir ah oo si toos ah u cusboonaada (dynamic link).",
             "Video, picture, GIF, PNG sequence, Lottie (.json) — or a photo project that updates live (dynamic link).")))

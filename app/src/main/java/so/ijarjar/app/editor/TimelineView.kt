@@ -283,6 +283,7 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.SHAPE -> 0xFF2E8B57.toInt()
         LayerKind.ANIMATED -> 0xFFB04BD6.toInt()
         LayerKind.DRAW -> 0xFFD6814B.toInt()
+        LayerKind.MODEL3D -> 0xFF4B8BD6.toInt()
     }
 
     private fun layerIcon(l: Layer) = when (l.kind) {
@@ -294,6 +295,7 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.SHAPE -> R.drawable.ic_shape
         LayerKind.ANIMATED -> R.drawable.ic_animation
         LayerKind.DRAW -> R.drawable.ic_pencil
+        LayerKind.MODEL3D -> R.drawable.ic_model3d
     }
 
     private fun drawLayers(canvas: Canvas, p: Project) {
@@ -343,6 +345,7 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.SHAPE -> l.shape.label
         LayerKind.ANIMATED -> l.name
         LayerKind.DRAW -> L.t("Sawir gacmeed", "Drawing")
+        LayerKind.MODEL3D -> l.name
     }
 
     private fun drawSelection(canvas: Canvas, r: RectF, color: Int, handles: Boolean = true) {

@@ -605,6 +605,7 @@ object LayerRenderer {
         val alpha = (pose.opacity.coerceIn(0f, 1f) * 255).toInt()
 
         if (l.kind == LayerKind.DRAW) { drawStrokes(canvas, l, m, cw, ch, alpha); return }
+        if (l.kind == LayerKind.MODEL3D) { drawModel(context, canvas, l, pose, t, canvasW, canvasH, cw, ch, alpha, maxDim); return }
         if (l.kind == LayerKind.TEXT && usesGlyphs(l, t)) {
             TextAnimator.draw(canvas, l, textSpec(l, canvasW), m, t, alpha)
             return
@@ -675,6 +676,31 @@ object LayerRenderer {
         mpre.postConcat(m)
         canvas.drawBitmap(mask, mpre, maskPaint)
         canvas.restoreToCount(save)
+    }
+
+    private class ModelFrame(val key: String, val bmp: Bitmap)
+    private val modelFrames = HashMap<String, ModelFrame>()
+
+    /** 3D model: the model turns in real 3D (rotX / rotY / spin); the layer box is flat. */
+    private fun drawModel(context: Context, canvas: Canvas, l: Layer, pose: Pose, t: Long, canvasW: Int, canvasH: Int,
+                          cw: Float, ch: Float, alpha: Int, maxDim: Int) {
+        val uri = l.uri ?: return
+        val size = (cw * pose.scale).toInt().coerceIn(64, minOf(maxDim, 1600))
+        val spin = l.modelSpin * (t - l.startMs) / 1000f * 360f
+        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}"
+        val cached = modelFrames[l.id]
+        val bmp = if (cached != null && cached.key == key) cached.bmp else {
+            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin) ?: cached?.bmp ?: return
+            modelFrames[l.id] = ModelFrame(key, b)
+            b
+        }
+        val flat = Pose(pose.cx, pose.cy, pose.scale, pose.rotation, pose.opacity, sx = pose.sx, sy = pose.sy, z = pose.z)
+        val m = matrix(l, flat, canvasW, canvasH)
+        val pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
+        pre.postConcat(m)
+        if (l.glowColor != 0) drawGlow(canvas, bmp, pre, l, alpha)
+        bmpPaint.alpha = alpha; bmpPaint.maskFilter = null; bmpPaint.colorFilter = null
+        canvas.drawBitmap(bmp, pre, bmpPaint)
     }
 
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
