@@ -275,8 +275,8 @@ object Model3D {
                 }
                 for (lk in looks) {
                     if (lk.material.isNotEmpty() && lk.material != name) continue
-                    val asp = if (lk.aspect > 0f) lk.aspect else matAspect[name] ?: 0f
-                    val tex = lk.texUri?.let { textureFor(context, it, lk.flipV, lk.flipH, asp) }
+                    // the picture fills the part exactly as the model maps it (no extra cropping)
+                    val tex = lk.texUri?.let { textureFor(context, it, lk.flipV, lk.flipH, lk.aspect) }
                     if (tex != null) setPicture(mi, tex, lk.color != 0)
                     if (lk.color != 0) factor(mi, android.graphics.Color.red(lk.color) / 255f, android.graphics.Color.green(lk.color) / 255f, android.graphics.Color.blue(lk.color) / 255f)
                 }
@@ -287,8 +287,7 @@ object Model3D {
             val bmp = lk.bitmap ?: continue
             val key = (lk.bitmapKey ?: bmp.generationId.toString()) + "|${lk.flipV}|${lk.flipH}"
             if (dynKeys[lk.material] == key) continue
-            val asp = if (lk.aspect > 0f) lk.aspect else matAspect[lk.material] ?: 0f
-            val tex = uploadDyn(lk.material, bmp, lk.flipV, lk.flipH, asp) ?: continue
+            val tex = uploadDyn(lk.material, bmp, lk.flipV, lk.flipH, lk.aspect) ?: continue
             dynKeys[lk.material] = key
             for ((_, mi) in materialInstances()) {
                 if (lk.material.isNotEmpty() && mi.name != lk.material) continue

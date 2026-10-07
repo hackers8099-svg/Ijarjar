@@ -1241,6 +1241,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
+    private var filterSampleReopen: (() -> Unit)? = null
+    private val pickFilterSample = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) { keep(uri); FilterSample.setCustom(this, uri.toString()) }
+        filterSampleReopen?.invoke(); filterSampleReopen = null
+    }
+
     /** Filters (preview tiles), adjustments and LUT import for a clip, picture layer or photo background. */
     private fun showFilters(a: Adjust, applyAll: (() -> Unit)?, pic: Bitmap? = null) {
         val (d, root) = Ui.sheet(this, tr("Filter", "Filters")) { commit() }
@@ -1277,6 +1283,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(grid)
                 showAmount(); fill(0)
                 if (applyAll != null) buttonRow(body, tr("Ku dabaq dhammaan", "Apply to all") to { applyAll(); d.dismiss() })
+                buttonRow(body, tr("Sawir tusaale oo kaaga ah", "Use my own sample photo") to {
+                    filterSampleReopen = { showFilters(a, applyAll, pic) }; d.dismiss(); pickFilterSample.launch(imagesOnly()) },
+                    tr("Tusaalaha asalka", "Default sample") to { FilterSample.setCustom(this, null); d.dismiss(); showFilters(a, applyAll, pic) })
             },
             tr("Hagaaji", "Adjust") to { body: LinearLayout ->
                 body.addView(Ui.sliderRow(this, tr("Iftiin", "Brightness"), -1f, 1f, a.brightness) { a.brightness = it; live() })

@@ -168,7 +168,18 @@ object FilterSample {
     private var person: Bitmap? = null
     private var food: Bitmap? = null
     /** Portrait photo (NASA, public domain) – shows how a filter looks on skin, like CapCut's model photos. */
-    fun person(c: Context): Bitmap? = person ?: runCatching { android.graphics.BitmapFactory.decodeResource(c.resources, so.ijarjar.app.R.drawable.filter_sample_person) }.getOrNull().also { person = it }
+    fun person(c: Context): Bitmap? = person ?: (custom(c) ?: runCatching { android.graphics.BitmapFactory.decodeResource(c.resources, so.ijarjar.app.R.drawable.filter_sample_person) }.getOrNull()).also { person = it }
+
+    /** Your own sample photo for the filter tiles (saved once, used every time). */
+    private fun custom(c: Context): Bitmap? {
+        val u = c.getSharedPreferences("ijarjar", Context.MODE_PRIVATE).getString("filterSample", null) ?: return null
+        return runCatching { so.ijarjar.app.media.MediaUtils.loadBitmap(c, android.net.Uri.parse(u), 480) }.getOrNull()
+    }
+
+    fun setCustom(c: Context, uri: String?) {
+        c.getSharedPreferences("ijarjar", Context.MODE_PRIVATE).edit().apply { if (uri == null) remove("filterSample") else putString("filterSample", uri) }.apply()
+        person = null
+    }
     /** Food photo (CC0). */
     fun food(c: Context): Bitmap? = food ?: runCatching { android.graphics.BitmapFactory.decodeResource(c.resources, so.ijarjar.app.R.drawable.filter_sample_food) }.getOrNull().also { food = it }
     /** The right sample for a filter group: food, landscape or a person. */
