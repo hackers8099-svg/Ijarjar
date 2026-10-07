@@ -380,7 +380,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
 
         if (project.isPhoto) {
-            playRow.visibility = View.GONE
+            // photos: keep undo / redo / grid, hide the video-only controls
+            timeLabel.visibility = View.GONE; playBtn.visibility = View.INVISIBLE; keyBtn.visibility = View.GONE
             tlBox.visibility = View.GONE
         }
         setContentView(root)
