@@ -4108,7 +4108,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 override fun onProgress(percent: Int) { bar.progress = percent; status.text = tr("Waa la samaynayaa… ", "Rendering… ") + "$percent%" }
                 override fun onDone(uri: Uri?, file: File) {
                     bar.progress = 100
-                    status.text = if (uri != null) tr("Waa la keydiyay: Gallery → Movies/IjarJar", "Saved: Gallery → Movies/IjarJar") else tr("Diyaar", "Done")
+                    val mb = "%.1f MB".format(file.length() / 1048576f)
+                    status.text = tr("✓ Dhammaad: ", "✓ Finished: ") + TimelineView.fmt(project.durationMs) + " · " + mb + "\n" +
+                        (if (uri != null) tr("Waa la keydiyay: Gallery → Movies/IjarJar", "Saved: Gallery → Movies/IjarJar") else tr("Diyaar", "Done"))
                     startBtn.visibility = View.GONE
                     buttonRow(root, tr("Fur", "Open") to { openMedia(uri, file, mime) }, tr("Wadaag", "Share") to { shareMedia(uri, file, mime) })
                     exporter = null

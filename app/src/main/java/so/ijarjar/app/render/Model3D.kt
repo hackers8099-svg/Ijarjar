@@ -61,17 +61,37 @@ object Model3D {
         context.contentResolver.openAssetFileDescriptor(Uri.parse(uri), "r")?.use { it.length } ?: -1L
     }.getOrDefault(-1L)
 
+    /** Shape (width / height) of each material's own picture, so a new picture is fitted, not stretched. */
+    private var matAspect: Map<String, Float> = emptyMap()
+
     private fun readUvSets(bytes: ByteArray): Map<String, Int> = runCatching {
         val g = so.ijarjar.app.media.GlbEdit.read(bytes) ?: return emptyMap()
         val mats = g.json.optJSONArray("materials") ?: return emptyMap()
+        val texs = g.json.optJSONArray("textures")
+        val imgs = g.json.optJSONArray("images")
+        val views = g.json.optJSONArray("bufferViews")
         val out = HashMap<String, Int>()
+        val asp = HashMap<String, Float>()
+        fun imageAspect(texIndex: Int): Float {
+            val src = texs?.optJSONObject(texIndex)?.optInt("source", -1) ?: -1
+            val im = imgs?.optJSONObject(src) ?: return 0f
+            val v = views?.optJSONObject(im.optInt("bufferView", -1)) ?: return 0f
+            val off = v.optInt("byteOffset", 0); val len = v.optInt("byteLength", 0)
+            if (off + len > g.bin.size) return 0f
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(g.bin, off, len, o)
+            return if (o.outWidth > 0 && o.outHeight > 0) o.outWidth.toFloat() / o.outHeight else 0f
+        }
         for (i in 0 until mats.length()) {
             val m = mats.getJSONObject(i)
             val name = m.optString("name", "")
-            val base = m.optJSONObject("pbrMetallicRoughness")?.optJSONObject("baseColorTexture")?.optInt("texCoord", 0)
-            val glow = m.optJSONObject("emissiveTexture")?.optInt("texCoord", 0)
-            out[name] = base ?: glow ?: 0
+            val bt = m.optJSONObject("pbrMetallicRoughness")?.optJSONObject("baseColorTexture")
+            val et = m.optJSONObject("emissiveTexture")
+            out[name] = bt?.optInt("texCoord", 0) ?: et?.optInt("texCoord", 0) ?: 0
+            val t = bt ?: et
+            if (t != null) imageAspect(t.optInt("index", -1)).takeIf { it > 0f }?.let { asp[name] = it }
         }
+        matAspect = asp
         out
     }.getOrDefault(emptyMap())
 
@@ -126,11 +146,12 @@ object Model3D {
         val tk = "$uri|$flipV|$flipH|$aspect"
         textures[tk]?.let { return it }
         val e = engine ?: return null
-        val bmp = so.ijarjar.app.media.MediaUtils.loadBitmap(context, Uri.parse(uri), 1024) ?: return null
+        val bmp = so.ijarjar.app.media.MediaUtils.loadBitmap(context, Uri.parse(uri), 2048) ?: return null
         val src = upright(cover(bmp, aspect), flipV, flipH)
-        val tex = Texture.Builder().width(src.width).height(src.height).levels(1)
+        val tex = Texture.Builder().width(src.width).height(src.height).levels(levelsFor(src.width, src.height))
             .sampler(Texture.Sampler.SAMPLER_2D).format(Texture.InternalFormat.SRGB8_A8).build(e)
         com.google.android.filament.android.TextureHelper.setBitmap(e, tex, 0, src)
+        tex.generateMipmaps(e)
         textures[tk] = tex
         return tex
     }
@@ -144,9 +165,12 @@ object Model3D {
     private var appliedMats: Set<String> = emptySet()
     private var appliedHighlight: String? = null
 
+    // mipmaps + trilinear + anisotropy: pictures and videos on the model stay sharp and don't shimmer
     private fun sampler() = com.google.android.filament.TextureSampler(
-        com.google.android.filament.TextureSampler.MinFilter.LINEAR, com.google.android.filament.TextureSampler.MagFilter.LINEAR,
-        com.google.android.filament.TextureSampler.WrapMode.CLAMP_TO_EDGE)
+        com.google.android.filament.TextureSampler.MinFilter.LINEAR_MIPMAP_LINEAR, com.google.android.filament.TextureSampler.MagFilter.LINEAR,
+        com.google.android.filament.TextureSampler.WrapMode.CLAMP_TO_EDGE).apply { anisotropy = 8f }
+
+    private fun levelsFor(w: Int, h: Int) = (32 - Integer.numberOfLeadingZeros(maxOf(w, h, 1))).coerceIn(1, 12)
 
     private fun uploadDyn(material: String, bmp: Bitmap, flipV: Boolean = false, flipH: Boolean = false, aspect: Float = 0f): Texture? {
         val e = engine ?: return null
@@ -154,12 +178,13 @@ object Model3D {
         var tex = dynTex[material]
         if (tex == null || tex.getWidth(0) != src.width || tex.getHeight(0) != src.height) {
             tex?.let { e.destroyTexture(it) }
-            tex = Texture.Builder().width(src.width).height(src.height).levels(1)
+            tex = Texture.Builder().width(src.width).height(src.height).levels(levelsFor(src.width, src.height))
                 .sampler(Texture.Sampler.SAMPLER_2D).format(Texture.InternalFormat.SRGB8_A8).build(e)
             dynTex[material] = tex
             dynKeys.remove(material)
         }
         com.google.android.filament.android.TextureHelper.setBitmap(e, tex!!, 0, src)
+        tex.generateMipmaps(e)
         return tex
     }
 
@@ -213,7 +238,8 @@ object Model3D {
                 }
                 for (lk in looks) {
                     if (lk.material.isNotEmpty() && lk.material != name) continue
-                    val tex = lk.texUri?.let { textureFor(context, it, lk.flipV, lk.flipH, lk.aspect) }
+                    val asp = if (lk.aspect > 0f) lk.aspect else matAspect[name] ?: 0f
+                    val tex = lk.texUri?.let { textureFor(context, it, lk.flipV, lk.flipH, asp) }
                     if (tex != null) setPicture(mi, tex, lk.color != 0)
                     if (lk.color != 0) factor(mi, android.graphics.Color.red(lk.color) / 255f, android.graphics.Color.green(lk.color) / 255f, android.graphics.Color.blue(lk.color) / 255f)
                 }
@@ -224,7 +250,8 @@ object Model3D {
             val bmp = lk.bitmap ?: continue
             val key = (lk.bitmapKey ?: bmp.generationId.toString()) + "|${lk.flipV}|${lk.flipH}"
             if (dynKeys[lk.material] == key) continue
-            val tex = uploadDyn(lk.material, bmp, lk.flipV, lk.flipH, lk.aspect) ?: continue
+            val asp = if (lk.aspect > 0f) lk.aspect else matAspect[lk.material] ?: 0f
+            val tex = uploadDyn(lk.material, bmp, lk.flipV, lk.flipH, asp) ?: continue
             dynKeys[lk.material] = key
             for ((_, mi) in materialInstances()) {
                 if (lk.material.isNotEmpty() && mi.name != lk.material) continue

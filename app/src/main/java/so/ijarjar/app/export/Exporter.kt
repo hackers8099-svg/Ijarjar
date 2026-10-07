@@ -119,7 +119,20 @@ class Exporter(
                 override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                     handler.removeCallbacksAndMessages(null)
                     frameSource.release()
+                    // only say "done" when the file really is complete
+                    val got = runCatching {
+                        val r = android.media.MediaMetadataRetriever()
+                        try {
+                            r.setDataSource(output.absolutePath)
+                            r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                        } finally { r.release() }
+                    }.getOrDefault(0L)
+                    if (!output.exists() || output.length() < 1024 || got < total * 0.9 - 300) {
+                        callback.onError("the video came out incomplete (" + (got / 1000) + "s of " + (total / 1000) + "s)")
+                        return
+                    }
                     val uri = saveToGallery()
+                    if (uri == null) { callback.onError("couldn't save to the gallery"); return }
                     callback.onDone(uri, output)
                 }
 
@@ -453,8 +466,15 @@ class Exporter(
                 MediaMetadataRetriever().apply { setDataSource(context, Uri.parse(l.videoSource())) }
             }
             val (cw, ch) = LayerRenderer.contentSize(l, canvasW)
-            val tw = (cw * l.scale).toInt().coerceIn(16, 1920)
-            val th = (ch * l.scale).toInt().coerceIn(16, 1920)
+            var tw = (cw * l.scale).toInt().coerceIn(16, 1920)
+            var th = (ch * l.scale).toInt().coerceIn(16, 1920)
+            if (l.kind == LayerKind.MODEL3D) {
+                // a video on a 3D screen keeps its own shape and full sharpness
+                val info = so.ijarjar.app.media.MediaUtils.probe(context, Uri.parse(l.videoSource()))
+                val vw = info?.width ?: 1080; val vh = info?.height ?: 1920
+                val k = minOf(1f, 1600f / maxOf(vw, vh).coerceAtLeast(1))
+                tw = (vw * k).toInt().coerceAtLeast(16); th = (vh * k).toInt().coerceAtLeast(16)
+            }
             val frame = try {
                 if (Build.VERSION.SDK_INT >= 27)
                     r.getScaledFrameAtTime(local * 1000, MediaMetadataRetriever.OPTION_CLOSEST, tw, th)

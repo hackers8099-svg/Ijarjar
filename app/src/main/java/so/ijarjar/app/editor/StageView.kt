@@ -301,6 +301,7 @@ class StageView(context: Context) : FrameLayout(context) {
         private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
         private val linkLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF19D3C5.toInt(); strokeWidth = dp(1.5f) }
         private val frameCache = HashMap<String, Bitmap>()
+        private val videoSizes = HashMap<String, Pair<Int, Int>>()
         private val gridPaint = Paint().apply { color = 0x88FFFFFF.toInt() }
         private val safePaint = Paint().apply { color = 0x55FFFFFF; style = Paint.Style.STROKE; strokeWidth = 2f; pathEffect = DashPathEffect(floatArrayOf(12f, 10f), 0f) }
 
@@ -310,8 +311,18 @@ class StageView(context: Context) : FrameLayout(context) {
         private fun videoFrame(l: Layer, w: Int): Bitmap? {
             val tv = videoLayerViews[l.id] ?: return null
             if (!tv.isAvailable) return null
-            val (cw, ch) = LayerRenderer.contentSize(l, w)
-            val bw = cw.toInt().coerceIn(16, 640); val bh = (bw * ch / cw).toInt().coerceAtLeast(16)
+            var bw: Int; var bh: Int
+            if (l.kind == LayerKind.MODEL3D) {
+                // video on a 3D screen: keep the video's own shape and enough pixels for sharp text
+                val (vw, vh) = videoSizes.getOrPut(l.videoSource() ?: "") {
+                    so.ijarjar.app.media.MediaUtils.probe(context, android.net.Uri.parse(l.videoSource()))?.let { Pair(it.width, it.height) } ?: Pair(720, 1280)
+                }
+                val k = 1280f / maxOf(vw, vh).coerceAtLeast(1)
+                bw = (vw * minOf(1f, k)).toInt().coerceAtLeast(16); bh = (vh * minOf(1f, k)).toInt().coerceAtLeast(16)
+            } else {
+                val (cw, ch) = LayerRenderer.contentSize(l, w)
+                bw = cw.toInt().coerceIn(16, 640); bh = (bw * ch / cw).toInt().coerceAtLeast(16)
+            }
             var fc = frameCache[l.id]
             if (fc == null || fc.width != bw || fc.height != bh) { fc = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888); frameCache[l.id] = fc }
             return tv.getBitmap(fc!!)
