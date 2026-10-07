@@ -596,7 +596,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { duplicateClip(s.index) }
                 t(R.drawable.ic_delete, tr("Tirtir", "Delete")) { deleteClip(s.index) }
                 group(tr("Muuqaal", "Look"))
-                t(R.drawable.ic_filter, tr("Filter", "Filters"), !c.adjust.isIdentity()) { showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() } }
+                t(R.drawable.ic_filter, tr("Filter", "Filters"), !c.adjust.isIdentity()) { showFilters(c.adjust, { for (o in project.clips) o.adjust = c.adjust.copy() }) }
                 t(R.drawable.ic_canvas, tr("Shaashad", "Canvas")) { showCanvas(c) }
                 if (s.index > 0) t(R.drawable.ic_transition, tr("Isbeddel", "Transition"), c.transition != TransitionKind.NONE) { showTransition(s.index) }
                 if (c.kind == MediaKind.VIDEO) t(R.drawable.ic_stabilize, tr("Deji gariirka", "Stabilize"), c.stab) { showStabilize(s.index) }
@@ -747,7 +747,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_filter, tr("Filter", "Filters")) {
                     if (project.clips.isNotEmpty()) {
                         val c = project.clips[project.clipIndexAt(timeMs)]
-                        showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() }
+                        showFilters(c.adjust, { for (o in project.clips) o.adjust = c.adjust.copy() })
                     }
                 }
                 t(R.drawable.ic_ratio, tr("Saami", "Ratio")) { showAspect() }
