@@ -63,6 +63,8 @@ object Model3D {
 
     /** Shape (width / height) of each material's own picture, so a new picture is fitted, not stretched. */
     private var matAspect: Map<String, Float> = emptyMap()
+    /** Materials that light themselves with a picture (phone screens). */
+    private var matGlow: Set<String> = emptySet()
 
     private fun readUvSets(bytes: ByteArray): Map<String, Int> = runCatching {
         val g = so.ijarjar.app.media.GlbEdit.read(bytes) ?: return emptyMap()
@@ -72,6 +74,7 @@ object Model3D {
         val views = g.json.optJSONArray("bufferViews")
         val out = HashMap<String, Int>()
         val asp = HashMap<String, Float>()
+        val glow = HashSet<String>()
         fun imageAspect(texIndex: Int): Float {
             val src = texs?.optJSONObject(texIndex)?.optInt("source", -1) ?: -1
             val im = imgs?.optJSONObject(src) ?: return 0f
@@ -90,8 +93,11 @@ object Model3D {
             out[name] = bt?.optInt("texCoord", 0) ?: et?.optInt("texCoord", 0) ?: 0
             val t = bt ?: et
             if (t != null) imageAspect(t.optInt("index", -1)).takeIf { it > 0f }?.let { asp[name] = it }
+            // glowing picture (real phone models); our own "Screen" is unlit and shows its base picture as it is
+            if (et != null) glow.add(name)
+            if (et != null) imageAspect(et.optInt("index", -1)).takeIf { it > 0f }?.let { asp[name] = it }
         }
-        matAspect = asp
+        matAspect = asp; matGlow = glow
         out
     }.getOrDefault(emptyMap())
 
@@ -195,22 +201,34 @@ object Model3D {
      */
     private fun setPicture(mi: com.google.android.filament.MaterialInstance, tex: Texture, keepColor: Boolean) {
         val m = mi.material
-        val uv = matUv[mi.name ?: ""] ?: 0
+        val name = mi.name ?: ""
+        val uv = matUv[name] ?: 0
+        val ident = floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f)
+        val screen = name in matGlow && m.hasParameter("emissiveMap")
+        if (screen) {
+            // a screen shows the picture exactly: only through its own light, no base colour, no reflections
+            // (base + glow together made it twice as bright and the tone curve washed it out)
+            runCatching {
+                mi.setParameter("emissiveMap", tex, sampler())
+                if (m.hasParameter("emissiveIndex")) mi.setParameter("emissiveIndex", uv)
+                if (m.hasParameter("emissiveUvMatrix")) mi.setParameter("emissiveUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, ident, 0, 1)
+                if (m.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", 1f, 1f, 1f)
+                if (m.hasParameter("emissiveStrength")) mi.setParameter("emissiveStrength", 1f)
+            }
+            if (m.hasParameter("baseColorIndex")) runCatching { mi.setParameter("baseColorIndex", -1) }
+            factor(mi, 0f, 0f, 0f)
+            if (m.hasParameter("roughnessFactor")) runCatching { mi.setParameter("roughnessFactor", 1f) }
+            if (m.hasParameter("metallicFactor")) runCatching { mi.setParameter("metallicFactor", 0f) }
+            if (m.hasParameter("clearCoatFactor")) runCatching { mi.setParameter("clearCoatFactor", 0f) }
+            return
+        }
         if (m.hasParameter("baseColorMap")) runCatching { mi.setParameter("baseColorMap", tex, sampler()) }
         if (m.hasParameter("baseColorIndex")) runCatching { mi.setParameter("baseColorIndex", uv) }
         if (m.hasParameter("baseColorUvMatrix")) runCatching {
-            mi.setParameter("baseColorUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
+            mi.setParameter("baseColorUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, ident, 0, 1)
         }
         if (!keepColor) factor(mi, 1f, 1f, 1f)
-        if (m.hasParameter("emissiveMap")) runCatching {
-            mi.setParameter("emissiveMap", tex, sampler())
-            if (m.hasParameter("emissiveIndex")) mi.setParameter("emissiveIndex", uv)
-            if (m.hasParameter("emissiveUvMatrix")) mi.setParameter("emissiveUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
-            // emissive is measured in light units: make it bright enough to read like a lit screen
-            if (m.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", 1f, 1f, 1f)
-            if (m.hasParameter("emissiveStrength")) mi.setParameter("emissiveStrength", 1f)
-        }
-        if (m.hasParameter("roughnessFactor")) runCatching { mi.setParameter("roughnessFactor", 0.35f) }
+        if (m.hasParameter("roughnessFactor")) runCatching { mi.setParameter("roughnessFactor", 0.5f) }
         if (m.hasParameter("metallicFactor")) runCatching { mi.setParameter("metallicFactor", 0f) }
     }
 
@@ -299,6 +317,9 @@ object Model3D {
                 // smooth edges (no pixel steps)
                 it.antiAliasing = View.AntiAliasing.FXAA
                 it.multiSampleAntiAliasingOptions = View.MultiSampleAntiAliasingOptions().apply { enabled = true; sampleCount = 4 }
+                // straight colours (no film curve): screenshots and videos on screens look exactly like the file
+                runCatching { it.colorGrading = com.google.android.filament.ColorGrading.Builder()
+                    .toneMapper(com.google.android.filament.ToneMapper.Linear()).build(e) }
             }
             provider = UbershaderProvider(e)
             loader = AssetLoader(e, provider!!, EntityManager.get())
