@@ -130,6 +130,29 @@ object Model3D {
         return tex
     }
 
+    /**
+     * Puts a picture on a material. Works for models made with any tool: turns the texture slot on
+     * (ubershader "...Index"), clears a dark base colour, and also lights it up through the emissive
+     * slot when the part had a glowing (screen) texture, so phone screens show the new picture.
+     */
+    private fun setPicture(mi: com.google.android.filament.MaterialInstance, tex: Texture, keepColor: Boolean) {
+        val m = mi.material
+        if (m.hasParameter("baseColorMap")) runCatching { mi.setParameter("baseColorMap", tex, sampler()) }
+        if (m.hasParameter("baseColorIndex")) runCatching { mi.setParameter("baseColorIndex", 0) }
+        if (m.hasParameter("baseColorUvMatrix")) runCatching {
+            mi.setParameter("baseColorUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
+        }
+        if (!keepColor) factor(mi, 1f, 1f, 1f)
+        if (m.hasParameter("emissiveMap")) runCatching {
+            mi.setParameter("emissiveMap", tex, sampler())
+            if (m.hasParameter("emissiveIndex")) mi.setParameter("emissiveIndex", 0)
+            if (m.hasParameter("emissiveUvMatrix")) mi.setParameter("emissiveUvMatrix", com.google.android.filament.MaterialInstance.FloatElement.MAT3, floatArrayOf(1f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 1f), 0, 1)
+            if (m.hasParameter("emissiveFactor")) mi.setParameter("emissiveFactor", 0.9f, 0.9f, 0.9f)
+        }
+        if (m.hasParameter("roughnessFactor")) runCatching { mi.setParameter("roughnessFactor", 0.35f) }
+        if (m.hasParameter("metallicFactor")) runCatching { mi.setParameter("metallicFactor", 0f) }
+    }
+
     private fun factor(mi: com.google.android.filament.MaterialInstance, r: Float, g: Float, b: Float) {
         if (mi.material.hasParameter("baseColorFactor")) runCatching { mi.setParameter("baseColorFactor", com.google.android.filament.Colors.RgbaType.SRGB, r, g, b, 1f) }
     }
@@ -152,7 +175,7 @@ object Model3D {
                 for (lk in looks) {
                     if (lk.material.isNotEmpty() && lk.material != name) continue
                     val tex = lk.texUri?.let { textureFor(context, it) }
-                    if (tex != null && mi.material.hasParameter("baseColorMap")) runCatching { mi.setParameter("baseColorMap", tex, sampler()) }
+                    if (tex != null) setPicture(mi, tex, lk.color != 0)
                     if (lk.color != 0) factor(mi, android.graphics.Color.red(lk.color) / 255f, android.graphics.Color.green(lk.color) / 255f, android.graphics.Color.blue(lk.color) / 255f)
                 }
             }
@@ -166,8 +189,7 @@ object Model3D {
             dynKeys[lk.material] = key
             for ((_, mi) in materialInstances()) {
                 if (lk.material.isNotEmpty() && mi.name != lk.material) continue
-                if (mi.material.hasParameter("baseColorMap")) runCatching { mi.setParameter("baseColorMap", tex, sampler()) }
-                if (lk.color == 0) factor(mi, 1f, 1f, 1f)
+                setPicture(mi, tex, lk.color != 0)
             }
         }
         return true
