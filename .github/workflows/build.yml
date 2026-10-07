@@ -41,12 +41,12 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/release/app-release.apk out/IjarJar.apk
+          cp app/build/outputs/apk/release/app-release.apk out/ijarjar.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: IjarJar-APK
-          path: out/IjarJar.apk
+          path: out/ijarjar.apk
 
       - name: Publish release
         if: github.event_name == 'push'
@@ -54,5 +54,5 @@ jobs:
         with:
           tag_name: v1.0.${{ github.run_number }}
           name: Ijar Jar v1.0.${{ github.run_number }}
-          files: out/IjarJar.apk
+          files: out/ijarjar.apk
           make_latest: true

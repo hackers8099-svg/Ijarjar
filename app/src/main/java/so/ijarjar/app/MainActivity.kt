@@ -55,8 +55,8 @@ class MainActivity : AppCompatActivity() {
         scroll.addView(root)
 
         val title = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        title.addView(ImageView(this).apply { setImageResource(R.mipmap.ic_launcher) }, LinearLayout.LayoutParams(dp(48f), dp(48f)))
-        title.addView(Ui.text(this, "Ijar Jar", 28f, Ui.TEXT, true).apply { setPadding(dp(10f), 0, 0, 0) },
+        title.addView(ImageView(this).apply { setImageResource(R.drawable.logo_full) }, LinearLayout.LayoutParams(dp(52f), dp(52f)))
+        title.addView(Ui.text(this, "ijarjar", 28f, Ui.TEXT, true).apply { setPadding(dp(10f), 0, 0, 0) },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         // language switch
         val lang = LinearLayout(this).apply {
