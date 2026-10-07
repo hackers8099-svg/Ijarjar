@@ -149,14 +149,7 @@ object TextAnimator {
             TextLoop.NONE -> {}
             TextLoop.WAVE -> st.dy += sin(s * tau + i * 0.55f) * px * 0.15f
             TextLoop.BOUNCE -> st.dy -= abs(sin(s * PI.toFloat() * 1.6f + i * 0.45f)) * px * 0.25f
-            TextLoop.KARAOKE, TextLoop.WORD_HIGHLIGHT, TextLoop.WORD_POP -> {
-                val cur = (s * 1000f / (l.durationMs.toFloat() / n.coerceAtLeast(1))).toInt()
-                when (a) {
-                    TextLoop.KARAOKE -> if (i <= cur) st.color = l.highlightColor
-                    TextLoop.WORD_HIGHLIGHT -> if (i == cur) st.box = l.highlightColor
-                    else -> if (i == cur) { st.scale *= 1.25f; st.color = l.highlightColor }
-                }
-            }
+            TextLoop.KARAOKE, TextLoop.WORD_HIGHLIGHT, TextLoop.WORD_POP -> {}   // handled in draw() per word
             TextLoop.SHIMMER -> {
                 val pos = u.cx / layoutW.coerceAtLeast(1f)
                 val band = ((s * 0.8f) % 1.6f) - 0.3f
@@ -182,10 +175,23 @@ object TextAnimator {
         val until = l.endMs - t
         val inActive = l.textIn != TextAnim.NONE && since < inMs
         val outActive = l.textOut != TextAnim.NONE && until < outMs
-        val words = (inActive && wordBased(l.textIn, l)) || (outActive && wordBased(l.textOut, l)) ||
-            (!inActive && !outActive && wordLoop(l.textLoop)) || wordLoop(l.textLoop)
+        val animWords = (inActive && wordBased(l.textIn, l)) || (outActive && wordBased(l.textOut, l))
+        val letterAnim = (inActive && l.textIn != TextAnim.NONE && !wordBased(l.textIn, l)) || (outActive && l.textOut != TextAnim.NONE && !wordBased(l.textOut, l))
+        val wl = wordLoop(l.textLoop)
+        val words = animWords || (wl && !letterAnim)
         val lines = ((inActive && l.textIn == TextAnim.CUSTOM) || (outActive && l.textOut == TextAnim.CUSTOM)) && l.taUnit == 2
         val list = units(sp, words, lines)
+        // caption word timing: each word gets time by its length; the last word ends a little before the clip
+        val wordList = if (wl) (if (words && !lines) list else units(sp, true)) else emptyList()
+        var curWord = -1; var curFrac = 0f
+        if (wl && wordList.isNotEmpty()) {
+            val weights = wordList.map { (it.end - it.start) + 2f }
+            val total = weights.sum()
+            var pos = (since.toFloat() / (dur * 0.94f).coerceAtLeast(1f)).coerceIn(0f, 0.9999f) * total
+            for ((k, w) in weights.withIndex()) { if (pos < w) { curWord = k; curFrac = pos / w; break }; pos -= w }
+            if (curWord < 0) { curWord = wordList.size - 1; curFrac = 1f }
+        }
+        fun wordOf(u: Unit): Int = if (wordList.isEmpty()) -1 else wordList.indexOfFirst { u.start >= it.start && u.start < it.end }
         val n = list.size
         val px = sp.textPx
         val inP = if (inActive) since.toFloat() / inMs else 1f
@@ -229,6 +235,36 @@ object TextAnimator {
         val s = since / 1000f
         val center = (n - 1) / 2f
         var lastVisible = -1
+        val textAlpha = minOf(inP, outP).coerceIn(0f, 1f)
+        // word highlight: one rounded box behind the word being said (eases in as the word starts)
+        if (l.textLoop == TextLoop.WORD_HIGHLIGHT && curWord >= 0) {
+            val fm = sp.paint.fontMetrics
+            val padX = px * 0.14f
+            fun box(w: Unit) = RectF(w.x - padX, w.baseline + fm.ascent * 0.92f - px * 0.04f, w.x + w.w + padX, w.baseline + fm.descent * 0.9f + px * 0.04f)
+            val w = wordList[curWord]
+            val r = box(w)
+            val k = minOf(1f, curFrac * 5f)
+            var alpha = Color.alpha(l.highlightColor) * layerAlpha / 255f * textAlpha
+            var sc = 1f
+            when (l.hlAnim) {
+                0 -> sc = 0.85f + 0.15f * Ease.apply(Easing.BACK, k)
+                1 -> if (curWord > 0) {
+                    val p0 = box(wordList[curWord - 1])
+                    val e = Ease.apply(Easing.EASE_IN_OUT, minOf(1f, curFrac * 4f))
+                    if (p0.top == r.top || abs(p0.top - r.top) < px * 0.2f) {
+                        r.set(p0.left + (r.left - p0.left) * e, r.top, p0.right + (r.right - p0.right) * e, r.bottom)
+                    }
+                }
+                2 -> alpha *= k
+                3 -> r.right = r.left + (r.right - r.left) * Ease.apply(Easing.EASE_OUT, minOf(1f, curFrac * 3f))
+            }
+            bgPaint.color = l.highlightColor
+            bgPaint.alpha = alpha.toInt().coerceIn(0, 255)
+            val rad = r.height() / 2f * l.hlRound.coerceIn(0f, 1f)
+            canvas.save(); canvas.scale(sc, sc, r.centerX(), r.centerY())
+            canvas.drawRoundRect(r, rad, rad, bgPaint)
+            canvas.restore()
+        }
         for ((i, u) in list.withIndex()) {
             st.reset()
             if (inActive) {
@@ -247,15 +283,23 @@ object TextAnimator {
             if (st.alpha <= 0.004f) continue
             lastVisible = i
             canvas.save()
+            val wi = if (wl) wordOf(u) else -1
+            // word pop: the spoken word grows around its own centre (letters stay together)
+            if (l.textLoop == TextLoop.WORD_POP && wi == curWord && wi >= 0) {
+                val w = wordList[wi]
+                val k = Ease.apply(Easing.BACK, minOf(1f, curFrac * 5f))
+                val sc = 1f + 0.18f * k
+                canvas.scale(sc, sc, w.cx, w.cy)
+                canvas.translate(0f, -px * 0.06f * k)
+                st.color = l.highlightColor
+            }
+            if (l.textLoop == TextLoop.KARAOKE && wi >= 0 && wi < curWord) st.color = l.highlightColor
+            if (l.textLoop == TextLoop.WORD_HIGHLIGHT && wi >= 0 && wi == curWord && l.hlTextColor != 0) st.color = l.hlTextColor
             canvas.translate(u.cx + st.dx, u.cy + st.dy)
             if (st.rot != 0f) canvas.rotate(st.rot)
             if (st.scale != 1f) canvas.scale(st.scale, st.scale)
             canvas.translate(-u.cx, -u.cy)
             val a = (st.alpha.coerceIn(0f, 1f) * layerAlpha).toInt()
-            if (st.box != 0) {
-                bgPaint.color = st.box; bgPaint.alpha = a
-                canvas.drawRoundRect(RectF(u.x - px * 0.15f, u.top, u.x + u.w + px * 0.15f, u.bottom), px * 0.2f, px * 0.2f, bgPaint)
-            }
             val blur = if (st.blur > 0.02f) BlurMaskFilter(st.blur * px * 0.35f, BlurMaskFilter.Blur.NORMAL) else null
             if (depth != null) {
                 depth.alpha = a; depth.maskFilter = blur
@@ -278,6 +322,18 @@ object TextAnimator {
             fill.alpha = a
             fill.maskFilter = blur
             canvas.drawText(sp.raw, u.start, u.end, u.x, u.baseline, fill)
+            // karaoke: the word being sung fills with the highlight colour from left to right
+            if (l.textLoop == TextLoop.KARAOKE && wi >= 0 && wi == curWord) {
+                val w = wordList[wi]
+                val bx = w.x + w.w * curFrac
+                if (bx > u.x) {
+                    canvas.save()
+                    canvas.clipRect(u.x - px, u.top - px, minOf(bx, u.x + u.w + px), u.bottom + px)
+                    fill.shader = null; fill.color = l.highlightColor; fill.alpha = a
+                    canvas.drawText(sp.raw, u.start, u.end, u.x, u.baseline, fill)
+                    canvas.restore()
+                }
+            }
             canvas.restore()
         }
         // typewriter cursor

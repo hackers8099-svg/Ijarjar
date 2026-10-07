@@ -31,10 +31,10 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         private set
 
     /** A player whose sound goes through the voice clean-up processor. */
-    private fun playerWithFx(settings: () -> Pair<Float, Boolean>): ExoPlayer {
+    private fun playerWithFx(settings: () -> Pair<Float, Boolean>, voice: () -> so.ijarjar.app.model.VoiceFx): ExoPlayer {
         val rf = object : DefaultRenderersFactory(context) {
             override fun buildAudioSink(context: Context, enableFloatOutput: Boolean, enableAudioTrackPlaybackParams: Boolean): AudioSink =
-                DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf<AudioProcessor>(AudioFx(settings))).build()
+                DefaultAudioSink.Builder(context).setAudioProcessors(arrayOf<AudioProcessor>(AudioFx(settings, voice))).build()
         }
         return ExoPlayer.Builder(context, rf).build()
     }
@@ -42,7 +42,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     private val main: ExoPlayer = playerWithFx {
         val c = project.clips.getOrNull(currentIndexSafe)
         if (c == null) Pair(0f, false) else Pair(c.denoise, c.enhanceVoice)
-    }
+    }, { project.clips.getOrNull(currentIndexSafe)?.voice ?: so.ijarjar.app.model.VoiceFx.NONE })
     @Volatile private var currentIndexSafe = 0
     private val audioPlayers = HashMap<String, ExoPlayer>()
     private val audioSignature = HashMap<String, String>()
@@ -112,15 +112,20 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         for (a in project.audios) {
             val sig = a.uri
             val existing = audioPlayers[a.id]
-            if (existing != null && audioSignature[a.id] == sig) { existing.volume = a.volume.coerceIn(0f, 1f); continue }
+            if (existing != null && audioSignature[a.id] == sig) {
+                existing.volume = a.volume.coerceIn(0f, 1f)
+                if (existing.playbackParameters.pitch != a.voice.pitch) existing.playbackParameters = PlaybackParameters(1f, a.voice.pitch)
+                continue
+            }
             existing?.release()
             val id = a.id
             val pl = playerWithFx {
                 val t = project.audios.firstOrNull { it.id == id }
                 if (t == null) Pair(0f, false) else Pair(t.denoise, t.enhanceVoice)
-            }
+            }, { project.audios.firstOrNull { it.id == id }?.voice ?: so.ijarjar.app.model.VoiceFx.NONE })
             pl.setMediaItem(MediaItem.fromUri(Uri.parse(a.uri)))
             pl.volume = a.volume.coerceIn(0f, 1f)
+            pl.playbackParameters = PlaybackParameters(1f, a.voice.pitch)
             pl.prepare()
             audioPlayers[a.id] = pl
             audioSignature[a.id] = sig
@@ -163,13 +168,16 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         currentIndex = idx
         currentIndexSafe = idx
         lastSpeed = if (c.kind == MediaKind.VIDEO) SpeedMap.speedAtSrc(c, main.currentPosition.coerceAtLeast(0)) else 1f
-        main.playbackParameters = PlaybackParameters(lastSpeed)
+        main.playbackParameters = PlaybackParameters(lastSpeed, c.voice.pitch)
         main.volume = if (muteMain) 0f else c.volume.coerceIn(0f, 1f)
     }
 
     fun refreshVolumes() {
         applyClipState()
-        for (a in project.audios) audioPlayers[a.id]?.volume = a.volume.coerceIn(0f, 1f)
+        for (a in project.audios) audioPlayers[a.id]?.let {
+            it.volume = a.volume.coerceIn(0f, 1f)
+            if (it.playbackParameters.pitch != a.voice.pitch) it.playbackParameters = PlaybackParameters(1f, a.voice.pitch)
+        }
     }
 
     /** Global timeline position in output milliseconds. */
@@ -222,7 +230,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         val c = project.clips.getOrNull(main.currentMediaItemIndex)
         if (c != null && c.hasCurve) {
             val sp = SpeedMap.speedAtSrc(c, main.currentPosition.coerceAtLeast(0))
-            if (kotlin.math.abs(sp - lastSpeed) > 0.01f) { lastSpeed = sp; main.playbackParameters = PlaybackParameters(sp) }
+            if (kotlin.math.abs(sp - lastSpeed) > 0.01f) { lastSpeed = sp; main.playbackParameters = PlaybackParameters(sp, c.voice.pitch) }
         }
         val t = currentTimeMs()
         syncSecondary(t, force = false)

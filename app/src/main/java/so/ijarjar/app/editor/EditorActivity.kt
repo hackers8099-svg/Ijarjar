@@ -29,6 +29,10 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
+import android.speech.tts.Voice
+import java.util.Locale
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -63,6 +67,8 @@ import so.ijarjar.app.model.LayerKind
 import so.ijarjar.app.model.LoopAnim
 import so.ijarjar.app.model.MaskKind
 import so.ijarjar.app.model.MediaKind
+import so.ijarjar.app.model.MultiSelect
+import so.ijarjar.app.model.VoiceFx
 import so.ijarjar.app.model.Project
 import so.ijarjar.app.model.ShapeKind
 import so.ijarjar.app.model.SpeedCurve
@@ -208,6 +214,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         super.onDestroy()
         engine.release()
         sfxPlayer?.release()
+        tts?.shutdown()
         io.shutdown()
     }
 
@@ -242,9 +249,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
         top.addView(Ui.iconButton(this, R.drawable.ic_close) { save(); finish() })
         top.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        undoBtn = Ui.iconButton(this, R.drawable.ic_undo) { undo() }
-        redoBtn = Ui.iconButton(this, R.drawable.ic_redo) { redo() }
-        top.addView(undoBtn); top.addView(redoBtn)
         aspectBtn = Ui.text(this, project.aspect, 13f).apply {
             background = Ui.roundBg(Ui.SURFACE2, dp(14f).toFloat())
             setPadding(dp(12f), dp(6f), dp(12f), dp(6f))
@@ -272,22 +276,29 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         stageBox.addView(notice, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(10f); leftMargin = dp(24f); rightMargin = dp(24f) })
         root.addView(stageBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 
-        val pr = FrameLayout(this).apply { setPadding(dp(14f), 0, dp(6f), 0) }
+        // play row: time + keyframe on the left, play in the middle, undo / redo / grid / full screen on the right
+        val pr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12f), 0, dp(4f), 0) }
+        val left = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         timeLabel = Ui.text(this, "00:00 / 00:00", 12f, Ui.TEXT2)
-        pr.addView(timeLabel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.START or Gravity.CENTER_VERTICAL))
+        left.addView(timeLabel)
+        keyBtn = Ui.iconButton(this, R.drawable.ic_keyframe, 20f) { toggleKeyframe() }
+        left.addView(keyBtn)
+        pr.addView(left, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         playBtn = Ui.iconButton(this, R.drawable.ic_play, 28f) { togglePlay() }
-        pr.addView(playBtn, FrameLayout.LayoutParams(dp(48f), dp(44f), Gravity.CENTER))
-        val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        keyBtn = Ui.iconButton(this, R.drawable.ic_keyframe, 22f) { toggleKeyframe() }
-        val gridBtn = Ui.iconButton(this, R.drawable.ic_grid, 22f, Ui.TEXT2) {}
+        pr.addView(playBtn, LinearLayout.LayoutParams(dp(48f), dp(44f)))
+        val right = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL or Gravity.END }
+        undoBtn = Ui.iconButton(this, R.drawable.ic_undo, 20f) { undo() }
+        redoBtn = Ui.iconButton(this, R.drawable.ic_redo, 20f) { redo() }
+        right.addView(undoBtn); right.addView(redoBtn)
+        val gridBtn = Ui.iconButton(this, R.drawable.ic_grid, 20f, Ui.TEXT2) {}
         gridBtn.setOnClickListener {
             stage.showGrid = !stage.showGrid
             gridBtn.imageTintList = ColorStateList.valueOf(if (stage.showGrid) Ui.ACCENT else Ui.TEXT2)
         }
         right.addView(gridBtn)
-        fullBtn = Ui.iconButton(this, R.drawable.ic_fullscreen, 22f) { toggleFullscreen() }
-        right.addView(keyBtn); right.addView(fullBtn)
-        pr.addView(right, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.CENTER_VERTICAL))
+        fullBtn = Ui.iconButton(this, R.drawable.ic_fullscreen, 20f) { toggleFullscreen() }
+        right.addView(fullBtn)
+        pr.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         playRow = pr
         root.addView(pr)
 
@@ -320,7 +331,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val line = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         toolBack = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            addView(Ui.tool(this@EditorActivity, R.drawable.ic_back, tr("Dib", "Back")) { setSelection(null) })
+            addView(Ui.tool(this@EditorActivity, R.drawable.ic_back, tr("Dib", "Back")) { if (multiMode) endMulti() else setSelection(null) })
             addView(View(this@EditorActivity).apply { setBackgroundColor(0x22FFFFFF) }, LinearLayout.LayoutParams(dp(1f), dp(36f)))
         }
         line.addView(toolBack)
@@ -468,6 +479,46 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val s = selection
         var key = "none"
         when {
+            multiMode -> {
+                key = "multi"
+                val picked = project.layers.filter { it.id in MultiSelect.ids }
+                group(tr("La doortay: ${picked.size}", "Selected: ${picked.size}"))
+                t(R.drawable.ic_layers, tr("Dooro dhammaan", "Select all")) {
+                    MultiSelect.ids.clear()
+                    for (l in project.layers) if (!l.isEffect() && (photo || l.isActive(timeMs))) MultiSelect.ids.add(l.id)
+                    stage.selectedLayerId = MultiSelect.ids.lastOrNull(); onMultiChanged()
+                }
+                t(R.drawable.ic_close, tr("Ka saar dhammaan", "Clear")) { MultiSelect.ids.clear(); stage.selectedLayerId = null; onMultiChanged() }
+                if (picked.size > 1) {
+                    t(R.drawable.ic_link, tr("Isku xir", "Link")) {
+                        val g = java.util.UUID.randomUUID().toString().take(8)
+                        for (l in picked) l.linkGroup = g
+                        cleanupGroups(); commit(); toast(tr("${picked.size} layer waa la isku xiray", "${picked.size} layers linked"))
+                    }
+                    t(R.drawable.ic_align_h, tr("Dhexdhexaad ←→", "Center ←→")) { centerPicked(picked, true) }
+                    t(R.drawable.ic_align_v, tr("Dhexdhexaad ↑↓", "Center ↑↓")) { centerPicked(picked, false) }
+                    if (!photo) t(R.drawable.ic_animation, tr("Animation isku mid ah", "Same animation")) {
+                        val src = project.layers.firstOrNull { it.id == stage.selectedLayerId } ?: picked.first()
+                        val pr = so.ijarjar.app.data.Presets.fromLayer(src, "tmp")
+                        for (o in picked) if (o.id != src.id) so.ijarjar.app.data.Presets.apply(pr, o)
+                        commit(); toast(tr("Animation-ka “${layerTitle(src)}” waa lagu dabaqay", "Animation of “${layerTitle(src)}” applied"))
+                    }
+                }
+                if (picked.isNotEmpty()) {
+                    t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) {
+                        val copies = picked.map { l -> l.copy().also { b -> b.linkGroup = null; b.cx = l.cx + 0.04f; b.cy = l.cy + 0.04f; for (k in b.keyframes) { k.cx += 0.04f; k.cy += 0.04f } } }
+                        project.layers.addAll(copies)
+                        MultiSelect.ids.clear(); copies.forEach { MultiSelect.ids.add(it.id) }
+                        stage.selectedLayerId = copies.last().id
+                        commit()
+                    }
+                    t(R.drawable.ic_delete, tr("Tirtir", "Delete")) {
+                        project.layers.removeAll { it.id in MultiSelect.ids }
+                        MultiSelect.ids.clear(); stage.selectedLayerId = null
+                        cleanupGroups(); commit()
+                    }
+                }
+            }
             s is TimelineView.Sel.ClipSel && project.clips.getOrNull(s.index) != null -> {
                 key = "clip"
                 val c = project.clips[s.index]
@@ -488,7 +539,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     group(tr("Dheeraad", "More"))
                     t(R.drawable.ic_reverse, tr("Dib u celi", "Reverse"), c.reversed) { reverseClip(s.index) }
                     t(R.drawable.ic_freeze, tr("Qabooji", "Freeze")) { freezeFrame(s.index) }
-                    t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
+                    t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), c.voice != VoiceFx.NONE) { showVoiceChanger(c.voice, project.clipStartMs(s.index)) { c.voice = it } }
+                    t(R.drawable.ic_voice, tr("Nadiifi codka", "Clean voice"), c.denoise > 0f || c.enhanceVoice) { showVoiceFx(c.denoise, c.enhanceVoice) { d, e -> c.denoise = d; c.enhanceVoice = e } }
                     t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractAudio(s.index) }
                 }
                 group(tr("Habee", "Arrange"))
@@ -548,6 +600,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.isPicture()) t(R.drawable.ic_mockup, "Mockup", l.mockup != so.ijarjar.app.model.MockupKind.NONE) { showMockup(l) }
                     if (l.kind == LayerKind.MODEL3D) t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
                     group(tr("Habee", "Arrange"))
+                    t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(l) }
                     t(R.drawable.ic_link, tr("Isku xir", "Link"), l.linkGroup != null) { showLink(l) }
                     if (l.linkGroup != null) t(R.drawable.ic_unlink, tr("Kala fur", "Unlink")) { unlink(l) }
                     t(R.drawable.ic_bring_forward, tr("Kor u qaad", "Forward")) { reorderLayer(l, 1) }
@@ -564,7 +617,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 val a = selectedAudio()!!
                 group(tr("Cod", "Audio"))
                 t(R.drawable.ic_volume, tr("Cod", "Volume")) { showAudioVolume(a) }
-                t(R.drawable.ic_voice, tr("Codka hagaaji", "Voice"), a.denoise > 0f || a.enhanceVoice) { showVoiceFx(a.denoise, a.enhanceVoice) { d, e -> a.denoise = d; a.enhanceVoice = e } }
+                t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), a.voice != VoiceFx.NONE) { showVoiceChanger(a.voice, a.startMs) { a.voice = it } }
+                t(R.drawable.ic_voice, tr("Nadiifi codka", "Clean voice"), a.denoise > 0f || a.enhanceVoice) { showVoiceFx(a.denoise, a.enhanceVoice) { d, e -> a.denoise = d; a.enhanceVoice = e } }
                 t(R.drawable.ic_split, tr("Kala jar", "Split")) { splitAudio(a) }
                 t(R.drawable.ic_start_here, tr("Bilow halkan", "Start here")) { a.startMs = timeMs; commit() }
                 t(R.drawable.ic_copy, tr("Nuqul", "Duplicate")) { val b = a.copy(); b.startMs = a.endMs; project.audios.add(b); commit() }
@@ -584,6 +638,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_shape, tr("Qaabab", "Shapes")) { showShapes() }
                 t(R.drawable.ic_brush, tr("Sawir gacmeed", "Draw")) { startDrawing() }
                 group(tr("Habee", "Arrange"))
+                t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(null) }
                 t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
                 t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
                 t(R.drawable.ic_grid, tr("Shabag", "Grid"), stage.showGrid) { stage.showGrid = !stage.showGrid; buildTools() }
@@ -605,6 +660,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
                     else askMic.launch(Manifest.permission.RECORD_AUDIO)
                 }
+                t(R.drawable.ic_tts, tr("Qoraal → cod", "Text to speech")) { showTts() }
                 t(R.drawable.ic_audio, tr("Kale", "More")) { showAudioMenu() }
                 group(tr("Mashruuc", "Project"))
                 t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit clip")) {
@@ -616,12 +672,13 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                         showFilters(c.adjust) { for (o in project.clips) o.adjust = c.adjust.copy() }
                     }
                 }
+                t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(null) }
                 t(R.drawable.ic_ratio, tr("Saami", "Ratio")) { showAspect() }
                 t(R.drawable.ic_layers, tr("Layer-ada", "Layers")) { showLayers() }
                 t(R.drawable.ic_link, tr("Isku xir", "Link")) { showLink(null) }
             }
         }
-        toolBack.visibility = if (s != null && !(photo && key == "photo")) View.VISIBLE else View.GONE
+        toolBack.visibility = if (multiMode || (s != null && !(photo && key == "photo"))) View.VISIBLE else View.GONE
         val nonEmpty = groups.filter { it.second.isNotEmpty() }
         val sel = (toolTab[key] ?: 0).coerceIn(0, (nonEmpty.size - 1).coerceAtLeast(0))
         fun fill(i: Int) {
@@ -647,7 +704,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         if (selection is TimelineView.Sel.ClipSel && selectedClipIndex() >= project.clips.size) selection = null
         if (selection is TimelineView.Sel.LayerSel && selectedLayer() == null) selection = null
         if (selection is TimelineView.Sel.AudioSel && selectedAudio() == null) selection = null
-        setSelection(selection)
+        if (multiMode) {
+            MultiSelect.ids.retainAll(project.layers.map { it.id }.toSet())
+            if (stage.selectedLayerId !in MultiSelect.ids) stage.selectedLayerId = MultiSelect.ids.lastOrNull()
+            buildTools()
+        } else setSelection(selection)
         updateUndo()
         updatePlayButton()
         stage.requestLayout()
@@ -704,6 +765,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     override fun onSelect(sel: TimelineView.Sel?) {
+        if (multiMode) {
+            if (sel is TimelineView.Sel.LayerSel) {
+                if (!MultiSelect.ids.remove(sel.id)) MultiSelect.ids.add(sel.id)
+                stage.selectedLayerId = if (sel.id in MultiSelect.ids) sel.id else MultiSelect.ids.lastOrNull()
+                onMultiChanged()
+            }
+            return
+        }
         setSelection(sel)
         if (sel is TimelineView.Sel.LayerSel) {
             val l = selectedLayer() ?: return
@@ -1350,6 +1419,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         to.cx = from.cx; to.cy = from.cy; to.scale = from.scale; to.animIn = from.animIn; to.animOut = from.animOut
         to.textIn = from.textIn; to.textOut = from.textOut; to.textLoop = from.textLoop; to.highlightColor = from.highlightColor
         to.animInMs = from.animInMs; to.animOutMs = from.animOutMs
+        to.hlRound = from.hlRound; to.hlAnim = from.hlAnim; to.hlTextColor = from.hlTextColor; to.glowColor = from.glowColor; to.glowSize = from.glowSize
     }
 
     private fun editText(value: String, hint: String, onChange: (String) -> Unit): EditText = EditText(this).apply {
@@ -1422,9 +1492,27 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     l.textIn = k; if (k != TextAnim.NONE) l.animIn = LayerAnim.NONE; previewAnim(l, true)
                 }
                 body.addView(Ui.label(this, tr("Wareeg", "Loop")))
-                tileRow(body, TextLoop.entries, { it == l.textLoop }, { it.label }, { k -> AnimTile(this, sampleText(l)) { it.textLoop = k; it.endMs = 2600 } }, 60f) { k ->
-                    l.textLoop = k; live()
+                val hlBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+                fun hlOptions() {
+                    hlBox.removeAllViews()
+                    if (l.textLoop != TextLoop.WORD_HIGHLIGHT && l.textLoop != TextLoop.KARAOKE && l.textLoop != TextLoop.WORD_POP) return
+                    hlBox.addView(Ui.label(this, tr("Midabka erayga hadda la akhrinayo", "Colour of the current word")))
+                    hlBox.addView(Ui.colorRow(this, l.highlightColor, false) { l.highlightColor = it; live() })
+                    if (l.textLoop == TextLoop.WORD_HIGHLIGHT) {
+                        hlBox.addView(Ui.label(this, tr("Midabka qoraalka ku dul jira", "Text colour on the box")))
+                        hlBox.addView(Ui.colorRow(this, l.hlTextColor, true) { l.hlTextColor = it; live() })
+                        hlBox.addView(Ui.sliderRow(this, tr("Wareegsanaan", "Roundness"), 0f, 1f, l.hlRound) { l.hlRound = it; live() })
+                        hlBox.addView(Ui.label(this, tr("Sida sanduuqu u dhaqaaqo", "How the box moves")))
+                        hlBox.addView(Ui.choiceRow(this, listOf(tr("Bood", "Pop"), tr("Simbiriirix", "Slide"), tr("Soo bax", "Fade"), tr("Bidix ka buuxi", "Wipe"), tr("Midna", "None")), l.hlAnim.coerceIn(0, 4)) {
+                            l.hlAnim = it; previewAnim(l, true)
+                        })
+                    }
                 }
+                tileRow(body, TextLoop.entries, { it == l.textLoop }, { it.label }, { k -> AnimTile(this, sampleText(l)) { it.textLoop = k; it.endMs = 2600 } }, 60f) { k ->
+                    l.textLoop = k; live(); hlOptions()
+                }
+                body.addView(hlBox)
+                hlOptions()
             }
         ))
         if (l.isCaption) buttonRow(root, tr("U dabaq dhammaan qoraal-hoosaadyada", "Apply to all captions") to {
@@ -1751,6 +1839,49 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     // ------------------------------------------------------------------ keyframes, split, order
+
+    // ------------------------------------------------------------------ select several layers
+
+    private var multiMode = false
+
+    private fun startMulti(first: Layer?) {
+        panel?.dismiss()
+        multiMode = true
+        MultiSelect.ids.clear()
+        first?.let { MultiSelect.ids.add(it.id) }
+        stage.multiMode = true
+        stage.selectedLayerId = first?.id
+        timeline.selection = first?.let { TimelineView.Sel.LayerSel(it.id) }
+        buildTools()
+        toast(tr("Taabo layer-ada aad rabto (mar kale taabo si aad uga saarto). Jiid si ay u wada dhaqaaqaan.",
+            "Tap the layers you want (tap again to remove). Drag to move them together."))
+    }
+
+    private fun endMulti() {
+        multiMode = false
+        MultiSelect.ids.clear()
+        stage.multiMode = false
+        setSelection(null)
+    }
+
+    override fun onMultiChanged() {
+        timeline.selection = stage.selectedLayerId?.let { TimelineView.Sel.LayerSel(it) }
+        timeline.invalidate()
+        buildTools()
+    }
+
+    /** Moves the picked layers so the group sits in the middle (keeps their spacing). */
+    private fun centerPicked(picked: List<Layer>, horizontal: Boolean) {
+        val poses = picked.map { LayerRenderer.basePose(it, timeMs) }
+        val mid = if (horizontal) (poses.minOf { it.cx } + poses.maxOf { it.cx }) / 2f else (poses.minOf { it.cy } + poses.maxOf { it.cy }) / 2f
+        val d = 0.5f - mid
+        for ((i, l) in picked.withIndex()) {
+            val p = poses[i]
+            if (horizontal) p.cx += d else p.cy += d
+            LayerRenderer.writePose(l, timeMs, p)
+        }
+        commit()
+    }
 
     private fun toggleKeyframe() {
         val l = selectedLayer() ?: return
@@ -2144,6 +2275,129 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     /** Noise reduction + voice enhance for a clip or an audio track. */
+    private val stopPreview = Runnable { if (engine.isPlaying) { engine.pause(); updatePlayButton() } }
+
+    /** Plays a few seconds so a change can be heard right away. */
+    private fun previewSound(from: Long) {
+        main.removeCallbacks(stopPreview)
+        timeMs = from.coerceIn(0, (project.durationMs - 1).coerceAtLeast(0)); timeline.timeMs = timeMs
+        engine.seekTo(timeMs); engine.play(); updatePlayButton()
+        main.postDelayed(stopPreview, 3500)
+    }
+
+    /** Voice changer: chipmunk, deep, robot, echo, radio… (tap = hear it). */
+    private fun showVoiceChanger(current: VoiceFx, startMs: Long, set: (VoiceFx) -> Unit) {
+        val (d, root) = Ui.sheet(this, tr("Beddel codka", "Voice changer")) { main.removeCallbacks(stopPreview); commit() }
+        root.addView(Ui.label(this, tr("Taabo cod si aad isla markiiba u maqasho.", "Tap a voice to hear it straight away.")))
+        val from = if (timeMs >= startMs) timeMs else startMs
+        val (sv, row) = Ui.hrow(this)
+        val chips = ArrayList<View>()
+        fun paint(sel: VoiceFx) = VoiceFx.entries.forEachIndexed { i, v ->
+            chips[i].background = if (v == sel) Ui.roundBg(0x2219D3C5, dp(14f).toFloat(), dp(2f), Ui.ACCENT) else Ui.roundBg(Ui.SURFACE2, dp(14f).toFloat())
+        }
+        for (v in VoiceFx.entries) {
+            val chip = Ui.iconChip(this, if (v == VoiceFx.NONE) R.drawable.ic_mic else R.drawable.ic_voice_change, v.label) {}
+            chip.setOnClickListener { set(v); paint(v); live(); previewSound(from) }
+            chips.add(chip)
+            row.addView(chip, LinearLayout.LayoutParams(dp(84f), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6f) })
+        }
+        paint(current)
+        root.addView(sv)
+        d.show()
+    }
+
+    // ------------------------------------------------------------------ text to speech
+
+    private var tts: TextToSpeech? = null
+    private var ttsReady = false
+
+    private fun showTts() {
+        val (d, root) = Ui.sheet(this, tr("Qoraal → cod (TTS)", "Text to speech")) { tts?.stop() }
+        val input = editText("", tr("Qor waxa la akhrinayo…", "Type what should be spoken…")) {}.apply { maxLines = 3 }
+        d.top.addView(input, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(4f) })
+        val status = Ui.label(this, tr("Codadka telefoonka waa la soo rarayaa…", "Loading the phone's voices…"))
+        val langs = listOf("so" to "Soomaali", "en" to "English", "ar" to "العربية", "sw" to "Kiswahili", "fr" to "Français", "tr" to "Türkçe")
+        var locale = Locale("so")
+        var rate = 1f; var pitch = 1f
+        var voice: Voice? = null
+        var asCaption = true
+        val voiceBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun refreshVoices() {
+            voiceBox.removeAllViews(); voice = null
+            val e = tts ?: return
+            if (!ttsReady) return
+            val ok = e.isLanguageAvailable(locale) >= TextToSpeech.LANG_AVAILABLE
+            status.text = if (ok) tr("Diyaar ✓ — dooro cod, kadib \"Dhageyso\".", "Ready ✓ — pick a voice, then \"Listen\".")
+            else tr("Telefoonkan kuma jiro cod luqaddan ah. Ku rakib app TTS ah oo leh luqaddan (Settings → Text-to-speech), ama isticmaal Cod-duub.",
+                "This phone has no voice for this language. Install a text-to-speech app that has it (Settings → Text-to-speech), or use Voiceover.")
+            val vs = runCatching { e.voices?.filter { it.locale.language == locale.language && !it.isNetworkConnectionRequired }
+                ?.sortedByDescending { it.quality }?.take(8) }.getOrNull().orEmpty()
+            if (vs.size > 1) {
+                voiceBox.addView(Ui.label(this, tr("Codka", "Voice")))
+                voiceBox.addView(Ui.choiceRow(this, vs.mapIndexed { i, v -> tr("Cod ${i + 1}", "Voice ${i + 1}") + if (v.name.contains("female", true)) " ♀" else if (v.name.contains("male", true)) " ♂" else "" }, 0) { voice = vs[it] })
+                voice = vs[0]
+            }
+        }
+        fun prepare(): TextToSpeech? {
+            val e = tts ?: return null
+            e.language = locale
+            voice?.let { runCatching { e.voice = it } }
+            e.setSpeechRate(rate); e.setPitch(pitch)
+            return e
+        }
+        root.addView(status)
+        root.addView(Ui.label(this, tr("Luqadda", "Language")))
+        root.addView(Ui.choiceRow(this, langs.map { it.second }, 0) { locale = Locale(langs[it].first); refreshVoices() })
+        root.addView(voiceBox)
+        root.addView(Ui.sliderRow(this, tr("Xawaare", "Speed"), 0.5f, 2f, 1f) { rate = it })
+        root.addView(Ui.sliderRow(this, tr("Heerka codka", "Pitch"), 0.5f, 2f, 1f) { pitch = it })
+        root.addView(Ui.choiceRow(this, listOf(tr("Qoraal-hoosaad: Haa", "Caption: on"), tr("Qoraal-hoosaad: Maya", "Caption: off")), 0) { asCaption = it == 0 })
+        buttonRow(root,
+            tr("▶ Dhageyso", "▶ Listen") to {
+                val txt = input.text.toString().trim()
+                if (txt.isEmpty()) toast(tr("Marka hore wax qor", "Type something first"))
+                else prepare()?.speak(txt, TextToSpeech.QUEUE_FLUSH, null, "preview")
+            },
+            tr("+ Ku dar", "+ Add") to {
+                val txt = input.text.toString().trim()
+                val e = prepare()
+                if (txt.isEmpty()) toast(tr("Marka hore wax qor", "Type something first"))
+                else if (e != null) {
+                    val dir = File(filesDir, "tts").apply { mkdirs() }
+                    val f = File(dir, "tts_${System.currentTimeMillis()}.wav")
+                    val id = "tts" + System.nanoTime()
+                    val at = timeMs
+                    val cap = asCaption
+                    e.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                        override fun onStart(utteranceId: String?) {}
+                        @Deprecated("old api") override fun onError(utteranceId: String?) { main.post { toast(tr("Codka lama samayn karin", "Couldn't make the voice")) } }
+                        override fun onDone(utteranceId: String?) {
+                            if (utteranceId != id) return
+                            val len = runCatching {
+                                val r = android.media.MediaMetadataRetriever(); r.setDataSource(f.absolutePath)
+                                val v = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLong(); r.release(); v
+                            }.getOrNull() ?: 2000L
+                            main.post {
+                                project.audios.add(AudioTrack(uri = Uri.fromFile(f).toString(), name = "TTS · " + txt.take(20), kind = AudioKind.VOICE,
+                                    startMs = at, durationMs = len, sourceDurationMs = len))
+                                if (cap && !photo) addCaptionText(txt, at, at + len)
+                                commit()
+                                toast(tr("Codka waa lagu daray ✓", "Voice added ✓"))
+                            }
+                        }
+                    })
+                    e.synthesizeToFile(txt, Bundle(), f, id)
+                    toast(tr("Codka waa la samaynayaa…", "Making the voice…"))
+                }
+            })
+        root.addView(Ui.label(this, tr("Fiiro: voice clone (codkaaga oo la koobiyeeyo) wuxuu u baahan yahay AI weyn oo server ah — telefoonka dhexdiisa si fiican uguma shaqeeyo, sidaas darteed lama darin.",
+            "Note: voice cloning needs a large AI model on a server — it can't run well inside the phone, so it isn't included.")))
+        d.show()
+        if (tts == null) tts = TextToSpeech(this) { st -> main.post { ttsReady = st == TextToSpeech.SUCCESS
+            if (!ttsReady) status.text = tr("Telefoonkan ma laha TTS engine.", "This phone has no text-to-speech engine.") else refreshVoices() } }
+        else refreshVoices()
+    }
+
     private fun showVoiceFx(denoise: Float, enhance: Boolean, set: (Float, Boolean) -> Unit) {
         var dn = denoise; var en = enhance
         val (d, root) = Ui.sheet(this, tr("Hagaaji codka", "Voice clean-up")) { commit() }
@@ -2448,6 +2702,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             R.drawable.ic_music to tr("Muusik", "Music"),
             R.drawable.ic_sfx to tr("Dhawaaqyo", "Sound FX"),
             R.drawable.ic_mic to tr("Cod-duub", "Voiceover"),
+            R.drawable.ic_tts to tr("Qoraal → cod", "Text to speech"),
             R.drawable.ic_waveform to tr("Ka soo saar", "Extract"),
             R.drawable.ic_sound to tr("Fayl cod", "Audio file"))) { k ->
             d.dismiss()
@@ -2456,7 +2711,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 1 -> showSfx()
                 2 -> if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) showVoiceover()
                      else askMic.launch(Manifest.permission.RECORD_AUDIO)
-                3 -> { addAudioKind = AudioKind.EXTRACTED; pickAudio.launch(arrayOf("video/*")) }
+                3 -> showTts()
+                4 -> { addAudioKind = AudioKind.EXTRACTED; pickAudio.launch(arrayOf("video/*")) }
                 else -> { addAudioKind = AudioKind.SOUND; pickAudio.launch(arrayOf("audio/*")) }
             }
         }

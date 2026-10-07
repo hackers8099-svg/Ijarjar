@@ -49,6 +49,8 @@ class StageView(context: Context) : FrameLayout(context) {
 
     interface Listener {
         fun onLayerSelected(layer: Layer?)
+        /** "Select" mode: the set of picked layers changed. */
+        fun onMultiChanged() {}
         fun onLayerTransforming()
         fun onLayerTransformed()
     }
@@ -65,6 +67,8 @@ class StageView(context: Context) : FrameLayout(context) {
     var project: Project? = null
     var timeMs: Long = 0
     var selectedLayerId: String? = null
+    /** "Select" mode: taps add / remove layers instead of switching to one. */
+    var multiMode = false
         set(v) { field = v; overlay.invalidate() }
     var canvasTarget: CanvasTarget? = null
     var listener: Listener? = null
@@ -411,6 +415,7 @@ class StageView(context: Context) : FrameLayout(context) {
         private var active: Layer? = null
         private var movingTarget = false
         private var handle = -1
+        private var multiTap: String? = null
         private var lastX = 0f
         private var lastY = 0f
         private var lastSpan = 0f
@@ -481,6 +486,20 @@ class StageView(context: Context) : FrameLayout(context) {
                             it.isActive(timeMs) && LayerRenderer.hitTest(it, timeMs, w, h, e.x, e.y, dp(12f))
                         }
                         if (cur != null && cur.isActive(timeMs) && LayerRenderer.hitBox(cur, timeMs, w, h, e.x, e.y, dp(16f))) cur else hit
+                    }
+                    if (multiMode) {
+                        multiTap = null
+                        if (target != null) {
+                            if (target.id in so.ijarjar.app.model.MultiSelect.ids) { if (handle < 0) multiTap = target.id }
+                            else so.ijarjar.app.model.MultiSelect.ids.add(target.id)
+                            selectedLayerId = target.id
+                            listener?.onMultiChanged()
+                            for (g in p.linkedWith(target)) poses[g.id] = LayerRenderer.basePose(g, timeMs)
+                        }
+                        active = target; movingTarget = false
+                        lastX = e.x; lastY = e.y; pointerMode = 1
+                        invalidate()
+                        return true
                     }
                     active = target
                     movingTarget = target == null && canvasTarget != null && selectedLayerId == null
@@ -557,6 +576,14 @@ class StageView(context: Context) : FrameLayout(context) {
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     showVGuide = false; showHGuide = false
                     if (moved && (active != null || movingTarget)) listener?.onLayerTransformed()
+                    val tapped = multiTap
+                    if (multiMode && !moved && tapped != null && e.actionMasked == MotionEvent.ACTION_UP) {
+                        // tapping a picked layer again takes it out
+                        so.ijarjar.app.model.MultiSelect.ids.remove(tapped)
+                        if (selectedLayerId == tapped) selectedLayerId = so.ijarjar.app.model.MultiSelect.ids.lastOrNull()
+                        listener?.onMultiChanged()
+                    }
+                    multiTap = null
                     active = null; movingTarget = false; pointerMode = 0; handle = -1
                     invalidate()
                 }

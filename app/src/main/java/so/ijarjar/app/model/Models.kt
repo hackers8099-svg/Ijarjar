@@ -322,6 +322,7 @@ class Clip(
     // voice clean-up
     var denoise: Float = 0f,
     var enhanceVoice: Boolean = false,
+    var voice: VoiceFx = VoiceFx.NONE,
     // stabilisation: correction (x, y) per 100 ms of source, as a fraction of the frame
     var stab: Boolean = false,
     var stabPath: MutableList<Float> = mutableListOf(),
@@ -421,6 +422,9 @@ class Layer(
     var textOut: TextAnim = TextAnim.NONE,
     var textLoop: TextLoop = TextLoop.NONE,
     var highlightColor: Int = 0xFFFFE600.toInt(),
+    var hlRound: Float = 0.5f,          // word highlight box: 0 = square … 1 = pill
+    var hlAnim: Int = 0,                // 0 pop, 1 slide from word to word, 2 fade, 3 grow from left, 4 none
+    var hlTextColor: Int = 0,           // text colour on the highlighted word (0 = keep)
     // chroma key (green screen), After Effects Keylight style
     var chroma: Boolean = false,
     var chromaColor: Int = 0xFF00FF00.toInt(),
@@ -505,7 +509,8 @@ class AudioTrack(
     var volume: Float = 1f,
     var fromVideo: Boolean = false,
     var denoise: Float = 0f,
-    var enhanceVoice: Boolean = false
+    var enhanceVoice: Boolean = false,
+    var voice: VoiceFx = VoiceFx.NONE
 ) {
     val endMs: Long get() = startMs + durationMs
     fun isActive(t: Long) = t >= startMs && t < endMs
@@ -571,7 +576,36 @@ class Project(
     }
 
     fun linkedWith(layer: Layer): List<Layer> {
+        val sel = MultiSelect.ids
+        if (sel.size > 1 && layer.id in sel) {
+            val groups = layers.filter { it.id in sel }.mapNotNull { it.linkGroup }.toSet()
+            return layers.filter { it.id in sel || (it.linkGroup != null && it.linkGroup in groups) }
+        }
         val g = layer.linkGroup ?: return listOf(layer)
         return layers.filter { it.linkGroup == g }
     }
+}
+
+/** Layers picked together with "Select" (not saved): they move, scale and rotate as one. */
+object MultiSelect {
+    val ids = LinkedHashSet<String>()
+}
+
+/** Voice changer: [pitch] is applied by the player / Sonic, [mode] by AudioFx. */
+enum class VoiceFx(val so: String, val en: String, val pitch: Float, val mode: Int) {
+    NONE("Caadi", "Original", 1f, 0),
+    CHIPMUNK("Carruur", "Chipmunk", 1.65f, 0),
+    HELIUM("Helium", "Helium", 1.3f, 0),
+    FEMALE("Dumar", "Higher", 1.18f, 0),
+    MALE("Rag", "Lower", 0.85f, 0),
+    DEEP("Qoto-dheer", "Deep", 0.72f, 0),
+    MONSTER("Bahal", "Monster", 0.55f, 6),
+    ROBOT("Robot", "Robot", 1f, 1),
+    ALIEN("Shisheeye", "Alien", 1.15f, 7),
+    ECHO("Dhawaaq celin", "Echo", 1f, 2),
+    CAVE("God (reverb)", "Cave", 1f, 3),
+    RADIO("Raadiyo", "Radio", 1f, 4),
+    PHONE("Telefoon", "Telephone", 1f, 5),
+    MEGAPHONE("Sameecad", "Megaphone", 1f, 8);
+    val label: String get() = so.ijarjar.app.L.t(so, en)
 }
