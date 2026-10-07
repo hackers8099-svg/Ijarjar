@@ -67,7 +67,7 @@ dependencies {
     implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
     implementation("com.airbnb.android:lottie:6.4.1")
-    val filament = "1.77.2"
+    val filament = "1.51.0"
     implementation("com.google.android.filament:filament-android:$filament")
     implementation("com.google.android.filament:gltfio-android:$filament")
 }

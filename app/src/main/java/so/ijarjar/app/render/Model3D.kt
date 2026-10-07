@@ -59,7 +59,7 @@ object Model3D {
             val e = Engine.create()
             engine = e
             renderer = e.createRenderer().also {
-                it.clearOptions = Renderer.ClearOptions().apply { clear = true; setClearColor(0.0, 0.0, 0.0, 0.0) }
+                it.clearOptions = Renderer.ClearOptions().apply { clear = true; clearColor = floatArrayOf(0f, 0f, 0f, 0f) }
             }
             scene = e.createScene()
             camera = e.createCamera(EntityManager.get().create()).also { it.setExposure(16f, 1f / 125f, 100f) }
@@ -133,7 +133,7 @@ object Model3D {
         val tm = e.transformManager
         tm.setTransform(tm.getInstance(a.root), modelMatrix(rx, ry))
         val pixels = ByteBuffer.allocateDirect(w * h * 4)
-        if (!r.beginFrame(swap!!, 0L)) { r.endFrame() }
+        if (!r.beginFrame(swap!!, 0L)) return null
         r.render(v)
         r.readPixels(0, 0, w, h, Texture.PixelBufferDescriptor(pixels, Texture.Format.RGBA, Texture.Type.UBYTE))
         r.endFrame()
