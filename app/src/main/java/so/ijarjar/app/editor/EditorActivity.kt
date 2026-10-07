@@ -665,7 +665,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     }
                     if (l.kind == LayerKind.IMAGE) t(R.drawable.ic_ai, "AI") { showAiForLayer(l) }
                     group("3D")
-                    t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
+                    t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { if (l.kind == LayerKind.MODEL3D) showKeyframes(l) else show3D(l) }
                     if (l.kind == LayerKind.MODEL3D) {
                         t(R.drawable.ic_image_add, tr("Waxa ku jira", "Contents"), l.modelImages.isNotEmpty()) { showGlbContents(l) }
                         t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
@@ -2937,7 +2937,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
         Ui.tabs(this, root, listOf(
             tr("Qiimaha", "Values") to { body: LinearLayout ->
-                refreshBody = { body.removeAllViews(); keyDials(body, l) { refreshNav() } }
+                fun blurRow() = body.addView(Ui.choiceRow(this, listOf("Motion blur: " + tr("Maya", "Off"), "Motion blur: " + tr("Haa", "On")), if (l.motionBlur) 1 else 0) { l.motionBlur = it == 1; live() })
+                refreshBody = { body.removeAllViews(); blurRow(); keyDials(body, l) { refreshNav() } }
+                blurRow()
                 keyDials(body, l) { refreshNav() }
             },
             tr("Garaaf", "Graph") to { body: LinearLayout ->
