@@ -328,9 +328,7 @@ class StageView(context: Context) : FrameLayout(context) {
             return tv.getBitmap(fc!!)
         }
 
-        override fun onDraw(canvas: Canvas) {
-            val p = project ?: return
-            val w = width; val h = height
+        private fun drawScene(canvas: Canvas, p: Project, w: Int, h: Int) {
             if (p.isPhoto) BackgroundRenderer.draw(context, canvas, p, w, h, 1600)
             for (l in LayerRenderer.drawOrder(p.layers)) {
                 if (!l.isActive(timeMs)) continue
@@ -343,6 +341,59 @@ class StageView(context: Context) : FrameLayout(context) {
                 val live = if (l.kind == LayerKind.MODEL3D && l.videoSource() != null) videoFrame(l, w) else null
                 LayerRenderer.draw(context, canvas, l, timeMs, w, h, live)
             }
+        }
+
+        // ---------------------------------------------------------------- magnifier while drawing (iOS-style loupe)
+        private var loupeX = -1f
+        private var loupeY = -1f
+        private var loupeBack: Bitmap? = null
+        private val loupeRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = dp(2.5f); setShadowLayer(dp(6f), 0f, dp(2f), 0x88000000.toInt()) }
+        private val loupeDot = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(1.5f) }
+        private val loupeBg = Paint(Paint.FILTER_BITMAP_FLAG)
+
+        /** The picture under the layers (main video frame or photo), grabbed once when the finger goes down. */
+        private fun grabBackdrop(): Bitmap? = runCatching {
+            if (mainTexture.isAvailable && mainTexture.visibility == View.VISIBLE && mainTexture.width > 16) mainTexture.getBitmap(mainTexture.width / 2, mainTexture.height / 2)
+            else (imageView.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+        }.getOrNull()
+
+        private fun drawLoupe(canvas: Canvas, p: Project, w: Int, h: Int) {
+            if (loupeX < 0) return
+            val r = dp(62f)
+            val zoom = 2.2f
+            // sits in a top corner, away from the finger
+            val leftSide = !(loupeX < w * 0.5f && loupeY < r * 2.6f)
+            val cx = if (leftSide) dp(14f) + r else w - dp(14f) - r
+            val cy = dp(14f) + r
+            canvas.drawCircle(cx, cy, r, loupeRing)
+            canvas.save()
+            val clip = Path().apply { addCircle(cx, cy, r, Path.Direction.CW) }
+            canvas.clipPath(clip)
+            canvas.drawColor(0xFF1E1E24.toInt())
+            canvas.translate(cx, cy); canvas.scale(zoom, zoom); canvas.translate(-loupeX, -loupeY)
+            loupeBack?.let { b ->
+                val tv = mainTexture
+                val dst = if (tv.visibility == View.VISIBLE && tv.width > 16) RectF(tv.left.toFloat(), tv.top.toFloat(), tv.right.toFloat(), tv.bottom.toFloat())
+                    else imageView.let { iv ->
+                        val m = android.graphics.Matrix(iv.imageMatrix); val rr = RectF(0f, 0f, b.width.toFloat(), b.height.toFloat()); m.mapRect(rr)
+                        rr.offset(iv.left.toFloat() + iv.paddingLeft, iv.top.toFloat() + iv.paddingTop); rr }
+                canvas.drawBitmap(b, null, dst, loupeBg)
+            }
+            drawScene(canvas, p, w, h)
+            canvas.restore()
+            // brush size + centre
+            val b = brush
+            val rad = ((b?.width ?: 0.01f) * w / 2f * zoom).coerceAtLeast(dp(3f))
+            loupeDot.color = 0xAA000000.toInt(); canvas.drawCircle(cx, cy, rad + dp(1f), loupeDot)
+            loupeDot.color = Color.WHITE; canvas.drawCircle(cx, cy, rad, loupeDot)
+            canvas.drawCircle(cx, cy, r, loupeRing)
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            val p = project ?: return
+            val w = width; val h = height
+            drawScene(canvas, p, w, h)
+            if (brush != null) drawLoupe(canvas, p, w, h)
             if (showGrid) {
                 gridPaint.strokeWidth = dp(1f)
                 for (k in 1..2) {
@@ -638,12 +689,14 @@ class StageView(context: Context) : FrameLayout(context) {
                 val loc = LayerRenderer.toLocal(l, timeMs, w, h, e.x, e.y) ?: return true
                 when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        loupeBack = grabBackdrop()
+                        loupeX = e.x; loupeY = e.y
                         val s = Stroke(color = b.color, width = b.width, eraser = b.eraser, type = b.type)
                         s.points.add(loc[0]); s.points.add(loc[1])
                         l.strokes.add(s); stroke = s
                     }
-                    MotionEvent.ACTION_MOVE -> stroke?.let { it.points.add(loc[0]); it.points.add(loc[1]) }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { stroke = null; listener?.onLayerTransformed() }
+                    MotionEvent.ACTION_MOVE -> { loupeX = e.x; loupeY = e.y; stroke?.let { it.points.add(loc[0]); it.points.add(loc[1]) } }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { stroke = null; loupeX = -1f; loupeBack = null; listener?.onLayerTransformed() }
                 }
                 invalidate()
                 return true

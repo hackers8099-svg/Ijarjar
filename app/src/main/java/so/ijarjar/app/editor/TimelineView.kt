@@ -530,6 +530,8 @@ class TimelineView(context: Context) : View(context) {
     private val scroller = android.widget.OverScroller(context, android.view.animation.DecelerateInterpolator(1.6f))
     private var velocity: android.view.VelocityTracker? = null
     private var flingKind = Drag.NONE
+    private var pinching = false
+    private var downTimeMs = 0L
 
     private fun startFling(p: Project) {
         val vt = velocity ?: return
@@ -566,11 +568,21 @@ class TimelineView(context: Context) : View(context) {
         val p = project ?: return false
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             scroller.forceFinished(true); flingKind = Drag.NONE
+            pinching = false; downTimeMs = timeMs
             velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
         }
         velocity?.addMovement(e)
         scaleDetector.onTouchEvent(e)
-        if (e.pointerCount > 1) { drag = Drag.NONE; return true }
+        if (e.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            // a pinch zooms around the playhead: undo any scrub the first finger did, so the line stays where you put it
+            if (!pinching && drag == Drag.SCRUB && timeMs != downTimeMs) { timeMs = downTimeMs; listener?.onScrub(timeMs) }
+            pinching = true
+        }
+        if (pinching || e.pointerCount > 1) {
+            drag = Drag.NONE
+            if (e.actionMasked == MotionEvent.ACTION_UP) { pinching = false; velocity?.recycle(); velocity = null }
+            return true
+        }
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
