@@ -6,20 +6,28 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import androidx.core.content.ContextCompat
+import so.ijarjar.app.L
+import so.ijarjar.app.R
 import so.ijarjar.app.media.MediaUtils
+import so.ijarjar.app.model.AudioKind
+import so.ijarjar.app.model.AudioTrack
 import so.ijarjar.app.model.Clip
 import so.ijarjar.app.model.Layer
 import so.ijarjar.app.model.LayerKind
 import so.ijarjar.app.model.MediaKind
 import so.ijarjar.app.model.Project
+import so.ijarjar.app.model.TransitionKind
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
@@ -27,19 +35,20 @@ import kotlin.math.min
 
 /**
  * CapCut style timeline: the playhead stays in the middle and the tracks scroll under it.
- * Rows: ruler, main track (clips), music, and one row per layer.
+ * Rows: ruler, main track (clips + transition buttons), audio tracks, then one row per layer.
  */
 class TimelineView(context: Context) : View(context) {
 
     sealed class Sel {
         data class ClipSel(val index: Int) : Sel()
         data class LayerSel(val id: String) : Sel()
-        object MusicSel : Sel()
+        data class AudioSel(val id: String) : Sel()
     }
 
     interface Listener {
         fun onScrub(timeMs: Long)
         fun onSelect(sel: Sel?)
+        fun onTransitionTap(clipIndex: Int)
         fun onTimelineEditing()
         fun onTimelineEdited()
     }
@@ -52,12 +61,12 @@ class TimelineView(context: Context) : View(context) {
         set(v) { field = v; invalidate() }
     var listener: Listener? = null
 
-    private var pxPerMs = dp(60f) / 1000f // 60dp per second
+    private var pxPerMs = dp(60f) / 1000f
     private var vScroll = 0f
 
     private val rulerH = dp(22f)
-    private val clipH = dp(56f)
-    private val musicH = dp(26f)
+    private val clipH = dp(54f)
+    private val audioH = dp(26f)
     private val layerH = dp(26f)
     private val gap = dp(6f)
     private val handleW = dp(14f)
@@ -69,22 +78,35 @@ class TimelineView(context: Context) : View(context) {
     private val thumbs = HashMap<String, Bitmap?>()
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())
+    private val icons = HashMap<Int, Drawable?>()
 
     private val linkColors = intArrayOf(0xFF19D3C5.toInt(), 0xFFFFB020.toInt(), 0xFF8B7CFF.toInt(), 0xFF4CD964.toInt(), 0xFFFF6B6B.toInt())
 
     private fun dp(v: Float) = v * resources.displayMetrics.density
 
+    private fun icon(res: Int): Drawable? = icons.getOrPut(res) { ContextCompat.getDrawable(context, res)?.mutate() }
+
+    private fun drawIcon(canvas: Canvas, res: Int, x: Float, cy: Float, size: Float, color: Int = Color.WHITE) {
+        val d = icon(res) ?: return
+        d.setTint(color)
+        d.setBounds(x.toInt(), (cy - size / 2).toInt(), (x + size).toInt(), (cy + size / 2).toInt())
+        d.draw(canvas)
+    }
+
     private fun xOf(t: Long) = width / 2f + (t - timeMs) * pxPerMs
     private fun tOf(x: Float) = timeMs + ((x - width / 2f) / pxPerMs).toLong()
 
     private fun clipTop() = rulerH + gap - vScroll
-    private fun musicTop() = clipTop() + clipH + gap
-    private fun layersTop() = musicTop() + musicH + gap
+    private fun audioTop(i: Int) = clipTop() + clipH + gap + i * (audioH + gap * 0.6f)
+    private fun layersTop(): Float {
+        val n = max(1, project?.audios?.size ?: 0)
+        return audioTop(n) + gap * 0.4f
+    }
     private fun layerTop(i: Int) = layersTop() + i * (layerH + gap * 0.6f)
 
     private fun contentHeight(): Float {
         val n = project?.layers?.size ?: 0
-        return rulerH + gap + clipH + gap + musicH + gap + n * (layerH + gap * 0.6f) + gap
+        return layerTop(n) + vScroll + gap
     }
 
     // ------------------------------------------------------------------ drawing
@@ -92,18 +114,17 @@ class TimelineView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val p = project ?: return
         canvas.drawColor(0xFF121216.toInt())
-        drawRuler(canvas, p)
         drawClips(canvas, p)
-        drawMusic(canvas, p)
+        drawAudio(canvas, p)
         drawLayers(canvas, p)
-        // playhead
+        drawRuler(canvas)
         paint.color = Color.WHITE
         paint.strokeWidth = dp(2f)
         canvas.drawLine(width / 2f, 0f, width / 2f, height.toFloat(), paint)
         canvas.drawCircle(width / 2f, dp(4f), dp(4f), paint)
     }
 
-    private fun drawRuler(canvas: Canvas, p: Project) {
+    private fun drawRuler(canvas: Canvas) {
         paint.color = 0xFF121216.toInt()
         canvas.drawRect(0f, 0f, width.toFloat(), rulerH, paint)
         val stepMs = when {
@@ -138,18 +159,33 @@ class TimelineView(context: Context) : View(context) {
             canvas.drawRect(r, paint)
             drawThumbs(canvas, c, r)
             canvas.restore()
-            // speed / volume badges
-            val badges = buildString {
-                if (c.kind == MediaKind.VIDEO && c.speed != 1f) append("${trim(c.speed)}x ")
-                if (c.volume == 0f) append("🔇 ")
-                if (!c.adjust.isIdentity()) append("🎨")
+            var bx = r.left + dp(4f)
+            val by = r.bottom - dp(10f)
+            if (c.kind == MediaKind.VIDEO && c.speed != 1f) {
+                drawIcon(canvas, R.drawable.ic_speed, bx, by, dp(13f)); bx += dp(14f)
+                canvas.drawText("${trim(c.speed)}x", bx, by + dp(4f), labelPaint); bx += dp(28f)
             }
-            if (badges.isNotEmpty()) canvas.drawText(badges, r.left + dp(4f), r.bottom - dp(5f), labelPaint)
-            val selected = (selection as? Sel.ClipSel)?.index == i
-            if (selected) drawSelection(canvas, r, 0xFFFFFFFF.toInt())
+            if (c.volume == 0f) { drawIcon(canvas, R.drawable.ic_mute, bx, by, dp(13f)); bx += dp(16f) }
+            if (!c.adjust.isIdentity()) { drawIcon(canvas, R.drawable.ic_filter, bx, by, dp(13f)); bx += dp(16f) }
+            if (c.tScale != 1f || c.tRot != 0f || c.tX != 0f || c.tY != 0f || c.mirror) drawIcon(canvas, R.drawable.ic_canvas, bx, by, dp(13f))
+            if ((selection as? Sel.ClipSel)?.index == i) drawSelection(canvas, r, Color.WHITE)
+        }
+        // transition buttons between clips
+        var acc = 0L
+        for ((i, c) in p.clips.withIndex()) {
+            if (i > 0) {
+                val x = xOf(acc)
+                if (x > -dp(20f) && x < width + dp(20f)) {
+                    val r = RectF(x - dp(10f), top + clipH / 2 - dp(10f), x + dp(10f), top + clipH / 2 + dp(10f))
+                    paint.color = if (c.transition == TransitionKind.NONE) Color.WHITE else 0xFF19D3C5.toInt()
+                    canvas.drawRoundRect(r, dp(4f), dp(4f), paint)
+                    drawIcon(canvas, R.drawable.ic_transition, r.left + dp(3f), r.centerY(), dp(14f), Color.BLACK)
+                }
+            }
+            acc += c.outDurationMs
         }
         if (p.clips.isEmpty()) {
-            canvas.drawText("Riix ＋ si aad muuqaal ugu darto", width / 2f + dp(10f), top + clipH / 2f, labelPaint)
+            canvas.drawText(L.t("Riix ＋ si aad muuqaal ugu darto", "Tap ＋ to add a video"), width / 2f + dp(10f), top + clipH / 2f, labelPaint)
         }
     }
 
@@ -191,32 +227,69 @@ class TimelineView(context: Context) : View(context) {
         }
     }
 
-    private fun drawMusic(canvas: Canvas, p: Project) {
-        val top = musicTop()
-        val m = p.music
-        if (m == null) {
-            canvas.drawText("♪  Muusik ma jiro", xOf(0) + dp(6f), top + musicH * 0.65f, textPaint)
+    private fun audioIcon(a: AudioTrack) = when (a.kind) {
+        AudioKind.MUSIC -> R.drawable.ic_music
+        AudioKind.VOICE -> R.drawable.ic_mic
+        AudioKind.EXTRACTED -> R.drawable.ic_waveform
+        AudioKind.SOUND -> R.drawable.ic_sound
+    }
+
+    private fun drawAudio(canvas: Canvas, p: Project) {
+        if (p.audios.isEmpty()) {
+            val top = audioTop(0)
+            drawIcon(canvas, R.drawable.ic_music, xOf(0) + dp(6f), top + audioH / 2, dp(14f), 0xFF9A9AA5.toInt())
+            canvas.drawText(L.t("Muusik ma jiro", "No audio"), xOf(0) + dp(24f), top + audioH * 0.65f, textPaint)
             return
         }
-        val len = min(p.durationMs, (m.sourceDurationMs - m.trimStartMs).coerceAtLeast(0))
-        val r = RectF(xOf(0), top, xOf(len), top + musicH)
-        paint.color = 0xFF1F5E3A.toInt()
-        canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
-        canvas.save(); canvas.clipRect(r)
-        canvas.drawText("♪ " + m.name, max(r.left, 0f) + dp(6f), top + musicH * 0.68f, labelPaint)
-        canvas.restore()
-        if (selection is Sel.MusicSel) drawSelection(canvas, r, Color.WHITE, handles = false)
+        for ((i, a) in p.audios.withIndex()) {
+            val top = audioTop(i)
+            val r = RectF(xOf(a.startMs), top, xOf(a.endMs), top + audioH)
+            paint.color = when (a.kind) {
+                AudioKind.MUSIC -> 0xFF1F5E3A.toInt()
+                AudioKind.VOICE -> 0xFF5E3A1F.toInt()
+                AudioKind.EXTRACTED -> 0xFF1F4A5E.toInt()
+                AudioKind.SOUND -> 0xFF4A1F5E.toInt()
+            }
+            canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
+            // fake waveform
+            paint.color = 0x55FFFFFF
+            val step = dp(3f)
+            var x = max(r.left, 0f)
+            while (x < min(r.right, width.toFloat())) {
+                val hh = (0.25f + 0.6f * abs(Math.sin(((tOf(x) - a.startMs) / 97.0) + a.id.hashCode())).toFloat()) * audioH / 2
+                canvas.drawRect(x, r.centerY() - hh, x + dp(1.5f), r.centerY() + hh, paint)
+                x += step
+            }
+            canvas.save(); canvas.clipRect(r)
+            val lx = max(r.left, 0f) + dp(4f)
+            drawIcon(canvas, audioIcon(a), lx, r.centerY(), dp(14f))
+            canvas.drawText(a.name, lx + dp(18f), top + audioH * 0.68f, labelPaint)
+            canvas.restore()
+            if ((selection as? Sel.AudioSel)?.id == a.id) drawSelection(canvas, r, Color.WHITE)
+        }
     }
 
     private fun layerColor(l: Layer) = when (l.kind) {
-        LayerKind.TEXT -> 0xFF7A4BD6.toInt()
+        LayerKind.TEXT -> if (l.isCaption) 0xFF4B6BD6.toInt() else 0xFF7A4BD6.toInt()
         LayerKind.STICKER -> 0xFFC9822B.toInt()
         LayerKind.IMAGE -> 0xFF2B7BC9.toInt()
         LayerKind.VIDEO -> 0xFFB8336A.toInt()
+        LayerKind.EFFECT -> 0xFF8A6D1E.toInt()
+        LayerKind.SHAPE -> 0xFF2E8B57.toInt()
+    }
+
+    private fun layerIcon(l: Layer) = when (l.kind) {
+        LayerKind.TEXT -> R.drawable.ic_text
+        LayerKind.STICKER -> R.drawable.ic_sticker
+        LayerKind.IMAGE -> R.drawable.ic_image_add
+        LayerKind.VIDEO -> R.drawable.ic_overlay
+        LayerKind.EFFECT -> R.drawable.ic_effects
+        LayerKind.SHAPE -> R.drawable.ic_shape
     }
 
     private fun drawLayers(canvas: Canvas, p: Project) {
         val groups = p.layers.mapNotNull { it.linkGroup }.distinct()
+        val selLayer = (selection as? Sel.LayerSel)?.let { s -> p.layers.firstOrNull { it.id == s.id } }
         for ((i, l) in p.layers.withIndex()) {
             val top = layerTop(i)
             if (top > height || top + layerH < rulerH) continue
@@ -224,20 +297,27 @@ class TimelineView(context: Context) : View(context) {
             paint.color = layerColor(l)
             canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
             val g = l.linkGroup
-            var labelX = max(r.left, 0f) + dp(6f)
+            var labelX = max(r.left, 0f) + dp(5f)
+            canvas.save(); canvas.clipRect(r)
             if (g != null) {
                 paint.color = linkColors[groups.indexOf(g) % linkColors.size]
                 canvas.drawRect(r.left, r.top, r.left + dp(4f), r.bottom, paint)
-                canvas.save(); canvas.clipRect(r)
-                canvas.drawText("🔗", labelX, top + layerH * 0.7f, labelPaint)
-                canvas.restore()
-                labelX += dp(18f)
+                drawIcon(canvas, R.drawable.ic_link, labelX, r.centerY(), dp(13f), paint.color)
+                labelX += dp(16f)
             }
-            canvas.save(); canvas.clipRect(r)
-            canvas.drawText(layerLabel(l), labelX, top + layerH * 0.7f, labelPaint)
+            drawIcon(canvas, layerIcon(l), labelX, r.centerY(), dp(13f))
+            labelX += dp(17f)
+            canvas.drawText(layerLabel(l), labelX, top + layerH * 0.68f, labelPaint)
+            // keyframe diamonds
+            paint.color = 0xFFFFCC00.toInt()
+            for (k in l.keyframes) {
+                val x = xOf(l.startMs + k.t); val cy = r.bottom - dp(5f); val s = dp(4f)
+                val d = Path().apply { moveTo(x, cy - s); lineTo(x + s, cy); lineTo(x, cy + s); lineTo(x - s, cy); close() }
+                canvas.drawPath(d, paint)
+            }
             canvas.restore()
-            if ((selection as? Sel.LayerSel)?.id == l.id) drawSelection(canvas, r, Color.WHITE)
-            else if (g != null && (selection as? Sel.LayerSel)?.let { s -> p.layers.firstOrNull { it.id == s.id }?.linkGroup } == g) {
+            if (selLayer?.id == l.id) drawSelection(canvas, r, Color.WHITE)
+            else if (g != null && selLayer?.linkGroup == g) {
                 paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1.5f); paint.color = 0xFF19D3C5.toInt()
                 canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
                 paint.style = Paint.Style.FILL
@@ -246,10 +326,12 @@ class TimelineView(context: Context) : View(context) {
     }
 
     fun layerLabel(l: Layer): String = when (l.kind) {
-        LayerKind.TEXT -> "T  " + l.text.replace("\n", " ")
+        LayerKind.TEXT -> l.text.replace("\n", " ")
         LayerKind.STICKER -> l.text
-        LayerKind.IMAGE -> "🖼 " + l.name
-        LayerKind.VIDEO -> "🎬 " + l.name
+        LayerKind.IMAGE -> l.name
+        LayerKind.VIDEO -> l.name
+        LayerKind.EFFECT -> l.effect.label
+        LayerKind.SHAPE -> l.shape.label
     }
 
     private fun drawSelection(canvas: Canvas, r: RectF, color: Int, handles: Boolean = true) {
@@ -269,7 +351,7 @@ class TimelineView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ touch
 
-    private enum class Drag { NONE, SCRUB, VSCROLL, CLIP_L, CLIP_R, LAYER_L, LAYER_R, LAYER_MOVE }
+    private enum class Drag { NONE, SCRUB, VSCROLL, CLIP_L, CLIP_R, LAYER_L, LAYER_R, LAYER_MOVE, AUDIO_L, AUDIO_R, AUDIO_MOVE }
 
     private var drag = Drag.NONE
     private var downX = 0f
@@ -277,10 +359,10 @@ class TimelineView(context: Context) : View(context) {
     private var lastX = 0f
     private var lastY = 0f
     private var decided = false
-    private var downTime = 0L
     private var pendingDrag = Drag.NONE
     private var origStart = 0L
     private var origEnd = 0L
+    private var origTrim = 0L
     private var origTimes: List<Pair<Long, Long>> = emptyList()
 
     private val scaleDetector = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -300,7 +382,7 @@ class TimelineView(context: Context) : View(context) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
-                downX = e.x; downY = e.y; lastX = e.x; lastY = e.y; decided = false; downTime = e.eventTime
+                downX = e.x; downY = e.y; lastX = e.x; lastY = e.y; decided = false
                 pendingDrag = handleAt(p, e.x, e.y)
                 drag = Drag.NONE
             }
@@ -341,17 +423,23 @@ class TimelineView(context: Context) : View(context) {
     }
 
     private fun selectedLayer(p: Project): Layer? = (selection as? Sel.LayerSel)?.let { s -> p.layers.firstOrNull { it.id == s.id } }
+    private fun selectedAudio(p: Project): AudioTrack? = (selection as? Sel.AudioSel)?.let { s -> p.audios.firstOrNull { it.id == s.id } }
 
-    /** Which handle (if any) was touched on the selected item. */
+    private fun edgeDrag(x: Float, x0: Float, x1: Float, left: Drag, right: Drag, body: Drag): Drag {
+        if (x in (x0 - handleW - dp(8f))..(x0 + dp(6f))) return left
+        if (x in (x1 - dp(6f))..(x1 + handleW + dp(8f))) return right
+        if (body != Drag.NONE && x in x0..x1) return body
+        return Drag.NONE
+    }
+
     private fun handleAt(p: Project, x: Float, y: Float): Drag {
         when (val s = selection) {
             is Sel.ClipSel -> {
                 val c = p.clips.getOrNull(s.index) ?: return Drag.NONE
                 val top = clipTop()
                 if (y < top || y > top + clipH) return Drag.NONE
-                val x0 = xOf(p.clipStartMs(s.index)); val x1 = xOf(p.clipStartMs(s.index) + c.outDurationMs)
-                if (x in (x0 - handleW - dp(8f))..(x0 + dp(6f))) return Drag.CLIP_L
-                if (x in (x1 - dp(6f))..(x1 + handleW + dp(8f))) return Drag.CLIP_R
+                val st = p.clipStartMs(s.index)
+                return edgeDrag(x, xOf(st), xOf(st + c.outDurationMs), Drag.CLIP_L, Drag.CLIP_R, Drag.NONE)
             }
             is Sel.LayerSel -> {
                 val idx = p.layers.indexOfFirst { it.id == s.id }
@@ -359,10 +447,15 @@ class TimelineView(context: Context) : View(context) {
                 val l = p.layers[idx]
                 val top = layerTop(idx)
                 if (y < top - dp(6f) || y > top + layerH + dp(6f)) return Drag.NONE
-                val x0 = xOf(l.startMs); val x1 = xOf(l.endMs)
-                if (x in (x0 - handleW - dp(8f))..(x0 + dp(6f))) return Drag.LAYER_L
-                if (x in (x1 - dp(6f))..(x1 + handleW + dp(8f))) return Drag.LAYER_R
-                if (x in x0..x1) return Drag.LAYER_MOVE
+                return edgeDrag(x, xOf(l.startMs), xOf(l.endMs), Drag.LAYER_L, Drag.LAYER_R, Drag.LAYER_MOVE)
+            }
+            is Sel.AudioSel -> {
+                val idx = p.audios.indexOfFirst { it.id == s.id }
+                if (idx < 0) return Drag.NONE
+                val a = p.audios[idx]
+                val top = audioTop(idx)
+                if (y < top - dp(6f) || y > top + audioH + dp(6f)) return Drag.NONE
+                return edgeDrag(x, xOf(a.startMs), xOf(a.endMs), Drag.AUDIO_L, Drag.AUDIO_R, Drag.AUDIO_MOVE)
             }
             else -> {}
         }
@@ -370,12 +463,13 @@ class TimelineView(context: Context) : View(context) {
     }
 
     private fun beginDrag(p: Project) {
-        when (val s = selection) {
-            is Sel.ClipSel -> p.clips.getOrNull(s.index)?.let { origStart = it.trimStartMs; origEnd = it.trimEndMs }
+        when (selection) {
+            is Sel.ClipSel -> p.clips.getOrNull((selection as Sel.ClipSel).index)?.let { origStart = it.trimStartMs; origEnd = it.trimEndMs }
             is Sel.LayerSel -> selectedLayer(p)?.let { l ->
                 origStart = l.startMs; origEnd = l.endMs
                 origTimes = p.linkedWith(l).map { Pair(it.startMs, it.endMs) }
             }
+            is Sel.AudioSel -> selectedAudio(p)?.let { a -> origStart = a.startMs; origEnd = a.endMs; origTrim = a.trimStartMs }
             else -> {}
         }
     }
@@ -386,28 +480,31 @@ class TimelineView(context: Context) : View(context) {
             Drag.CLIP_L, Drag.CLIP_R -> {
                 val c = p.clips.getOrNull((selection as Sel.ClipSel).index) ?: return
                 val srcD = if (c.kind == MediaKind.VIDEO) (dMs * c.speed).toLong() else dMs
-                if (drag == Drag.CLIP_L) {
-                    val minStart = if (c.kind == MediaKind.IMAGE) origStart else 0L
-                    c.trimStartMs = (origStart + srcD).coerceIn(minStart, c.trimEndMs - 100)
-                    if (c.kind == MediaKind.IMAGE) {
-                        // images: left handle shortens/extends the still image
-                        c.trimStartMs = 0
-                        c.trimEndMs = (origEnd - origStart - srcD).coerceIn(200, 600_000)
-                    }
+                if (c.kind == MediaKind.IMAGE) {
+                    val len = if (drag == Drag.CLIP_L) origEnd - origStart - srcD else origEnd - origStart + srcD
+                    c.trimStartMs = 0
+                    c.trimEndMs = len.coerceIn(200, 600_000)
+                    c.sourceDurationMs = max(c.sourceDurationMs, c.trimEndMs)
+                } else if (drag == Drag.CLIP_L) {
+                    c.trimStartMs = (origStart + srcD).coerceIn(0, c.trimEndMs - 100)
                 } else {
-                    val maxEnd = if (c.kind == MediaKind.IMAGE) 600_000L else c.sourceDurationMs
-                    c.trimEndMs = (origEnd + srcD).coerceIn(c.trimStartMs + 100, maxEnd)
-                    if (c.kind == MediaKind.IMAGE) c.sourceDurationMs = max(c.sourceDurationMs, c.trimEndMs)
+                    c.trimEndMs = (origEnd + srcD).coerceIn(c.trimStartMs + 100, c.sourceDurationMs)
                 }
             }
-            Drag.LAYER_L -> selectedLayer(p)?.let { l -> l.startMs = (origStart + dMs).coerceIn(0, l.endMs - 100) }
+            Drag.LAYER_L -> selectedLayer(p)?.let { l ->
+                val ns = (origStart + dMs).coerceIn(0, l.endMs - 100)
+                // keep keyframes in place on the timeline
+                val shift = ns - l.startMs
+                for (k in l.keyframes) k.t -= shift
+                if (l.kind == LayerKind.VIDEO) l.trimStartMs = (l.trimStartMs + shift).coerceAtLeast(0)
+                l.startMs = ns
+            }
             Drag.LAYER_R -> selectedLayer(p)?.let { l ->
                 var end = origEnd + dMs
                 if (l.kind == LayerKind.VIDEO && l.sourceDurationMs > 0) end = min(end, l.startMs + l.sourceDurationMs - l.trimStartMs)
                 l.endMs = max(l.startMs + 100, end)
             }
             Drag.LAYER_MOVE -> selectedLayer(p)?.let { l ->
-                // linked layers move in time together
                 val group = p.linkedWith(l)
                 val minStart = origTimes.minOf { it.first }
                 val d = max(dMs, -minStart)
@@ -416,23 +513,43 @@ class TimelineView(context: Context) : View(context) {
                     g.startMs = o.first + d; g.endMs = o.second + d
                 }
             }
+            Drag.AUDIO_L -> selectedAudio(p)?.let { a ->
+                val d = max(dMs, max(-origStart, -origTrim))
+                val ns = min(origStart + d, origEnd - 200)
+                a.trimStartMs = origTrim + (ns - origStart)
+                a.startMs = ns
+                a.durationMs = origEnd - ns
+            }
+            Drag.AUDIO_R -> selectedAudio(p)?.let { a ->
+                var dur = origEnd + dMs - a.startMs
+                if (a.sourceDurationMs > 0) dur = min(dur, a.sourceDurationMs - a.trimStartMs)
+                a.durationMs = max(200, dur)
+            }
+            Drag.AUDIO_MOVE -> selectedAudio(p)?.let { a -> a.startMs = max(0, origStart + dMs) }
             else -> {}
         }
     }
 
     private fun onTap(p: Project, x: Float, y: Float) {
-        // seek is not changed by taps (CapCut behaviour); only selection
         val t = tOf(x)
         val ct = clipTop()
         if (y in ct..(ct + clipH)) {
+            // transition buttons
             var acc = 0L
+            for (i in p.clips.indices) {
+                if (i > 0 && abs(x - xOf(acc)) < dp(14f)) { listener?.onTransitionTap(i); return }
+                acc += p.clips[i].outDurationMs
+            }
+            acc = 0L
             for ((i, c) in p.clips.withIndex()) {
                 if (t >= acc && t < acc + c.outDurationMs) { select(Sel.ClipSel(i)); return }
                 acc += c.outDurationMs
             }
         }
-        val mt = musicTop()
-        if (y in mt..(mt + musicH) && p.music != null) { select(Sel.MusicSel); return }
+        for ((i, a) in p.audios.withIndex()) {
+            val top = audioTop(i)
+            if (y in top..(top + audioH) && t >= a.startMs && t <= a.endMs) { select(Sel.AudioSel(a.id)); return }
+        }
         for ((i, l) in p.layers.withIndex()) {
             val top = layerTop(i)
             if (y in top..(top + layerH) && t >= l.startMs && t <= l.endMs) { select(Sel.LayerSel(l.id)); return }
@@ -445,20 +562,19 @@ class TimelineView(context: Context) : View(context) {
         listener?.onSelect(s)
     }
 
-    /** Make sure a layer row is visible (after adding a layer). */
     fun revealLayer(index: Int) {
         val top = layerTop(index) + vScroll
         if (top + layerH > vScroll + height) vScroll = (top + layerH - height + gap).coerceAtLeast(0f)
         invalidate()
     }
 
-    fun clearThumbs() { thumbs.clear() }
-
     companion object {
         fun fmt(ms: Long): String {
             val s = ms / 1000
             return "%02d:%02d".format(s / 60, s % 60)
         }
+
+        fun fmtPrecise(ms: Long): String = "%02d:%02d.%d".format(ms / 60000, (ms / 1000) % 60, (ms % 1000) / 100)
 
         fun trim(f: Float): String = if (f == f.toInt().toFloat()) f.toInt().toString() else "%.2f".format(f).trimEnd('0').trimEnd('.')
     }

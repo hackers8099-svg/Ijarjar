@@ -9,8 +9,10 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import androidx.core.widget.NestedScrollView
 import com.google.android.material.bottomsheet.BottomSheetBehavior
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
@@ -45,33 +47,70 @@ object Ui {
         if (stroke > 0) setStroke(stroke, strokeColor)
     }
 
-    /** CapCut style bottom tool: icon above a label. */
-    fun tool(c: Context, icon: String, label: String, onClick: () -> Unit): View {
+    /** CapCut style bottom tool: flat icon above a label. */
+    fun tool(c: Context, icon: Int, label: String, active: Boolean = false, onClick: () -> Unit): View {
         val box = LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(c, 6f), dp(c, 6f), dp(c, 6f), dp(c, 6f))
-            minimumWidth = dp(c, 64f)
+            setPadding(dp(c, 6f), dp(c, 8f), dp(c, 6f), dp(c, 6f))
+            minimumWidth = dp(c, 66f)
             isClickable = true
             val tv = TypedValue()
             c.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
             setBackgroundResource(tv.resourceId)
             setOnClickListener { onClick() }
         }
-        box.addView(text(c, icon, 22f).apply { gravity = Gravity.CENTER })
-        box.addView(text(c, label, 11f, TEXT2).apply { gravity = Gravity.CENTER; maxLines = 1 })
+        box.addView(ImageView(c).apply {
+            setImageResource(icon)
+            imageTintList = ColorStateList.valueOf(if (active) ACCENT else TEXT)
+        }, LinearLayout.LayoutParams(dp(c, 24f), dp(c, 24f)))
+        box.addView(text(c, label, 11f, if (active) ACCENT else TEXT2).apply {
+            gravity = Gravity.CENTER; maxLines = 1; setPadding(0, dp(c, 4f), 0, 0)
+        })
+        return box
+    }
+
+    /** A plain flat icon button. */
+    fun iconButton(c: Context, icon: Int, sizeDp: Float = 24f, tint: Int = TEXT, onClick: () -> Unit): ImageView =
+        ImageView(c).apply {
+            setImageResource(icon)
+            imageTintList = ColorStateList.valueOf(tint)
+            val pad = dp(c, 8f)
+            setPadding(pad, pad, pad, pad)
+            val tv = TypedValue()
+            c.theme.resolveAttribute(android.R.attr.selectableItemBackgroundBorderless, tv, true)
+            setBackgroundResource(tv.resourceId)
+            layoutParams = LinearLayout.LayoutParams(dp(c, sizeDp + 16f), dp(c, sizeDp + 16f))
+            setOnClickListener { onClick() }
+        }
+
+    /** A row with an icon and a label, used in pickers. */
+    fun iconChip(c: Context, icon: Int, label: String, onClick: () -> Unit): View {
+        val box = LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            background = roundBg(SURFACE2, dp(c, 12f).toFloat())
+            setPadding(dp(c, 8f), dp(c, 10f), dp(c, 8f), dp(c, 8f))
+            setOnClickListener { onClick() }
+        }
+        box.addView(ImageView(c).apply { setImageResource(icon); imageTintList = ColorStateList.valueOf(TEXT) },
+            LinearLayout.LayoutParams(dp(c, 26f), dp(c, 26f)))
+        box.addView(text(c, label, 11f, TEXT).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, dp(c, 4f), 0, 0) })
         return box
     }
 
     fun sheet(c: Context, title: String, onDismiss: (() -> Unit)? = null): Pair<BottomSheetDialog, LinearLayout> {
         val d = BottomSheetDialog(c)
+        val scroll = NestedScrollView(c).apply {
+            background = roundBg(SURFACE, dp(c, 18f).toFloat())
+        }
         val root = LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(c, 18f), dp(c, 14f), dp(c, 18f), dp(c, 22f))
-            background = roundBg(SURFACE, dp(c, 18f).toFloat())
         }
+        scroll.addView(root)
         root.addView(text(c, title, 17f, TEXT, true).apply { setPadding(0, 0, 0, dp(c, 10f)) })
-        d.setContentView(root)
+        d.setContentView(scroll)
         d.behavior.state = BottomSheetBehavior.STATE_EXPANDED
         d.behavior.skipCollapsed = true
         if (onDismiss != null) d.setOnDismissListener { onDismiss() }

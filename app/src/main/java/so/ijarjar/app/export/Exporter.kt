@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
@@ -22,9 +23,11 @@ import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.effect.BitmapOverlay
+import androidx.media3.effect.MatrixTransformation
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.OverlaySettings
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.TextureOverlay
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -35,22 +38,26 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
 import com.google.common.collect.ImmutableList
+import so.ijarjar.app.model.AudioTrack
 import so.ijarjar.app.model.Clip
 import so.ijarjar.app.model.Layer
 import so.ijarjar.app.model.LayerKind
 import so.ijarjar.app.model.MediaKind
 import so.ijarjar.app.model.Project
+import so.ijarjar.app.render.EffectRenderer
 import so.ijarjar.app.render.Filters
 import so.ijarjar.app.render.LayerRenderer
+import so.ijarjar.app.render.Motion
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
 
 /**
  * Renders the project to an MP4 with Media3 Transformer.
- * Main track clips -> one sequence (trim, speed, volume, filters, fit to canvas).
- * Layers (text, stickers, images, overlay videos) -> drawn per frame with the same
- * LayerRenderer used by the preview.
- * Music -> second, audio-only sequence mixed in.
+ * Main track clips -> one sequence (trim, speed, volume, filters, canvas transform, transitions,
+ * effects). Layers -> drawn per frame with the same renderer used by the preview.
+ * Each audio track -> its own audio-only sequence (with silence in front) mixed in.
  */
 @UnstableApi
 class Exporter(
@@ -74,19 +81,12 @@ class Exporter(
         val (w, h) = project.outputSize(shortSide)
         output.delete()
 
-        val items = project.clips.mapIndexed { i, c -> buildItem(c, project.clipStartMs(i), w, h) }
+        val items = project.clips.mapIndexed { i, c -> buildItem(c, i, w, h) }
         val sequences = mutableListOf(EditedMediaItemSequence(items))
-        project.music?.let { m ->
-            val end = m.trimStartMs + project.durationMs
-            val clipping = MediaItem.ClippingConfiguration.Builder()
-                .setStartPositionMs(m.trimStartMs)
-            if (m.sourceDurationMs <= 0 || end < m.sourceDurationMs) clipping.setEndPositionMs(end)
-            val item = MediaItem.Builder().setUri(Uri.parse(m.uri)).setClippingConfiguration(clipping.build()).build()
-            val audio = mutableListOf<AudioProcessor>()
-            if (m.volume != 1f) audio.add(volumeProcessor(m.volume))
-            sequences.add(EditedMediaItemSequence(listOf(
-                EditedMediaItem.Builder(item).setRemoveVideo(true).setEffects(Effects(audio, emptyList())).build()
-            )))
+        val total = project.durationMs
+        for (a in project.audios) {
+            if (a.startMs >= total || a.durationMs <= 0) continue
+            sequences.add(audioSequence(a, total))
         }
 
         val composition = Composition.Builder(sequences)
@@ -140,7 +140,53 @@ class Exporter(
         return p
     }
 
-    private fun buildItem(c: Clip, clipStartMs: Long, w: Int, h: Int): EditedMediaItem {
+    // ------------------------------------------------------------------ audio
+
+    private fun audioSequence(a: AudioTrack, total: Long): EditedMediaItemSequence {
+        val list = ArrayList<EditedMediaItem>()
+        if (a.startMs > 0) {
+            val silence = silenceFile(a.startMs)
+            list.add(EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(silence))).build())
+        }
+        val len = minOf(a.durationMs, total - a.startMs).coerceAtLeast(100)
+        val item = MediaItem.Builder().setUri(Uri.parse(a.uri))
+            .setClippingConfiguration(
+                MediaItem.ClippingConfiguration.Builder()
+                    .setStartPositionMs(a.trimStartMs)
+                    .setEndPositionMs(a.trimStartMs + len)
+                    .build()
+            ).build()
+        val audio = mutableListOf<AudioProcessor>()
+        if (a.volume != 1f) audio.add(volumeProcessor(a.volume))
+        list.add(EditedMediaItem.Builder(item).setRemoveVideo(true).setEffects(Effects(audio, emptyList())).build())
+        return EditedMediaItemSequence(list)
+    }
+
+    /** A stereo 44.1 kHz WAV file of silence, used to start an audio track later in the video. */
+    private fun silenceFile(ms: Long): File {
+        val f = File(context.cacheDir, "silence_$ms.wav")
+        if (f.exists()) return f
+        val rate = 44100; val ch = 2
+        val frames = (rate * ms / 1000).toInt()
+        val dataLen = frames * ch * 2
+        FileOutputStream(f).use { out ->
+            val header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+            header.put("RIFF".toByteArray()); header.putInt(36 + dataLen); header.put("WAVE".toByteArray())
+            header.put("fmt ".toByteArray()); header.putInt(16); header.putShort(1); header.putShort(ch.toShort())
+            header.putInt(rate); header.putInt(rate * ch * 2); header.putShort((ch * 2).toShort()); header.putShort(16)
+            header.put("data".toByteArray()); header.putInt(dataLen)
+            out.write(header.array())
+            val zeros = ByteArray(64 * 1024)
+            var left = dataLen
+            while (left > 0) { val n = minOf(left, zeros.size); out.write(zeros, 0, n); left -= n }
+        }
+        return f
+    }
+
+    // ------------------------------------------------------------------ video
+
+    private fun buildItem(c: Clip, index: Int, w: Int, h: Int): EditedMediaItem {
+        val clipStartMs = project.clipStartMs(index)
         val mb = MediaItem.Builder().setUri(Uri.parse(c.uri))
         if (c.kind == MediaKind.IMAGE) {
             mb.setImageDurationMs(c.trimmedMs)
@@ -164,32 +210,87 @@ class Exporter(
             video.add(pair.second)
         }
         if (c.volume != 1f) audio.add(volumeProcessor(c.volume))
-        video.addAll(Filters.exportEffects(c.adjust))
+        video.addAll(Filters.exportEffects(c.adjust, c.width.coerceAtLeast(16)))
+        if (project.layers.any { it.isEffect() && it.effect.group == 2 }) video.add(EffectColor(clipStartMs))
         video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
+        video.add(ClipTransform(index, w.toFloat() / h))
+        video.add(FadeColor(index))
         if (project.layers.isNotEmpty()) {
             video.add(OverlayEffect(ImmutableList.of<TextureOverlay>(CanvasOverlay(clipStartMs, w, h))))
         }
         val b = EditedMediaItem.Builder(mb.build()).setEffects(Effects(audio, video))
-        if (c.kind == MediaKind.IMAGE) {
-            b.setDurationUs(c.trimmedMs * 1000).setFrameRate(30)
-        }
+        if (c.kind == MediaKind.IMAGE) b.setDurationUs(c.trimmedMs * 1000).setFrameRate(30)
         return b.build()
+    }
+
+    /** Remembers the first frame time so an effect knows where it is inside its clip. */
+    private class LocalClock {
+        private var first = Long.MIN_VALUE
+        fun localMs(ptsUs: Long): Long {
+            if (first == Long.MIN_VALUE) first = ptsUs
+            return ((ptsUs - first) / 1000).coerceAtLeast(0)
+        }
+    }
+
+    /** Canvas transform of the clip + transition motion, in normalised device coordinates. */
+    private inner class ClipTransform(private val index: Int, private val aspect: Float) : MatrixTransformation {
+        private val clock = LocalClock()
+        override fun getMatrix(presentationTimeUs: Long): Matrix {
+            val m = Motion.clipMotion(project, index, clock.localMs(presentationTimeUs))
+            return Matrix().apply {
+                postScale(aspect, 1f)
+                postScale(m.scale * (if (m.mirror) -1f else 1f), m.scale)
+                postRotate(-m.rotation)
+                postScale(1f / aspect, 1f)
+                postTranslate(2f * m.tx, -2f * m.ty)
+            }
+        }
+    }
+
+    /** Fade-to-colour part of transitions and flash effects. */
+    private inner class FadeColor(private val index: Int) : RgbMatrix {
+        private val clock = LocalClock()
+        private val gl = FloatArray(16)
+        override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray {
+            val m = Motion.clipMotion(project, index, clock.localMs(presentationTimeUs))
+            val a = m.fadeAlpha.coerceIn(0f, 1f)
+            java.util.Arrays.fill(gl, 0f)
+            gl[0] = 1 - a; gl[5] = 1 - a; gl[10] = 1 - a; gl[15] = 1f
+            gl[12] = Color.red(m.fadeColor) / 255f * a
+            gl[13] = Color.green(m.fadeColor) / 255f * a
+            gl[14] = Color.blue(m.fadeColor) / 255f * a
+            return gl
+        }
+    }
+
+    /** Colour effects on the timeline (black & white, old film, rainbow…). */
+    private inner class EffectColor(private val clipStartMs: Long) : RgbMatrix {
+        private val clock = LocalClock()
+        private val identity = FloatArray(16).also { it[0] = 1f; it[5] = 1f; it[10] = 1f; it[15] = 1f }
+        override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray {
+            val cm = EffectRenderer.colorMatrix(project, clipStartMs + clock.localMs(presentationTimeUs)) ?: return identity
+            return Filters.toGl(cm)
+        }
     }
 
     /** Draws every layer that is visible at the frame time into one full-frame bitmap. */
     private inner class CanvasOverlay(private val clipStartMs: Long, private val w: Int, private val h: Int) : BitmapOverlay() {
-        private var firstTs = Long.MIN_VALUE
+        private val clock = LocalClock()
         private var lastKey = ""
         private val settings = OverlaySettings.Builder().build()
 
         override fun getBitmap(presentationTimeUs: Long): Bitmap {
-            if (firstTs == Long.MIN_VALUE) firstTs = presentationTimeUs
-            val t = clipStartMs + (presentationTimeUs - firstTs) / 1000
+            val t = clipStartMs + clock.localMs(presentationTimeUs)
             val bmp = frameSource.canvasBitmap(w, h)
             val active = project.layers.filter { it.isActive(t) }
-            val hasVideo = active.any { it.kind == LayerKind.VIDEO }
+            // anything that moves needs a redraw every frame
+            val animated = active.any {
+                it.kind == LayerKind.VIDEO || it.isEffect() || it.keyframes.isNotEmpty() ||
+                    it.animIn != so.ijarjar.app.model.LayerAnim.NONE || it.animOut != so.ijarjar.app.model.LayerAnim.NONE ||
+                    it.animLoop != so.ijarjar.app.model.LoopAnim.NONE
+            }
             val key = active.joinToString(",") { it.id }
-            if (!hasVideo && key == lastKey && frameSource.lastOwner === this) return bmp
+            if (!animated && key == lastKey && frameSource.lastOwner === this) return bmp
             lastKey = key
             frameSource.lastOwner = this
             bmp.eraseColor(Color.TRANSPARENT)
@@ -197,7 +298,7 @@ class Exporter(
             for (l in LayerRenderer.drawOrder(active)) {
                 val content = if (l.kind == LayerKind.VIDEO) frameSource.videoFrame(l, t, w) else null
                 if (l.kind == LayerKind.VIDEO && content == null) continue
-                LayerRenderer.draw(context, canvas, l, w, h, content)
+                LayerRenderer.draw(context, canvas, l, t, w, h, content)
             }
             return bmp
         }
@@ -247,39 +348,48 @@ class Exporter(
     }
 
     /** Copies the finished file into the phone gallery (Movies/IjarJar). */
-    private fun saveToGallery(): Uri? {
-        val name = "IjarJar_" + System.currentTimeMillis() + ".mp4"
-        return try {
-            if (Build.VERSION.SDK_INT >= 29) {
-                val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
-                    put(MediaStore.Video.Media.RELATIVE_PATH, Environment.DIRECTORY_MOVIES + "/IjarJar")
-                    put(MediaStore.Video.Media.IS_PENDING, 1)
-                }
-                val resolver = context.contentResolver
-                val uri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values) ?: return null
-                resolver.openOutputStream(uri)?.use { out -> FileInputStream(output).use { it.copyTo(out) } }
-                values.clear()
-                values.put(MediaStore.Video.Media.IS_PENDING, 0)
-                resolver.update(uri, values, null, null)
-                uri
-            } else {
-                @Suppress("DEPRECATION")
-                val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "IjarJar")
-                dir.mkdirs()
-                val f = File(dir, name)
-                output.copyTo(f, overwrite = true)
-                val values = ContentValues().apply {
-                    put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                    put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
+    private fun saveToGallery(): Uri? = saveMedia(context, output, "IjarJar_" + System.currentTimeMillis() + ".mp4", "video/mp4", true)
+
+    companion object {
+        /** Saves a file to Movies/IjarJar (video) or Pictures/IjarJar (image). */
+        fun saveMedia(context: Context, file: File, name: String, mime: String, video: Boolean): Uri? {
+            val collection = if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
+            val dirName = if (video) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES
+            return try {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                        put(MediaStore.MediaColumns.RELATIVE_PATH, "$dirName/IjarJar")
+                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    }
+                    val resolver = context.contentResolver
+                    val uri = resolver.insert(collection, values) ?: return null
+                    resolver.openOutputStream(uri)?.use { out -> FileInputStream(file).use { it.copyTo(out) } }
+                    values.clear()
+                    values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                    uri
+                } else {
                     @Suppress("DEPRECATION")
-                    put(MediaStore.Video.Media.DATA, f.absolutePath)
+                    val dir = File(Environment.getExternalStoragePublicDirectory(dirName), "IjarJar")
+                    dir.mkdirs()
+                    val f = File(dir, name)
+                    file.copyTo(f, overwrite = true)
+                    val values = ContentValues().apply {
+                        put(MediaStore.MediaColumns.DISPLAY_NAME, name)
+                        put(MediaStore.MediaColumns.MIME_TYPE, mime)
+                        @Suppress("DEPRECATION")
+                        put(MediaStore.MediaColumns.DATA, f.absolutePath)
+                    }
+                    context.contentResolver.insert(collection, values)
                 }
-                context.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values)
+            } catch (e: Exception) {
+                null
             }
-        } catch (e: Exception) {
-            null
         }
+
+        @Suppress("unused")
+        private fun unused(r: RandomAccessFile) = r
     }
 }

@@ -3,6 +3,8 @@ package so.ijarjar.app.data
 import android.content.Context
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import so.ijarjar.app.model.AudioKind
+import so.ijarjar.app.model.AudioTrack
 import so.ijarjar.app.model.Project
 import java.io.File
 
@@ -45,6 +47,18 @@ object ProjectStore {
         // Gson can leave nulls for missing fields; repair them.
         if (p.clips == null) p.clips = mutableListOf()
         if (p.layers == null) p.layers = mutableListOf()
+        if (p.audios == null) p.audios = mutableListOf()
+        for (l in p.layers) if (l.keyframes == null) l.keyframes = mutableListOf()
+        // older projects had a single "music" field
+        p.music?.let { m ->
+            if (m.uri.isNotEmpty()) {
+                val len = if (m.sourceDurationMs > 0) (m.sourceDurationMs - m.trimStartMs).coerceAtLeast(500) else p.durationMs
+                p.audios.add(AudioTrack(uri = m.uri, name = m.name, kind = AudioKind.MUSIC, startMs = 0,
+                    trimStartMs = m.trimStartMs, durationMs = minOf(len, p.durationMs.coerceAtLeast(500)),
+                    sourceDurationMs = m.sourceDurationMs, volume = m.volume))
+            }
+            p.music = null
+        }
         return p
     }
 }

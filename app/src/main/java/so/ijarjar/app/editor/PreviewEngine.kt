@@ -1,28 +1,23 @@
 package so.ijarjar.app.editor
 
 import android.content.Context
-import android.graphics.Paint
 import android.net.Uri
 import android.view.TextureView
-import android.view.View
 import android.widget.FrameLayout
-import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
-import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
-import so.ijarjar.app.media.MediaUtils
 import so.ijarjar.app.model.Clip
 import so.ijarjar.app.model.LayerKind
 import so.ijarjar.app.model.MediaKind
 import so.ijarjar.app.model.Project
-import so.ijarjar.app.render.Filters
 import kotlin.math.abs
 
 /**
- * Plays the project: the main track in one ExoPlayer, music in another and one muted
- * ExoPlayer per overlay video layer, all following one global timeline.
+ * Plays the project: the main track in one ExoPlayer, one ExoPlayer per audio track and one muted
+ * ExoPlayer per overlay video layer, all following one global timeline. Pictures, transitions,
+ * filters and effects are drawn by [StageView].
  */
 class PreviewEngine(private val context: Context, private val stage: StageView) {
 
@@ -30,15 +25,16 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         private set
 
     private val main: ExoPlayer = ExoPlayer.Builder(context).build()
-    private var music: ExoPlayer? = null
+    private val audioPlayers = HashMap<String, ExoPlayer>()
+    private val audioSignature = HashMap<String, String>()
     private val overlayPlayers = HashMap<String, ExoPlayer>()
     private val overlaySignature = HashMap<String, String>()
-    private var musicSignature: String? = null
     private var playlistSignature: String = ""
 
     var isPlaying = false
         private set
     var onEnded: (() -> Unit)? = null
+    var muteMain = false
 
     private var currentIndex = -1
     private var lastOverlaySeek = 0L
@@ -46,13 +42,6 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     init {
         main.setVideoTextureView(stage.mainTexture)
         main.addListener(object : Player.Listener {
-            override fun onVideoSizeChanged(videoSize: VideoSize) {
-                if (videoSize.width > 0 && videoSize.height > 0) {
-                    val w = (videoSize.width * videoSize.pixelWidthHeightRatio).toInt()
-                    stage.setVideoSize(w, videoSize.height)
-                }
-            }
-
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 applyClipState()
             }
@@ -92,31 +81,32 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             main.prepare()
         }
         syncOverlayPlayers()
-        syncMusic()
+        syncAudioPlayers()
         seekTo(timeMs.coerceIn(0, (p.durationMs - 1).coerceAtLeast(0)))
         applyClipState()
         stage.requestLayout()
     }
 
-    private fun syncMusic() {
-        val m = project.music
-        val sig = m?.let { "${it.uri}" }
-        if (sig == musicSignature) { music?.volume = m?.volume ?: 1f; return }
-        musicSignature = sig
-        music?.release(); music = null
-        if (m != null) {
-            music = ExoPlayer.Builder(context).build().apply {
-                setMediaItem(MediaItem.fromUri(Uri.parse(m.uri)))
-                volume = m.volume
-                prepare()
-            }
+    private fun syncAudioPlayers() {
+        val ids = project.audios.map { it.id }.toSet()
+        for (id in audioPlayers.keys.toList()) if (id !in ids) { audioPlayers.remove(id)?.release(); audioSignature.remove(id) }
+        for (a in project.audios) {
+            val sig = a.uri
+            val existing = audioPlayers[a.id]
+            if (existing != null && audioSignature[a.id] == sig) { existing.volume = a.volume.coerceIn(0f, 1f); continue }
+            existing?.release()
+            val pl = ExoPlayer.Builder(context).build()
+            pl.setMediaItem(MediaItem.fromUri(Uri.parse(a.uri)))
+            pl.volume = a.volume.coerceIn(0f, 1f)
+            pl.prepare()
+            audioPlayers[a.id] = pl
+            audioSignature[a.id] = sig
         }
     }
 
     private fun syncOverlayPlayers() {
         val videoLayers = project.layers.filter { it.kind == LayerKind.VIDEO && it.uri != null }
         val ids = videoLayers.map { it.id }.toSet()
-        // remove old
         for (id in overlayPlayers.keys.toList()) {
             if (id !in ids) {
                 overlayPlayers.remove(id)?.release()
@@ -140,29 +130,21 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             overlayPlayers[l.id] = pl
             overlaySignature[l.id] = sig
         }
-        // keep z-order same as layer order
         for (l in videoLayers) stage.videoLayerViews[l.id]?.bringToFront()
     }
 
-    /** Applies speed, volume and colour filter of the clip that is playing now. */
+    /** Applies speed and volume of the clip that is playing now. */
     private fun applyClipState() {
         val idx = main.currentMediaItemIndex
         val c = project.clips.getOrNull(idx) ?: return
         currentIndex = idx
         main.playbackParameters = PlaybackParameters(if (c.kind == MediaKind.VIDEO) c.speed else 1f)
-        main.volume = c.volume.coerceIn(0f, 1f)
-        val filter = Filters.colorFilter(c.adjust)
-        // TextureView ignores setLayerType but honours a layer paint, which carries the colour filter.
-        stage.mainTexture.setLayerPaint(if (filter != null) Paint().apply { colorFilter = filter } else null)
-        if (c.kind == MediaKind.IMAGE) {
-            val bmp = MediaUtils.loadBitmapCached(context, Uri.parse(c.uri), 1600)
-            stage.imageView.setImageBitmap(bmp)
-            stage.imageView.colorFilter = filter
-            stage.imageView.visibility = View.VISIBLE
-        } else {
-            stage.imageView.visibility = View.GONE
-            stage.imageView.setImageDrawable(null)
-        }
+        main.volume = if (muteMain) 0f else c.volume.coerceIn(0f, 1f)
+    }
+
+    fun refreshVolumes() {
+        applyClipState()
+        for (a in project.audios) audioPlayers[a.id]?.volume = a.volume.coerceIn(0f, 1f)
     }
 
     /** Global timeline position in output milliseconds. */
@@ -203,7 +185,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     fun pause() {
         isPlaying = false
         main.pause()
-        music?.pause()
+        audioPlayers.values.forEach { it.pause() }
         overlayPlayers.values.forEach { it.pause() }
     }
 
@@ -215,31 +197,23 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     }
 
     private fun syncSecondary(t: Long, force: Boolean) {
-        // music
-        val m = project.music
-        val mp = music
-        if (m != null && mp != null) {
-            val expect = m.trimStartMs + t
-            val dur = mp.duration
-            if (dur != C.TIME_UNSET && expect >= dur) {
-                mp.pause()
-            } else if (isPlaying) {
-                if (force || abs(mp.currentPosition - expect) > 300) mp.seekTo(expect)
-                if (!mp.isPlaying) mp.play()
+        for (a in project.audios) {
+            val pl = audioPlayers[a.id] ?: continue
+            if (!a.isActive(t)) { if (pl.isPlaying) pl.pause(); continue }
+            val expect = a.trimStartMs + (t - a.startMs)
+            if (isPlaying) {
+                if (force || abs(pl.currentPosition - expect) > 300) pl.seekTo(expect)
+                if (!pl.isPlaying) pl.play()
             } else {
-                if (force) mp.seekTo(expect)
-                mp.pause()
+                if (pl.isPlaying) pl.pause()
+                if (force) pl.seekTo(expect)
             }
         }
-        // overlay videos
         val now = System.currentTimeMillis()
         for (l in project.layers) {
             if (l.kind != LayerKind.VIDEO) continue
             val pl = overlayPlayers[l.id] ?: continue
-            if (!l.isActive(t)) {
-                if (pl.isPlaying) pl.pause()
-                continue
-            }
+            if (!l.isActive(t)) { if (pl.isPlaying) pl.pause(); continue }
             val expect = l.trimStartMs + (t - l.startMs)
             if (isPlaying) {
                 if (force || abs(pl.currentPosition - expect) > 300) pl.seekTo(expect)
@@ -256,8 +230,8 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
 
     fun release() {
         main.release()
-        music?.release()
+        audioPlayers.values.forEach { it.release() }
         overlayPlayers.values.forEach { it.release() }
-        overlayPlayers.clear()
+        audioPlayers.clear(); overlayPlayers.clear()
     }
 }

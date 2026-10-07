@@ -4,6 +4,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import androidx.media3.common.Effect
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.GaussianBlur
 import androidx.media3.effect.RgbMatrix
 import so.ijarjar.app.model.Adjust
 import so.ijarjar.app.model.FilterPreset
@@ -14,16 +15,32 @@ import so.ijarjar.app.model.FilterPreset
  */
 object Filters {
 
+    private fun offsetMatrix(r: Float, g: Float, b: Float) = ColorMatrix(floatArrayOf(
+        1f, 0f, 0f, 0f, r,
+        0f, 1f, 0f, 0f, g,
+        0f, 0f, 1f, 0f, b,
+        0f, 0f, 0f, 1f, 0f))
+
+    private fun gainMatrix(r: Float, g: Float, b: Float) = ColorMatrix(floatArrayOf(
+        r, 0f, 0f, 0f, 0f,
+        0f, g, 0f, 0f, 0f,
+        0f, 0f, b, 0f, 0f,
+        0f, 0f, 0f, 1f, 0f))
+
     fun colorMatrix(a: Adjust): ColorMatrix {
         val m = ColorMatrix()
-        // preset first
-        val p = presetMatrix(a.preset)
-        if (p != null) m.postConcat(p)
-        // saturation
+        presetMatrix(a.preset)?.let { m.postConcat(it) }
+        if (a.temperature != 0f) {
+            val t = a.temperature * 0.25f
+            m.postConcat(gainMatrix(1f + t, 1f, 1f - t))
+        }
+        if (a.tint != 0f) {
+            val t = a.tint * 0.2f
+            m.postConcat(gainMatrix(1f + t * 0.5f, 1f - t, 1f + t * 0.5f))
+        }
         if (a.saturation != 0f) {
             val s = ColorMatrix(); s.setSaturation(1f + a.saturation); m.postConcat(s)
         }
-        // contrast around mid grey
         if (a.contrast != 0f) {
             val c = 1f + a.contrast
             val t = 128f * (1f - c)
@@ -33,20 +50,15 @@ object Filters {
                 0f, 0f, c, 0f, t,
                 0f, 0f, 0f, 1f, 0f)))
         }
-        // brightness
         if (a.brightness != 0f) {
             val b = a.brightness * 255f * 0.6f
-            m.postConcat(ColorMatrix(floatArrayOf(
-                1f, 0f, 0f, 0f, b,
-                0f, 1f, 0f, 0f, b,
-                0f, 0f, 1f, 0f, b,
-                0f, 0f, 0f, 1f, 0f)))
+            m.postConcat(offsetMatrix(b, b, b))
         }
         return m
     }
 
     fun colorFilter(a: Adjust): ColorMatrixColorFilter? =
-        if (a.isIdentity()) null else ColorMatrixColorFilter(colorMatrix(a))
+        if (a.isColorIdentity()) null else ColorMatrixColorFilter(colorMatrix(a))
 
     private fun presetMatrix(p: FilterPreset): ColorMatrix? = when (p) {
         FilterPreset.NONE -> null
@@ -77,6 +89,29 @@ object Filters {
             0.1f, 0.8f, 0.1f, 0f, 30f,
             0.1f, 0.1f, 0.8f, 0f, 30f,
             0f, 0f, 0f, 1f, 0f))
+        FilterPreset.NOIR -> ColorMatrix().apply {
+            setSaturation(0f)
+            postConcat(ColorMatrix(floatArrayOf(
+                1.5f, 0f, 0f, 0f, -60f,
+                0f, 1.5f, 0f, 0f, -60f,
+                0f, 0f, 1.5f, 0f, -60f,
+                0f, 0f, 0f, 1f, 0f)))
+        }
+        FilterPreset.GOLDEN -> ColorMatrix(floatArrayOf(
+            1.2f, 0.1f, 0f, 0f, 10f,
+            0.05f, 1.05f, 0f, 0f, 5f,
+            0f, 0f, 0.7f, 0f, 0f,
+            0f, 0f, 0f, 1f, 0f))
+        FilterPreset.TEAL_ORANGE -> ColorMatrix(floatArrayOf(
+            1.15f, 0.05f, -0.1f, 0f, 5f,
+            0f, 1.0f, 0.05f, 0f, 0f,
+            -0.1f, 0.1f, 1.15f, 0f, 8f,
+            0f, 0f, 0f, 1f, 0f)).apply { postConcat(ColorMatrix().apply { setSaturation(1.2f) }) }
+        FilterPreset.PINK -> ColorMatrix(floatArrayOf(
+            1.1f, 0f, 0.05f, 0f, 20f,
+            0f, 0.9f, 0f, 0f, 0f,
+            0.05f, 0f, 1.05f, 0f, 15f,
+            0f, 0f, 0f, 1f, 0f))
         FilterPreset.INVERT -> ColorMatrix(floatArrayOf(
             -1f, 0f, 0f, 0f, 255f,
             0f, -1f, 0f, 0f, 255f,
@@ -85,7 +120,7 @@ object Filters {
     }
 
     /** Converts the Android 4x5 colour matrix to a column-major 4x4 GL matrix (colours 0..1). */
-    private fun toGl(cm: ColorMatrix): FloatArray {
+    fun toGl(cm: ColorMatrix): FloatArray {
         val a = cm.array
         val gl = FloatArray(16)
         for (r in 0 until 3) {
@@ -96,12 +131,22 @@ object Filters {
         return gl
     }
 
+    /** Blur radius in preview pixels for a given 0..1 strength. */
+    fun blurRadiusPx(strength: Float, viewWidth: Int): Float = strength * viewWidth * 0.03f
+
     @UnstableApi
-    fun exportEffects(a: Adjust): List<Effect> {
-        if (a.isIdentity()) return emptyList()
-        val gl = toGl(colorMatrix(a))
-        return listOf(object : RgbMatrix {
-            override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray = gl
-        })
+    fun exportEffects(a: Adjust, outputWidth: Int): List<Effect> {
+        val list = ArrayList<Effect>()
+        if (!a.isColorIdentity()) {
+            val gl = toGl(colorMatrix(a))
+            list.add(object : RgbMatrix {
+                override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray = gl
+            })
+        }
+        if (a.blur > 0f) {
+            // sigma roughly matches the preview blur radius (radius ~ 2 sigma)
+            list.add(GaussianBlur((blurRadiusPx(a.blur, outputWidth) / 2f).coerceIn(0.5f, 60f)))
+        }
+        return list
     }
 }
