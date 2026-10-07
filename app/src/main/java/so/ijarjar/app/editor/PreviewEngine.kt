@@ -153,8 +153,11 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
                 stage.videoLayerViews[l.id] = it
                 stage.videoLayerHost.addView(it, FrameLayout.LayoutParams(10, 10))
             }
-            val pl = ExoPlayer.Builder(context).build()
+            val lid = l.id
+            val pl = playerWithFx({ Pair(0f, false) }, { project.layers.firstOrNull { it.id == lid }?.voice ?: so.ijarjar.app.model.VoiceFx.NONE },
+                { project.layers.firstOrNull { it.id == lid }?.sfx })
             pl.volume = l.volume.coerceIn(0f, 1f)
+            pl.playbackParameters = PlaybackParameters(1f, l.voice.pitch)
             pl.setVideoTextureView(tv)
             pl.setMediaItem(MediaItem.fromUri(Uri.parse(l.uri)))
             pl.prepare()
@@ -177,7 +180,10 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
 
     fun refreshVolumes() {
         applyClipState()
-        for (l in project.layers) if (l.kind == LayerKind.VIDEO) overlayPlayers[l.id]?.volume = l.volume.coerceIn(0f, 1f)
+        for (l in project.layers) if (l.kind == LayerKind.VIDEO) overlayPlayers[l.id]?.let {
+            it.volume = l.volume.coerceIn(0f, 1f)
+            if (it.playbackParameters.pitch != l.voice.pitch) it.playbackParameters = PlaybackParameters(1f, l.voice.pitch)
+        }
         for (a in project.audios) audioPlayers[a.id]?.let {
             it.volume = a.volume.coerceIn(0f, 1f)
             if (it.playbackParameters.pitch != a.voice.pitch) it.playbackParameters = PlaybackParameters(1f, a.voice.pitch)

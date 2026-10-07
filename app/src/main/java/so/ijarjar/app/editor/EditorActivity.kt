@@ -608,6 +608,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     if (l.kind == LayerKind.VIDEO) {
                         t(R.drawable.ic_volume, tr("Cod", "Volume"), l.volume != 1f) { showLayerVolume(l) }
                         t(R.drawable.ic_waveform, tr("Codka soo saar", "Extract audio")) { extractLayerAudio(l) }
+                        t(R.drawable.ic_trim, tr("Gooy", "Trim")) { showLayerTrim(l) }
+                        t(R.drawable.ic_voice_change, tr("Beddel codka", "Voice changer"), l.voice != VoiceFx.NONE || l.sfx.on) { showVoiceChanger(l.voice, l.startMs, l.sfx) { l.voice = it } }
+                        t(R.drawable.ic_replace, tr("Beddel", "Replace")) { replaceLayerTarget = l; pickLayerVideo.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
                     }
                     if (l.kind == LayerKind.IMAGE) {
                         t(R.drawable.ic_crop, tr("Jar", "Crop"), l.hasCrop()) { showCrop(l) }
@@ -1647,6 +1650,44 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             }
         ))
         d.show()
+    }
+
+    private val pickLayerVideo = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val l = replaceLayerTarget ?: return@registerForActivityResult
+        if (uri == null) return@registerForActivityResult
+        keep(uri)
+        io.execute {
+            val info = MediaUtils.probe(this, uri)
+            main.post {
+                if (info == null) return@post
+                l.uri = uri.toString(); l.name = MediaUtils.displayName(this, uri); l.trimStartMs = 0
+                val old = l.contentAspect.coerceAtLeast(0.01f)
+                val nw = info.height.toFloat() / info.width.coerceAtLeast(1)
+                l.baseW = minOf(l.baseW, l.baseW * old / nw.coerceAtLeast(0.01f))
+                l.contentAspect = nw; l.srcAspect = nw
+                commit()
+            }
+        }
+    }
+
+    /** Which part of the overlay video plays: start point inside the video and length. */
+    private fun showLayerTrim(l: Layer) {
+        val uri = l.uri ?: return
+        io.execute {
+            val src = MediaUtils.probe(this, Uri.parse(uri))?.durationMs ?: return@execute
+            main.post {
+                val (d, root) = Ui.sheet(this, tr("Gooy muuqaalka", "Trim video")) { commit() }
+                root.addView(Ui.sliderRow(this, tr("Bilow (s)", "Start (s)"), 0f, (src / 1000f).coerceAtLeast(0.1f), (l.trimStartMs / 1000f).coerceIn(0f, src / 1000f)) {
+                    l.trimStartMs = (it * 1000).toLong().coerceIn(0, (src - 100).coerceAtLeast(0))
+                    l.endMs = minOf(l.endMs, l.startMs + (src - l.trimStartMs)); live(); engine.seekTo(timeMs)
+                })
+                root.addView(Ui.sliderRow(this, tr("Dherer (s)", "Length (s)"), 0.2f, ((src - l.trimStartMs) / 1000f).coerceAtLeast(0.3f), (l.durationMs / 1000f).coerceIn(0.2f, ((src - l.trimStartMs) / 1000f).coerceAtLeast(0.3f))) {
+                    l.endMs = l.startMs + (it * 1000).toLong(); live()
+                })
+                root.addView(Ui.label(this, tr("Timeline-ka dhinacyada layer-ka ku jiid sidoo kale.", "You can also drag the layer's ends on the timeline.")))
+                d.show()
+            }
+        }
     }
 
     private fun showLayerVolume(l: Layer) {

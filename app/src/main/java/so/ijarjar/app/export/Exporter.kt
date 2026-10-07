@@ -102,7 +102,7 @@ class Exporter(
             if (!info.hasAudio) continue
             val len = minOf(l.durationMs, (info.durationMs - l.trimStartMs).coerceAtLeast(100))
             sequences.add(audioSequence(AudioTrack(uri = l.uri!!, startMs = l.startMs, trimStartMs = l.trimStartMs, durationMs = len,
-                sourceDurationMs = info.durationMs, volume = l.volume), total))
+                sourceDurationMs = info.durationMs, volume = l.volume, voice = l.voice, sfx = l.sfx), total))
         }
 
         val composition = Composition.Builder(sequences)
