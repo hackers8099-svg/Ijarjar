@@ -341,6 +341,7 @@ class Clip(
     var trimEndMs: Long = 3000,
     var speed: Float = 1f,
     var volume: Float = 1f,
+    var muteVol: Float = -1f,
     var adjust: Adjust = Adjust(),
     var width: Int = 0,
     var height: Int = 0,
@@ -549,7 +550,9 @@ class Layer(
     }
 
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
-    fun isActive(t: Long) = t >= startMs && t < endMs
+    /** Hidden with the eye in the timeline: not drawn, not heard, not exported. */
+    var hidden: Boolean = false
+    fun isActive(t: Long) = !hidden && t >= startMs && t < endMs
     fun isTextLike() = kind == LayerKind.TEXT || kind == LayerKind.STICKER
     fun isEffect() = kind == LayerKind.EFFECT
     fun isPicture() = kind == LayerKind.IMAGE || kind == LayerKind.VIDEO || kind == LayerKind.ANIMATED
@@ -569,6 +572,7 @@ class AudioTrack(
     var durationMs: Long = 0,
     var sourceDurationMs: Long = 0,
     var volume: Float = 1f,
+    var muteVol: Float = -1f,           // volume before it was muted from the timeline
     var fromVideo: Boolean = false,
     var denoise: Float = 0f,
     var enhanceVoice: Boolean = false,

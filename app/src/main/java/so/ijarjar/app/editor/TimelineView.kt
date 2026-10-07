@@ -120,11 +120,74 @@ class TimelineView(context: Context) : View(context) {
         drawClips(canvas, p)
         drawAudio(canvas, p)
         drawLayers(canvas, p)
+        drawGutter(canvas, p)
         drawRuler(canvas)
         paint.color = Color.WHITE
         paint.strokeWidth = dp(2f)
         canvas.drawLine(width / 2f, 0f, width / 2f, height.toFloat(), paint)
         canvas.drawCircle(width / 2f, dp(4f), dp(4f), paint)
+    }
+
+    // ------------------------------------------------------------------ left column (CapCut): mute / eye
+
+    private val gutterW get() = dp(44f)
+
+    private fun gutterBtn(canvas: Canvas, cy: Float, res: Int, on: Boolean) {
+        paint.color = if (on) 0xFF2A2A33.toInt() else 0xFF3A2228.toInt()
+        val r = dp(13f)
+        canvas.drawCircle(gutterW / 2f, cy, r, paint)
+        drawIcon(canvas, res, gutterW / 2f - dp(8f), cy, dp(16f), if (on) Color.WHITE else 0xFFFF6B6B.toInt())
+    }
+
+    private fun drawGutter(canvas: Canvas, p: Project) {
+        // fade so the rows slide under the buttons
+        paint.shader = android.graphics.LinearGradient(0f, 0f, gutterW + dp(10f), 0f, 0xF2121216.toInt(), 0x00121216, android.graphics.Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, rulerH, gutterW + dp(10f), height.toFloat(), paint)
+        paint.shader = null
+        if (p.clips.isNotEmpty()) {
+            val muted = p.clips.all { it.volume == 0f }
+            gutterBtn(canvas, clipTop() + clipH / 2, if (muted) R.drawable.ic_mute else R.drawable.ic_volume, !muted)
+        }
+        for ((i, a) in p.audios.withIndex()) {
+            val cy = audioTop(i) + audioH / 2
+            if (cy < rulerH || cy > height) continue
+            gutterBtn(canvas, cy, if (a.volume == 0f) R.drawable.ic_mute else R.drawable.ic_volume, a.volume != 0f)
+        }
+        for ((i, l) in p.layers.withIndex()) {
+            val cy = layerTop(i) + layerH / 2
+            if (cy < rulerH || cy > height) continue
+            gutterBtn(canvas, cy, if (l.hidden) R.drawable.ic_eye_off else R.drawable.ic_eye, !l.hidden)
+        }
+    }
+
+    /** Tap on the left column: mute / unmute sound, hide / show a layer. */
+    private fun gutterTap(p: Project, x: Float, y: Float): Boolean {
+        if (x > gutterW) return false
+        val ct = clipTop()
+        if (p.clips.isNotEmpty() && y in ct..(ct + clipH)) {
+            val muted = p.clips.all { it.volume == 0f }
+            for (c in p.clips) {
+                if (muted) { c.volume = if (c.muteVol > 0f) c.muteVol else 1f; c.muteVol = -1f }
+                else if (c.volume != 0f) { c.muteVol = c.volume; c.volume = 0f }
+            }
+            invalidate(); listener?.onTimelineEdited(); return true
+        }
+        for ((i, a) in p.audios.withIndex()) {
+            val top = audioTop(i)
+            if (y in (top - dp(3f))..(top + audioH + dp(3f))) {
+                if (a.volume == 0f) { a.volume = if (a.muteVol > 0f) a.muteVol else 1f; a.muteVol = -1f }
+                else { a.muteVol = a.volume; a.volume = 0f }
+                invalidate(); listener?.onTimelineEdited(); return true
+            }
+        }
+        for ((i, l) in p.layers.withIndex()) {
+            val top = layerTop(i)
+            if (y in (top - dp(3f))..(top + layerH + dp(3f))) {
+                l.hidden = !l.hidden
+                invalidate(); listener?.onTimelineEdited(); return true
+            }
+        }
+        return false
     }
 
     private fun drawRuler(canvas: Canvas) {
@@ -348,7 +411,9 @@ class TimelineView(context: Context) : View(context) {
             if (top > height || top + layerH < rulerH) continue
             val r = RectF(xOf(l.startMs), top, xOf(l.endMs), top + layerH)
             paint.color = layerColor(l)
+            if (l.hidden) paint.alpha = 90
             canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
+            paint.alpha = 255
             val g = l.linkGroup
             var labelX = max(r.left, 0f) + dp(5f)
             canvas.save(); canvas.clipRect(r)
@@ -604,6 +669,7 @@ class TimelineView(context: Context) : View(context) {
     }
 
     private fun onTap(p: Project, x: Float, y: Float) {
+        if (gutterTap(p, x, y)) return
         val t = tOf(x)
         // tapping a keyframe jumps to it
         keyframeAt(p, x, y)?.let { k ->

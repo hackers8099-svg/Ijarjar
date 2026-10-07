@@ -97,7 +97,7 @@ class Exporter(
         }
         // the sound of overlay videos (picture-in-picture)
         for (l in project.layers) {
-            if (l.kind != LayerKind.VIDEO || l.uri == null || l.volume <= 0f || l.startMs >= total) continue
+            if (l.kind != LayerKind.VIDEO || l.hidden || l.uri == null || l.volume <= 0f || l.startMs >= total) continue
             val info = so.ijarjar.app.media.MediaUtils.probe(context, Uri.parse(l.uri)) ?: continue
             if (!info.hasAudio) continue
             val len = minOf(l.durationMs, (info.durationMs - l.trimStartMs).coerceAtLeast(100))
