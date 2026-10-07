@@ -361,8 +361,12 @@ object LayerRenderer {
 
     // ------------------------------------------------------------------ shapes & drawings
 
-    fun shapeBitmap(l: Layer, canvasW: Int): Bitmap {
-        val (cw, ch) = contentSize(l, canvasW)
+    /** The shape drawn at its stretched size, so round corners and outlines stay round when it is made wider or taller. */
+    fun shapeBitmap(l: Layer, canvasW: Int, sx: Float = 1f, sy: Float = 1f): Bitmap {
+        val (cw0, ch0) = contentSize(l, canvasW)
+        val qx = (kotlin.math.round(abs(sx) * 50f) / 50f).coerceIn(0.02f, 50f)
+        val qy = (kotlin.math.round(abs(sy) * 50f) / 50f).coerceIn(0.02f, 50f)
+        val cw = cw0 * qx; val ch = ch0 * qy
         val scaleDown = (1024f / maxOf(cw, ch)).coerceAtMost(1f)
         val w = (cw * scaleDown).toInt().coerceAtLeast(4)
         val h = (ch * scaleDown).toInt().coerceAtLeast(4)
@@ -712,7 +716,7 @@ object LayerRenderer {
         }
         val bmp: Bitmap = when {
             l.isTextLike() -> textBitmap(l, canvasW, pose.visibleChars)
-            l.kind == LayerKind.SHAPE -> shapeBitmap(l, canvasW)
+            l.kind == LayerKind.SHAPE -> shapeBitmap(l, canvasW, pose.sx, pose.sy)
             else -> picture(context, l, t, content, maxDim) ?: return
         }
         val pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
