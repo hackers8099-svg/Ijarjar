@@ -3,6 +3,7 @@ package so.ijarjar.app.render
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import so.ijarjar.app.L
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -23,7 +24,7 @@ object PhoneGlb {
         ULTRA("Ultra · geesaha toosan", "Ultra · square corners"),
         BAR("Bar kamarad", "Camera bar"),
         CLASSIC("Caadi · 2 kamarad", "Classic · 2 cameras");
-        val label: String get() = so.ijarjar.app.L.t(so, en)
+        val label: String get() = L.t(so, en)
     }
 
     /** The .glb file for a style (made once, then reused). */
