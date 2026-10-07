@@ -500,8 +500,17 @@ class Layer(
     var modelSpin: Float = 0f,
     var modelTexture: String? = null,     // picture put on the 3D model
     var modelMaterial: String? = null,    // which material gets it (null = all)
-    var modelColor: Int = 0
+    var modelColor: Int = 0,
+    var parts: MutableMap<String, ModelPart> = mutableMapOf(),   // per material of a 3D model
+    var phoneStyle: String? = null       // generated 3D phone (PhoneGlb.Style name)
 ) {
+    /** Where this layer's moving picture comes from (overlay video, or a video on a 3D model). */
+    fun videoSource(): String? = when (kind) {
+        LayerKind.VIDEO -> uri
+        LayerKind.MODEL3D -> parts.values.firstOrNull { it.video && it.tex != null }?.tex
+        else -> null
+    }
+
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     fun isActive(t: Long) = t >= startMs && t < endMs
     fun isTextLike() = kind == LayerKind.TEXT || kind == LayerKind.STICKER
@@ -637,3 +646,6 @@ class SoundFx(
 ) {
     val on: Boolean get() = echoMix > 0.001f || roomMix > 0.001f
 }
+
+/** One part (material) of a 3D model: a friendly name, a picture or video on it, a colour. */
+class ModelPart(var name: String = "", var tex: String? = null, var video: Boolean = false, var color: Int = 0)

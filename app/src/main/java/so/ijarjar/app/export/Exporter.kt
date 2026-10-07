@@ -325,7 +325,7 @@ class Exporter(
             bmp.eraseColor(Color.TRANSPARENT)
             val canvas = Canvas(bmp)
             for (l in LayerRenderer.drawOrder(active)) {
-                val content = if (l.kind == LayerKind.VIDEO) frameSource.videoFrame(l, t, w) else null
+                val content = if (l.videoSource() != null) frameSource.videoFrame(l, t, w) else null
                 if (l.kind == LayerKind.VIDEO && content == null) continue
                 LayerRenderer.draw(context, canvas, l, t, w, h, content, 1920)
             }
@@ -341,6 +341,7 @@ class Exporter(
         var lastOwner: Any? = null
         private val retrievers = HashMap<String, MediaMetadataRetriever>()
         private val lastFrames = HashMap<String, Pair<Long, Bitmap>>()
+        private val durations = HashMap<String, Long>()
 
         fun canvasBitmap(w: Int, h: Int): Bitmap {
             val b = canvasBmp
@@ -349,11 +350,15 @@ class Exporter(
         }
 
         fun videoFrame(l: Layer, t: Long, canvasW: Int): Bitmap? {
-            val local = l.trimStartMs + (t - l.startMs)
+            var local = l.trimStartMs + (t - l.startMs)
+            if (l.kind == LayerKind.MODEL3D) {
+                val dur = durations.getOrPut(l.id) { so.ijarjar.app.media.MediaUtils.probe(context, Uri.parse(l.videoSource()))?.durationMs ?: 0L }
+                if (dur > 0) local %= dur
+            }
             val bucket = local / 33
             lastFrames[l.id]?.let { if (it.first == bucket) return it.second }
             val r = retrievers.getOrPut(l.id) {
-                MediaMetadataRetriever().apply { setDataSource(context, Uri.parse(l.uri)) }
+                MediaMetadataRetriever().apply { setDataSource(context, Uri.parse(l.videoSource())) }
             }
             val (cw, ch) = LayerRenderer.contentSize(l, canvasW)
             val tw = (cw * l.scale).toInt().coerceIn(16, 1920)

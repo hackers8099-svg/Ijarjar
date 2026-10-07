@@ -591,6 +591,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_left, tr("Bidix u dhaqaaji", "Move left")) { moveClip(s.index, -1) }
                 t(R.drawable.ic_right, tr("Midig u dhaqaaji", "Move right")) { moveClip(s.index, 1) }
                 t(R.drawable.ic_add, tr("Ku dar ka dib", "Add after")) { insertAfter = s.index; pickClipsG.launch(media()) }
+                t(R.drawable.ic_send_backward, tr("Ka dhig layer", "To overlay layer")) { clipToLayer(s.index) }
             }
             s is TimelineView.Sel.LayerSel && selectedLayer() != null -> {
                 val l = selectedLayer()!!
@@ -648,11 +649,16 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     }
                     if (l.kind == LayerKind.IMAGE) t(R.drawable.ic_ai, "AI") { showAiForLayer(l) }
                     group("3D")
-                    t(R.drawable.ic_cube, tr("Wareeji 3D", "3D rotate"), l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
-                    if (l.isPicture()) t(R.drawable.ic_mockup, "Mockup", l.mockup != so.ijarjar.app.model.MockupKind.NONE) { showMockup(l) }
-                    if (l.kind == LayerKind.MODEL3D) t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
+                    t(R.drawable.ic_cube, "3D", l.rotX != 0f || l.rotY != 0f || l.posZ != 0f) { show3D(l) }
+                    if (l.kind == LayerKind.MODEL3D) {
+                        t(R.drawable.ic_layers, tr("Qaybaha", "Parts"), l.parts.isNotEmpty()) { showModelParts(l) }
+                        if (l.phoneStyle != null) t(R.drawable.ic_mockup, tr("Shaashadda", "Screen")) { partTarget = l to "Screen"; pickPartMedia.launch(media()) }
+                        t(R.drawable.ic_rotate, tr("Wareeg joogto", "Auto spin"), l.modelSpin != 0f) { showSpin(l) }
+                    }
+                    if (l.isPicture()) t(R.drawable.ic_mockup, tr("Taleefan 3D", "3D phone")) { putInPhone(l) }
                     group(tr("Habee", "Arrange"))
                     t(R.drawable.ic_select, tr("Dooro badan", "Select")) { startMulti(l) }
+                    if (l.kind == LayerKind.VIDEO || l.kind == LayerKind.IMAGE) t(R.drawable.ic_bring_forward, tr("U dir track-ga weyn", "To main track")) { layerToClip(l) }
                     t(R.drawable.ic_link, tr("Isku xir", "Link"), l.linkGroup != null) { showLink(l) }
                     if (l.linkGroup != null) t(R.drawable.ic_unlink, tr("Kala fur", "Unlink")) { unlink(l) }
                     t(R.drawable.ic_bring_forward, tr("Kor u qaad", "Bring up")) { moveLayerInStack(l, 1); commit() }
@@ -1715,6 +1721,47 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
     }
 
+    /** Main-track clip → overlay layer (like CapCut "switch to overlay"); a black gap keeps the timing. */
+    private fun clipToLayer(i: Int) {
+        val c = project.clips.getOrNull(i) ?: return
+        val start = project.clipStartMs(i)
+        val len = c.outDurationMs
+        io.execute {
+            val black = File(File(filesDir, "backgrounds").apply { mkdirs() }, "black.png")
+            if (!black.exists()) FileOutputStream(black).use { Bitmap.createBitmap(64, 64, Bitmap.Config.ARGB_8888).apply { eraseColor(0xFF000000.toInt()) }.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            main.post {
+                val l = Layer(kind = if (c.kind == MediaKind.VIDEO) LayerKind.VIDEO else LayerKind.IMAGE, uri = c.uri, name = MediaUtils.displayName(this, Uri.parse(c.uri)))
+                l.startMs = start; l.endMs = start + len; l.trimStartMs = c.trimStartMs; l.volume = c.volume
+                l.contentAspect = c.height.toFloat().coerceAtLeast(1f) / c.width.coerceAtLeast(1); l.srcAspect = l.contentAspect
+                l.baseW = minOf(1f, 1f / (l.contentAspect * project.aspectRatio()))
+                l.adjust = c.adjust.copy()
+                project.clips[i] = Clip(uri = Uri.fromFile(black).toString(), kind = MediaKind.IMAGE, sourceDurationMs = len, trimStartMs = 0, trimEndMs = len, width = 64, height = 64)
+                project.layers.add(l)
+                setSelection(TimelineView.Sel.LayerSel(l.id)); commit()
+                toast(tr("Waa layer hadda — kor ama hoos u dhaqaaji (Habee → Layer-ada)", "It's a layer now — move it up or down (Arrange → Layers)"))
+            }
+        }
+    }
+
+    /** Overlay video / picture → back onto the main track at the playhead. */
+    private fun layerToClip(l: Layer) {
+        val uri = l.uri ?: return
+        io.execute {
+            val info = MediaUtils.probe(this, Uri.parse(uri))
+            main.post {
+                if (info == null) return@post
+                val len = l.durationMs
+                val c = if (l.kind == LayerKind.VIDEO) Clip(uri = uri, kind = MediaKind.VIDEO, sourceDurationMs = info.durationMs, trimStartMs = l.trimStartMs,
+                    trimEndMs = (l.trimStartMs + len).coerceAtMost(info.durationMs), width = info.width, height = info.height).also { it.volume = l.volume }
+                else Clip(uri = uri, kind = MediaKind.IMAGE, sourceDurationMs = len, trimStartMs = 0, trimEndMs = len, width = info.width, height = info.height)
+                val at = if (project.clips.isEmpty()) 0 else (project.clipIndexAt(timeMs) + 1).coerceAtMost(project.clips.size)
+                project.clips.add(at, c)
+                project.layers.remove(l); cleanupGroups()
+                setSelection(TimelineView.Sel.ClipSel(at)); commit()
+            }
+        }
+    }
+
     private fun showLayerVolume(l: Layer) {
         val (d, root) = Ui.sheet(this, tr("Codka layer-ka", "Layer volume")) { commit() }
         root.addView(Ui.sliderRow(this, tr("Cod", "Volume"), 0f, 1f, l.volume.coerceIn(0f, 1f)) { l.volume = it; live() })
@@ -2247,6 +2294,128 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
     }
 
+    // ------------------------------------------------------------------ real 3D phones + model parts
+
+    private var partTarget: Pair<Layer, String>? = null
+    private val pickPartMedia = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        val (l, mat) = partTarget ?: return@registerForActivityResult
+        if (uri == null) return@registerForActivityResult
+        keep(uri)
+        val isVideo = contentResolver.getType(uri)?.startsWith("video") == true
+        // only one video at a time on a model
+        if (isVideo) for (p in l.parts.values) if (p.video) { p.video = false; p.tex = null }
+        val part = l.parts.getOrPut(mat) { so.ijarjar.app.model.ModelPart(name = mat) }
+        part.tex = uri.toString(); part.video = isVideo
+        if (isVideo) io.execute {
+            val info = MediaUtils.probe(this, uri)
+            main.post { if (info != null && info.durationMs > l.durationMs && !photo) l.endMs = l.startMs + info.durationMs; commit() }
+        } else commit()
+        toast(if (isVideo) tr("Video-ga waa lagu xiray qaybta ✓", "Video linked to the part ✓") else tr("Sawirka waa lagu xiray qaybta ✓", "Picture linked to the part ✓"))
+    }
+
+    /** Pick one of the built-in 3D phones, then a screenshot or video for its screen. */
+    private fun showPhonePicker() {
+        val (d, root) = Ui.sheet(this, tr("Taleefan 3D", "3D phone"))
+        root.addView(Ui.label(this, tr("Taleefan 3D ah oo dhab ah — wareeji XYZ, shaashaddana sawir ama video geli.", "A real 3D phone — turn it in XYZ and put a screenshot or video on its screen.")))
+        chipRow(root, so.ijarjar.app.render.PhoneGlb.Style.entries.map { R.drawable.ic_mockup to it.label }) { i ->
+            d.dismiss()
+            val style = so.ijarjar.app.render.PhoneGlb.Style.entries[i]
+            io.execute {
+                val f = so.ijarjar.app.render.PhoneGlb.file(this, style)
+                main.post {
+                    val l = Layer(kind = LayerKind.MODEL3D, uri = Uri.fromFile(f).toString(), name = tr("Taleefan 3D", "3D phone") + " · " + style.label,
+                        baseW = 0.85f, contentAspect = 1f)
+                    l.phoneStyle = style.name; l.rotY = -22f; l.rotX = 8f
+                    newLayerTimes(l, 5000)
+                    addLayer(l)
+                    partTarget = l to "Screen"
+                    toast(tr("Hadda dooro sawir ama video shaashadda", "Now pick a picture or video for the screen"))
+                    pickPartMedia.launch(media())
+                }
+            }
+        }
+        d.show()
+    }
+
+    /** Puts an existing picture / video layer onto the screen of a 3D phone. */
+    private fun putInPhone(src: Layer) {
+        val uri = src.uri ?: return
+        io.execute {
+            val f = so.ijarjar.app.render.PhoneGlb.file(this, so.ijarjar.app.render.PhoneGlb.Style.PRO)
+            main.post {
+                val l = Layer(kind = LayerKind.MODEL3D, uri = Uri.fromFile(f).toString(), name = tr("Taleefan 3D", "3D phone"), baseW = 0.85f, contentAspect = 1f)
+                l.phoneStyle = so.ijarjar.app.render.PhoneGlb.Style.PRO.name; l.rotY = -22f; l.rotX = 8f
+                l.startMs = src.startMs; l.endMs = src.endMs; l.cx = src.cx; l.cy = src.cy
+                l.parts["Screen"] = so.ijarjar.app.model.ModelPart("Screen", uri, src.kind == LayerKind.VIDEO)
+                val i = project.layers.indexOf(src)
+                project.layers[i] = l
+                setSelection(TimelineView.Sel.LayerSel(l.id)); commit()
+                toast(tr("Waxaa la geliyay taleefan 3D ah ✓", "Now inside a 3D phone ✓"))
+            }
+        }
+    }
+
+    /** Every part of a 3D model with a small picture showing where it is; rename it, put a picture, video or colour on it. */
+    private fun showModelParts(l: Layer) {
+        val uri = l.uri ?: return
+        val (d, root) = Ui.sheet(this, tr("Qaybaha moodelka", "Model parts")) { commit() }
+        val status = Ui.label(this, tr("Qaybaha waa la akhrinayaa…", "Reading the parts…"))
+        root.addView(status)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(list)
+        d.show()
+        io.execute {
+            val names = so.ijarjar.app.render.Model3D.materials(this, uri)
+            main.post {
+                status.text = if (names.isEmpty()) tr("Qaybo lama helin.", "No parts found.")
+                    else tr("Qaybta casaanka ah ee sawirka ku jirta waa qaybtaas. Taabo magaca si aad u beddesho.", "The pink area in each picture is that part. Tap a name to rename it.")
+                val thumbs = HashMap<String, ImageView>()
+                for (m in names) {
+                    val part = l.parts[m]
+                    val row = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                        background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()); setPadding(dp(6f), dp(6f), dp(6f), dp(6f))
+                    }
+                    val iv = ImageView(this).apply { background = Ui.roundBg(0xFF15151A.toInt(), dp(8f).toFloat()) }
+                    thumbs[m] = iv
+                    row.addView(iv, LinearLayout.LayoutParams(dp(64f), dp(64f)))
+                    val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(10f), 0, 0, 0) }
+                    val title = Ui.text(this, part?.name?.takeIf { it.isNotBlank() && it != m } ?: m, 14f, Ui.TEXT, true)
+                    title.setOnClickListener {
+                        val input = editText(title.text.toString(), tr("Magac", "Name")) {}
+                        MaterialAlertDialogBuilder(this).setTitle(tr("Magaca qaybta", "Part name")).setView(input)
+                            .setPositiveButton("OK") { _, _ ->
+                                val n = input.text.toString().trim()
+                                l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart() }.name = n
+                                title.text = n.ifBlank { m }
+                            }.setNegativeButton(tr("Jooji", "Cancel"), null).show()
+                    }
+                    col.addView(title)
+                    val what = when { part?.video == true -> "🎬 video"; part?.tex != null -> "🖼 " + tr("sawir", "picture"); part?.color != null && part.color != 0 -> "● " + tr("midab", "colour"); else -> tr("asal", "original") }
+                    col.addView(Ui.text(this, what, 11f, Ui.TEXT2))
+                    val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+                    fun small(icon: Int, f: () -> Unit) = btns.addView(Ui.iconButton(this, icon, 18f, Ui.ACCENT) { f() })
+                    small(R.drawable.ic_image_add) { partTarget = l to m; d.dismiss(); pickPartMedia.launch(media()) }
+                    small(R.drawable.ic_filter) {
+                        pickColor(this, l.parts[m]?.color?.takeIf { it != 0 } ?: 0xFF8A8F98.toInt()) { c -> l.parts.getOrPut(m) { so.ijarjar.app.model.ModelPart(name = m) }.color = c; live() }
+                    }
+                    small(R.drawable.ic_reset) { l.parts[m]?.let { it.tex = null; it.video = false; it.color = 0 }; live() }
+                    col.addView(btns)
+                    row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) })
+                }
+                // previews one by one
+                io.execute {
+                    for (m in names) {
+                        val b = so.ijarjar.app.render.Model3D.partPreviews(this, uri, listOf(m), 160)[m] ?: continue
+                        main.post { thumbs[m]?.setImageBitmap(b) }
+                    }
+                    main.post { live() }
+                }
+            }
+        }
+    }
+
     private fun showModelColor(l: Layer) {
         val (d, root) = Ui.sheet(this, tr("Midabka moodelka", "Model colour")) { commit() }
         root.addView(Ui.label(this, tr("Midab ku dar (0 = midabkii asalka)", "Tint the model (⦸ = original)")))
@@ -2291,9 +2460,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 live(); build()
             },
             "◆ Keyframe" to { toggleKeyframe(false); build() })
-        if (l.kind == LayerKind.MODEL3D) buttonRow(root,
-            tr("Beddel muuqaalka (texture)", "Replace texture") to { textureTarget = l; pickTexture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-            tr("Midabka", "Colour") to { showModelColor(l) })
+        if (l.kind == LayerKind.MODEL3D) buttonRow(root, tr("Qaybaha (sawir, video, midab)", "Parts (picture, video, colour)") to { d.dismiss(); showModelParts(l) })
         if (p0.rx == 0f && p0.ry == 0f && l.keyframes.isEmpty()) root.addView(Ui.label(this, tr("Talo: ◆ Keyframe ku dar si 3D-gu u dhaqaaqo.", "Tip: add ◆ keyframes to animate in 3D.")))
         d.show()
     }
@@ -2866,7 +3033,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 0 -> pickOverlayG.launch(media())
                 1 -> pickOverlay.launch(arrayOf("video/*", "image/*", "application/json", "application/zip", "application/octet-stream", "*/*"))
                 2 -> pickModel.launch(arrayOf("model/gltf-binary", "model/*", "application/octet-stream"))
-                3 -> { mockupNext = true; pickOverlayG.launch(media()) }
+                3 -> showPhonePicker()
                 else -> linkPhotoProject()
             }
         }

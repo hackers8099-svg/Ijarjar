@@ -705,7 +705,7 @@ object LayerRenderer {
         val alpha = (pose.opacity.coerceIn(0f, 1f) * 255).toInt()
 
         if (l.kind == LayerKind.DRAW) { drawStrokes(canvas, l, m, cw, ch, alpha); return }
-        if (l.kind == LayerKind.MODEL3D) { drawModel(context, canvas, l, pose, t, canvasW, canvasH, cw, ch, alpha, maxDim); return }
+        if (l.kind == LayerKind.MODEL3D) { drawModel(context, canvas, l, pose, t, canvasW, canvasH, cw, ch, alpha, maxDim, content); return }
         if (l.kind == LayerKind.TEXT && usesGlyphs(l, t)) {
             TextAnimator.draw(canvas, l, textSpec(l, canvasW), m, t, alpha)
             return
@@ -783,15 +783,23 @@ object LayerRenderer {
 
     /** 3D model: the model turns in real 3D (rotX / rotY / spin); the layer box is flat. */
     private fun drawModel(context: Context, canvas: Canvas, l: Layer, pose: Pose, t: Long, canvasW: Int, canvasH: Int,
-                          cw: Float, ch: Float, alpha: Int, maxDim: Int) {
+                          cw: Float, ch: Float, alpha: Int, maxDim: Int, content: Bitmap? = null) {
         val uri = l.uri ?: return
         // render a bit bigger than shown so edges stay smooth
         val size = (cw * pose.scale * 1.4f).toInt().coerceIn(96, minOf((maxDim * 1.4f).toInt(), 1800))
         val spin = l.modelSpin * (t - l.startMs) / 1000f * 360f
-        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|${l.modelTexture}|${l.modelMaterial}|${l.modelColor}"
+        val looks = ArrayList<Model3D.Look>()
+        if (l.modelTexture != null || l.modelColor != 0) looks.add(Model3D.Look(l.modelMaterial ?: "", l.modelTexture, color = l.modelColor))
+        var liveKey = ""
+        for ((m, p) in l.parts) {
+            if (p.video) {
+                if (content != null) { val k = "${(t - l.startMs) / 33}"; looks.add(Model3D.Look(m, bitmap = content, bitmapKey = k, color = p.color)); liveKey += "$m@$k" }
+            } else if (p.tex != null || p.color != 0) looks.add(Model3D.Look(m, p.tex, color = p.color))
+        }
+        val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}" } + "|$liveKey"
         val cached = modelFrames[l.id]
         val bmp = if (cached != null && cached.key == key) cached.bmp else {
-            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, l.modelTexture, l.modelMaterial, l.modelColor) ?: cached?.bmp ?: return
+            val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, looks) ?: cached?.bmp ?: return
             modelFrames[l.id] = ModelFrame(key, b)
             b
         }

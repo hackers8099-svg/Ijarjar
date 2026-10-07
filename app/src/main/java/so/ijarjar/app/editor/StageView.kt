@@ -146,6 +146,12 @@ class StageView(context: Context) : FrameLayout(context) {
         refreshMainClip(p, w, h)
         canvasVideos = videosOnCanvas(p)
         for (l in p.layers) {
+            if (l.kind == LayerKind.MODEL3D) {
+                // the video on a 3D model plays hidden; its frames go onto the model
+                videoLayerViews[l.id]?.let { tv -> tv.alpha = 0.01f; tv.visibility = if (l.isActive(timeMs)) View.VISIBLE else View.INVISIBLE
+                    val lp = tv.layoutParams; if (lp.width != 360) { lp.width = 360; lp.height = 640; tv.layoutParams = lp } }
+                continue
+            }
             if (l.kind != LayerKind.VIDEO) continue
             val tv = videoLayerViews[l.id] ?: continue
             val pose = LayerRenderer.poseAt(l, timeMs)
@@ -321,7 +327,8 @@ class StageView(context: Context) : FrameLayout(context) {
                     LayerRenderer.draw(context, canvas, l, timeMs, w, h, fr)
                     continue
                 }
-                LayerRenderer.draw(context, canvas, l, timeMs, w, h, null)
+                val live = if (l.kind == LayerKind.MODEL3D && l.videoSource() != null) videoFrame(l, w) else null
+                LayerRenderer.draw(context, canvas, l, timeMs, w, h, live)
             }
             if (showGrid) {
                 gridPaint.strokeWidth = dp(1f)

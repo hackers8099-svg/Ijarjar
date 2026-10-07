@@ -136,7 +136,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
     }
 
     private fun syncOverlayPlayers() {
-        val videoLayers = project.layers.filter { it.kind == LayerKind.VIDEO && it.uri != null }
+        val videoLayers = project.layers.filter { it.videoSource() != null }
         val ids = videoLayers.map { it.id }.toSet()
         for (id in overlayPlayers.keys.toList()) {
             if (id !in ids) {
@@ -146,7 +146,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             }
         }
         for (l in videoLayers) {
-            val sig = l.uri!!
+            val sig = l.videoSource()!!
             if (overlaySignature[l.id] == sig) { overlayPlayers[l.id]?.volume = l.volume.coerceIn(0f, 1f); continue }
             overlayPlayers.remove(l.id)?.release()
             val tv = stage.videoLayerViews[l.id] ?: TextureView(context).also {
@@ -159,7 +159,8 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
             pl.volume = l.volume.coerceIn(0f, 1f)
             pl.playbackParameters = PlaybackParameters(1f, l.voice.pitch)
             pl.setVideoTextureView(tv)
-            pl.setMediaItem(MediaItem.fromUri(Uri.parse(l.uri)))
+            pl.setMediaItem(MediaItem.fromUri(Uri.parse(sig)))
+            if (l.kind == LayerKind.MODEL3D) pl.repeatMode = Player.REPEAT_MODE_ONE
             pl.prepare()
             overlayPlayers[l.id] = pl
             overlaySignature[l.id] = sig
@@ -262,10 +263,12 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
         }
         val now = System.currentTimeMillis()
         for (l in project.layers) {
-            if (l.kind != LayerKind.VIDEO) continue
+            if (l.videoSource() == null) continue
             val pl = overlayPlayers[l.id] ?: continue
             if (!l.isActive(t)) { if (pl.isPlaying) pl.pause(); continue }
-            val expect = l.trimStartMs + (t - l.startMs)
+            val raw = l.trimStartMs + (t - l.startMs)
+            // a video on a 3D model loops
+            val expect = if (l.kind == LayerKind.MODEL3D && pl.duration > 0) raw % pl.duration else raw
             if (isPlaying) {
                 if (force || abs(pl.currentPosition - expect) > 300) pl.seekTo(expect)
                 if (!pl.isPlaying) pl.play()
