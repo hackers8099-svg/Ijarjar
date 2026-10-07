@@ -2667,6 +2667,18 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private var activeGraph: GraphView? = null
 
     /** Adds keyframes from the playhead: each step is (ms after the playhead, change to the pose). */
+    /**
+     * Which keyframe curves an ease changes. Like AE, easing a keyframe changes the move INTO it and
+     * the move OUT of it (so it also works on the last keyframe). No keyframe at the playhead = all.
+     */
+    private fun easeTargets(l: Layer, k: Keyframe?): List<Keyframe> {
+        val ks = l.keyframes.sortedBy { it.t }
+        if (ks.size < 2) return emptyList()
+        if (k == null) return ks.dropLast(1)
+        val i = ks.indexOf(k)
+        return listOfNotNull(ks.getOrNull(i - 1), if (i < ks.size - 1) k else null)
+    }
+
     private fun addMotion(l: Layer, steps: List<Pair<Long, (so.ijarjar.app.render.Pose) -> Unit>>, ease: FloatArray = floatArrayOf(0.333f, 0f, 0.667f, 1f)) {
         val base = LayerRenderer.basePose(l, timeMs)
         val start = (timeMs - l.startMs).coerceIn(0, l.durationMs)
@@ -2692,10 +2704,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         for ((name, b) in eases) {
             val cv = CurveView(this).apply { easing = Easing.CUSTOM; this.b = b }
             row.addView(tileWithLabel(this, cv, name, 64f) {
-                val k = LayerRenderer.keyframeAt(l, timeMs)
-                val targets = if (k != null) listOf(k) else l.keyframes
+                val targets = easeTargets(l, LayerRenderer.keyframeAt(l, timeMs))
+                if (targets.isEmpty()) { toast(tr("Marka hore samee ugu yaraan 2 keyframe", "Make at least 2 keyframes first")); return@tileWithLabel }
                 for (o in targets) { o.ease = Easing.CUSTOM; o.bx1 = b[0]; o.by1 = b[1]; o.bx2 = b[2]; o.by2 = b[3] }
-                live(); toast(name + " ✓"); after()
+                live(); toast(name + " ✓ (" + targets.size + ")"); after()
             })
         }
         body.addView(sv)
@@ -2827,7 +2839,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.label(this, tr("Taabo keyframe ◆, kadib jiid labada bar ee cad si aad u beddesho xawaaraha (sida AE Graph Editor).",
                     "Tap a keyframe ◆, then drag the two white handles to shape its speed (like the AE Graph Editor).")))
                 fun setEase(e: Easing, b: FloatArray?, all: Boolean) {
-                    val targets = if (all) l.keyframes else listOfNotNull(graph.selected)
+                    val targets = if (all) l.keyframes else easeTargets(l, graph.selected ?: LayerRenderer.keyframeAt(l, timeMs)).ifEmpty { l.keyframes }
                     for (k in targets) { k.ease = e; if (b != null) { k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3] } }
                     live(); graph.invalidate()
                 }
