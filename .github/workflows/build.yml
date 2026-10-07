@@ -64,6 +64,14 @@ jobs:
           mkdir -p out
           cp app/build/outputs/apk/release/app-release.apk out/ijarjar.apk
 
+      - name: Verify APK can be installed
+        continue-on-error: true
+        run: |
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          sig=$($BT/apksigner verify --verbose --min-sdk-version 26 out/ijarjar.apk 2>&1 | grep -E "Verifie|ERROR|WARNING|DOES NOT" | tr '\n' ' ')
+          badge=$($BT/aapt2 dump badging out/ijarjar.apk 2>&1 | grep -E "^package|sdkVersion|native-code|ERROR" | tr '\n' ' ')
+          echo "::warning title=APK verify::$sig | $badge"
+
       - uses: actions/upload-artifact@v4
         continue-on-error: true
         with:
