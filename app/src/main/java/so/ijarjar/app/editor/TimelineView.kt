@@ -132,14 +132,17 @@ class TimelineView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ left column (CapCut): mute / eye
 
-    private val gutterW get() = dp(44f)
+    private val gutterW get() = dp(80f)
+    private val col1 get() = dp(22f)     // eye
+    private val col2 get() = dp(58f)     // sound
 
-    private fun gutterBtn(canvas: Canvas, cy: Float, res: Int, on: Boolean) {
+    private fun gutterBtn(canvas: Canvas, cx: Float, cy: Float, res: Int, on: Boolean) {
         paint.color = if (on) 0xFF2A2A33.toInt() else 0xFF3A2228.toInt()
-        val r = dp(13f)
-        canvas.drawCircle(gutterW / 2f, cy, r, paint)
-        drawIcon(canvas, res, gutterW / 2f - dp(8f), cy, dp(16f), if (on) Color.WHITE else 0xFFFF6B6B.toInt())
+        canvas.drawCircle(cx, cy, dp(13f), paint)
+        drawIcon(canvas, res, cx - dp(8f), cy, dp(16f), if (on) Color.WHITE else 0xFFFF6B6B.toInt())
     }
+
+    private fun hasSound(l: Layer) = l.kind == LayerKind.VIDEO
 
     private fun drawGutter(canvas: Canvas, p: Project) {
         // fade so the rows slide under the buttons
@@ -147,46 +150,54 @@ class TimelineView(context: Context) : View(context) {
         canvas.drawRect(0f, rulerH, gutterW + dp(10f), height.toFloat(), paint)
         paint.shader = null
         if (p.clips.isNotEmpty()) {
+            val cy = clipTop() + clipH / 2
+            gutterBtn(canvas, col1, cy, if (p.mainHidden) R.drawable.ic_eye_off else R.drawable.ic_eye, !p.mainHidden)
             val muted = p.clips.all { it.volume == 0f }
-            gutterBtn(canvas, clipTop() + clipH / 2, if (muted) R.drawable.ic_mute else R.drawable.ic_volume, !muted)
+            gutterBtn(canvas, col2, cy, if (muted) R.drawable.ic_mute else R.drawable.ic_volume, !muted)
         }
         for ((i, a) in p.audios.withIndex()) {
             val cy = audioTop(i) + audioH / 2
             if (cy < rulerH || cy > height) continue
-            gutterBtn(canvas, cy, if (a.volume == 0f) R.drawable.ic_mute else R.drawable.ic_volume, a.volume != 0f)
+            gutterBtn(canvas, col2, cy, if (a.volume == 0f) R.drawable.ic_mute else R.drawable.ic_volume, a.volume != 0f)
         }
         for ((i, l) in p.layers.withIndex()) {
             val cy = layerTop(i) + layerH / 2
             if (cy < rulerH || cy > height) continue
-            gutterBtn(canvas, cy, if (l.hidden) R.drawable.ic_eye_off else R.drawable.ic_eye, !l.hidden)
+            gutterBtn(canvas, col1, cy, if (l.hidden) R.drawable.ic_eye_off else R.drawable.ic_eye, !l.hidden)
+            if (hasSound(l)) gutterBtn(canvas, col2, cy, if (l.volume == 0f) R.drawable.ic_mute else R.drawable.ic_volume, l.volume != 0f)
         }
     }
 
-    /** Tap on the left column: mute / unmute sound, hide / show a layer. */
+    /** Tap on the left column: hide / show (eye) and mute / unmute (speaker). */
     private fun gutterTap(p: Project, x: Float, y: Float): Boolean {
         if (x > gutterW) return false
+        val eye = x < (col1 + col2) / 2
+        fun done(): Boolean { performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP); invalidate(); listener?.onTimelineEdited(); return true }
         val ct = clipTop()
         if (p.clips.isNotEmpty() && y in ct..(ct + clipH)) {
+            if (eye) { p.mainHidden = !p.mainHidden; return done() }
             val muted = p.clips.all { it.volume == 0f }
             for (c in p.clips) {
                 if (muted) { c.volume = if (c.muteVol > 0f) c.muteVol else 1f; c.muteVol = -1f }
                 else if (c.volume != 0f) { c.muteVol = c.volume; c.volume = 0f }
             }
-            invalidate(); listener?.onTimelineEdited(); return true
+            return done()
         }
         for ((i, a) in p.audios.withIndex()) {
             val top = audioTop(i)
             if (y in (top - dp(3f))..(top + audioH + dp(3f))) {
                 if (a.volume == 0f) { a.volume = if (a.muteVol > 0f) a.muteVol else 1f; a.muteVol = -1f }
                 else { a.muteVol = a.volume; a.volume = 0f }
-                invalidate(); listener?.onTimelineEdited(); return true
+                return done()
             }
         }
         for ((i, l) in p.layers.withIndex()) {
             val top = layerTop(i)
             if (y in (top - dp(3f))..(top + layerH + dp(3f))) {
-                l.hidden = !l.hidden
-                invalidate(); listener?.onTimelineEdited(); return true
+                if (eye || !hasSound(l)) l.hidden = !l.hidden
+                else if (l.volume == 0f) { l.volume = if (l.muteVol > 0f) l.muteVol else 1f; l.muteVol = -1f }
+                else { l.muteVol = l.volume; l.volume = 0f }
+                return done()
             }
         }
         return false
@@ -413,6 +424,45 @@ class TimelineView(context: Context) : View(context) {
         LayerKind.MODEL3D -> R.drawable.ic_model3d
     }
 
+    private val mediaDur = HashMap<String, Long>()
+    private val mediaShade = Paint().apply { color = 0x66000000 }
+
+    /** Pictures of what is inside a layer: its video / photo, or the video / picture put on a 3D model's screen. */
+    private fun drawLayerMedia(canvas: Canvas, l: Layer, r: RectF) {
+        val (uri, isVideo) = when (l.kind) {
+            LayerKind.VIDEO -> (l.uri ?: return) to true
+            LayerKind.IMAGE -> (l.uri ?: return) to false
+            LayerKind.MODEL3D -> l.videoSource()?.let { it to true } ?: (l.parts.values.firstOrNull { it.tex != null && !it.video }?.tex ?: return) to false
+            else -> return
+        }
+        val dur = if (isVideo) mediaDur.getOrPut(uri) {
+            executor.execute { val d = MediaUtils.probe(context, Uri.parse(uri))?.durationMs ?: 0L; main.post { mediaDur[uri] = d; invalidate() } }
+            -1L
+        } else 0L
+        if (isVideo && dur < 0) return
+        val tw = layerH * 1.2f
+        val x0 = max(r.left, 0f); val x1 = min(r.right, width.toFloat())
+        var x = r.left + floor(((x0 - r.left) / tw).toDouble()).toFloat() * tw
+        while (x < x1) {
+            val t = tOf(x + tw / 2).coerceIn(l.startMs, l.endMs)
+            val src = when {
+                !isVideo -> 0L
+                l.kind == LayerKind.MODEL3D -> l.screenTime(t, dur)
+                else -> l.trimStartMs + (t - l.startMs)
+            }
+            val bucket = if (isVideo) (src / 1000) * 1000 else 0L
+            val key = "$uri#$bucket"
+            val dst = RectF(x, r.top, x + tw, r.bottom)
+            if (thumbs.containsKey(key)) thumbs[key]?.let { b -> canvas.drawBitmap(b, centerCrop(b, dst), dst, null) }
+            else {
+                thumbs[key] = null
+                executor.execute { val b = MediaUtils.thumbnail(context, Uri.parse(uri), isVideo, bucket, 120); main.post { thumbs[key] = b; invalidate() } }
+            }
+            x += tw
+        }
+        canvas.drawRect(r, mediaShade)   // keep the name readable
+    }
+
     private fun drawLayers(canvas: Canvas, p: Project) {
         val groups = p.layers.mapNotNull { it.linkGroup }.distinct()
         val selLayer = (selection as? Sel.LayerSel)?.let { s -> p.layers.firstOrNull { it.id == s.id } }
@@ -425,8 +475,9 @@ class TimelineView(context: Context) : View(context) {
             canvas.drawRoundRect(r, dp(5f), dp(5f), paint)
             paint.alpha = 255
             val g = l.linkGroup
-            var labelX = max(r.left, 0f) + dp(5f)
+            var labelX = max(r.left, gutterW) + dp(5f)
             canvas.save(); canvas.clipRect(r)
+            drawLayerMedia(canvas, l, r)
             if (g != null) {
                 paint.color = linkColors[groups.indexOf(g) % linkColors.size]
                 canvas.drawRect(r.left, r.top, r.left + dp(4f), r.bottom, paint)
@@ -567,7 +618,7 @@ class TimelineView(context: Context) : View(context) {
         val p = project ?: return false
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             scroller.forceFinished(true); flingKind = Drag.NONE
-            pinching = false; downTimeMs = timeMs
+            pinching = false; downTimeMs = timeMs; autoMs = 0L
             velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
         }
         velocity?.addMovement(e)
@@ -612,12 +663,17 @@ class TimelineView(context: Context) : View(context) {
                         vScroll = (vScroll - dy).coerceIn(0f, max(0f, contentHeight() - height))
                         invalidate()
                     }
-                    else -> { applyEdit(p, e.x - downX); listener?.onTimelineEditing(); invalidate() }
+                    else -> {
+                        applyEdit(p, e.x - downX); listener?.onTimelineEditing(); invalidate()
+                        // finger near the left / right edge: the timeline keeps sliding so the drag never stops
+                        lastEditX = e.x
+                        if (!autoOn) { autoOn = true; postOnAnimation(autoStep) }
+                    }
                 }
             }
             MotionEvent.ACTION_UP -> {
                 if (!decided) onTap(p, e.x, e.y)
-                else if (drag != Drag.SCRUB && drag != Drag.VSCROLL && drag != Drag.NONE) listener?.onTimelineEdited()
+                else if (drag != Drag.SCRUB && drag != Drag.VSCROLL && drag != Drag.NONE) { if (autoMs != 0L) listener?.onScrub(timeMs); listener?.onTimelineEdited() }
                 else startFling(p)
                 drag = Drag.NONE
                 velocity?.recycle(); velocity = null
@@ -680,8 +736,35 @@ class TimelineView(context: Context) : View(context) {
         }
     }
 
+    // ------------------------------------------------------------------ edge auto-scroll while dragging
+    private var autoMs = 0L          // how far the view slid during this drag
+    private var lastEditX = 0f
+    private var autoOn = false
+    private val autoStep = object : Runnable {
+        override fun run() {
+            val p = project
+            val editing = drag != Drag.NONE && drag != Drag.SCRUB && drag != Drag.VSCROLL
+            if (p == null || !editing) { autoOn = false; return }
+            val edge = dp(56f)
+            val dir = when { lastEditX > width - edge -> 1; lastEditX < gutterW + edge -> -1; else -> 0 }
+            if (dir == 0) { autoOn = false; return }
+            val depth = if (dir > 0) (lastEditX - (width - edge)) / edge else ((gutterW + edge) - lastEditX) / edge
+            val px = dp(4f) + dp(16f) * depth.coerceIn(0f, 1.5f)
+            val maxT = max(p.durationMs, p.layers.maxOfOrNull { it.endMs } ?: 0L) + 20_000
+            val nt = (timeMs + (dir * px / pxPerMs).toLong()).coerceIn(0, maxT)
+            if (nt != timeMs) {
+                autoMs += nt - timeMs
+                timeMs = nt
+                applyEdit(p, lastEditX - downX)
+                listener?.onTimelineEditing()
+                invalidate()
+            }
+            postOnAnimation(this)
+        }
+    }
+
     private fun applyEdit(p: Project, totalDx: Float) {
-        val dMs = (totalDx / pxPerMs).toLong()
+        val dMs = (totalDx / pxPerMs).toLong() + autoMs
         when (drag) {
             Drag.CLIP_L, Drag.CLIP_R -> {
                 val c = p.clips.getOrNull((selection as Sel.ClipSel).index) ?: return

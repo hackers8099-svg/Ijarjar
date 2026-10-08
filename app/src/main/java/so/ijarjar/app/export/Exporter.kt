@@ -259,6 +259,7 @@ class Exporter(
         video.add(Presentation.createForWidthAndHeight(w, h, Presentation.LAYOUT_SCALE_TO_FIT))
         video.add(ClipTransform(index, w.toFloat() / h))
         video.add(FadeColor(index))
+        if (project.mainHidden) video.add(RgbMatrix { _, _ -> FloatArray(16).also { it[15] = 1f } })   // main track hidden: black
         if (project.layers.isNotEmpty()) {
             video.add(OverlayEffect(ImmutableList.of<TextureOverlay>(CanvasOverlay(clipStartMs, w, h))))
         }

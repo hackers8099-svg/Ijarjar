@@ -424,6 +424,7 @@ class Layer(
     var font: Int = 0,
     var fontPath: String? = null,
     var volume: Float = 1f,              // sound of an overlay video layer
+    var muteVol: Float = -1f,            // volume before it was muted from the timeline
     var voice: VoiceFx = VoiceFx.NONE,
     var sfx: SoundFx = SoundFx(),        // imported .ttf / .otf (overrides [font])
     var align: Int = 1,
@@ -626,6 +627,8 @@ class Music(
 )
 
 class Project(
+    /** Main track hidden with the eye in the timeline (shows black, sound still plays unless muted). */
+    var mainHidden: Boolean = false,
     var id: String = newId(),
     var name: String = "Mashruuc",
     var aspect: String = "9:16",

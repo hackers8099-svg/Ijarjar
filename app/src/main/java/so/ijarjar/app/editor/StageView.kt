@@ -138,6 +138,8 @@ class StageView(context: Context) : FrameLayout(context) {
         val p = project ?: return
         val w = width; val h = height
         if (w == 0) return
+        val mainA = if (p.mainHidden) 0f else 1f
+        if (mainTexture.alpha != mainA) { mainTexture.alpha = mainA; imageView.alpha = mainA; lutView.alpha = mainA }
         if (p.isPhoto) {
             mainTexture.visibility = View.GONE
             imageView.visibility = View.GONE
