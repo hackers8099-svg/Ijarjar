@@ -438,7 +438,7 @@ object LayerRenderer {
         val hc = Canvas(hole)
         hc.drawColor(Color.BLACK)
         hc.save(); hc.translate(sp.pad + dx, sp.pad + dy)
-        val cut = TextPaint(sp.paint).apply { shader = null; color = Color.BLACK; xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+        val cut = TextPaint(sp.paint).apply { shader = null; this.color = Color.BLACK; xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
         textLayout(hidden(sp.chars, visibleChars), cut, sp.layoutW, sp.alignment, l).draw(hc)
         hc.restore()
         val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
