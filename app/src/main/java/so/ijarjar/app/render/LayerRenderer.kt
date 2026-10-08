@@ -821,7 +821,9 @@ object LayerRenderer {
             if (modelRequested[l.id] != key) {
                 modelRequested[l.id] = key
                 val id = l.id
-                Model3D.renderAsync(context, id, uri, size, size, pose.rx, pose.ry + spin, looks, light) { b ->
+                // the live video frame is reused by the screen, so hand the 3D thread its own copy
+                val safeLooks = looks.map { lk -> if (lk.bitmap == null) lk else Model3D.Look(lk.material, lk.texUri, lk.bitmap.copy(Bitmap.Config.ARGB_8888, false), lk.bitmapKey, lk.color, lk.hidden, lk.flipV, lk.flipH, lk.aspect) }
+                Model3D.renderAsync(context, id, uri, size, size, pose.rx, pose.ry + spin, safeLooks, light) { b ->
                     if (modelRequested[id] == key) modelRequested.remove(id)
                     if (b != null) {
                         modelFrames[id] = ModelFrame(key, b); modelFrames["$id|$key"] = ModelFrame(key, b)

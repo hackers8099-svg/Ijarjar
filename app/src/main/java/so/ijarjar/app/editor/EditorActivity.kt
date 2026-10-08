@@ -3185,13 +3185,25 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         nav.addView(diamond)
         nav.addView(Ui.iconButton(this, R.drawable.ic_next) { jump(true) })
         nav.addView(info, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        nav.addView(Ui.iconButton(this, R.drawable.ic_delete, 22f, Ui.TEXT2) {
+        // trash: removes ONE keyframe (the one under the playhead, or the nearest); long-press = remove all
+        val trash = Ui.iconButton(this, R.drawable.ic_delete, 22f, Ui.TEXT2) {
             if (l.keyframes.isEmpty()) return@iconButton
+            val local = timeMs - l.startMs
+            val k = LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.minByOrNull { kotlin.math.abs(it.t - local) } ?: return@iconButton
+            if (l.keyframes.size == 1) { val p = LayerRenderer.basePose(l, timeMs); l.keyframes.clear(); LayerRenderer.writePose(l, timeMs, p) }
+            else l.keyframes.remove(k)
+            live(); main.removeCallbacks(panelStep); stepNow(); refreshNav(); refreshBody()
+            toast(tr("Hal keyframe waa la tirtiray · si dheer u taabo si aad dhammaan u tirtirto", "One keyframe removed · long-press to remove all"))
+        }
+        trash.setOnLongClickListener {
+            if (l.keyframes.isEmpty()) return@setOnLongClickListener true
             MaterialAlertDialogBuilder(this).setMessage(tr("Tirtir dhammaan keyframe-yada?", "Remove all keyframes?"))
                 .setPositiveButton(tr("Tirtir", "Remove")) { _, _ ->
                     val p = LayerRenderer.basePose(l, timeMs); l.keyframes.clear(); LayerRenderer.writePose(l, timeMs, p); live(); refreshNav(); refreshBody()
                 }.setNegativeButton(tr("Maya", "No"), null).show()
-        })
+            true
+        }
+        nav.addView(trash)
         d.top.addView(nav)
         d.top.addView(Ui.choiceRow(this, listOf(tr("◆ Keyframe cusub", "◆ New keyframe"), tr("Beddel kan u dhow", "Edit nearest"), tr("Dhaqaaji dhammaan", "Move all")), LayerRenderer.keyMode) {
             LayerRenderer.keyMode = it

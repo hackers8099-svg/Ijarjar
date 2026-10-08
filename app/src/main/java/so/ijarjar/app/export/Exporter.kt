@@ -463,6 +463,19 @@ class Exporter(
             }
             val bucket = local / 33
             lastFrames[l.id]?.let { if (it.first == bucket) return it.second }
+            // fast path: decode forward frame after frame (a retriever per frame can take seconds and stall export)
+            if (l.id !in readerFailed) {
+                val rd = readers[l.id] ?: runCatching {
+                    val side = if (l.kind == LayerKind.MODEL3D) 1600 else (LayerRenderer.contentSize(l, canvasW).first * l.scale).toInt().coerceIn(160, 1920)
+                    so.ijarjar.app.media.VideoFrameReader(context, Uri.parse(l.videoSource()), side)
+                }.getOrNull()?.also { readers[l.id] = it }
+                if (rd == null) readerFailed.add(l.id)
+                else {
+                    val f = runCatching { rd.frameAt(local.coerceAtLeast(0)) }.getOrNull()
+                    if (f != null) { lastFrames[l.id] = Pair(bucket, f); return f }
+                    readerFailed.add(l.id); runCatching { rd.release() }; readers.remove(l.id)
+                }
+            }
             val r = retrievers.getOrPut(l.id) {
                 MediaMetadataRetriever().apply { setDataSource(context, Uri.parse(l.videoSource())) }
             }
@@ -487,7 +500,12 @@ class Exporter(
             return frame
         }
 
+        private val readers = HashMap<String, so.ijarjar.app.media.VideoFrameReader>()
+        private val readerFailed = HashSet<String>()
+
         fun release() {
+            readers.values.forEach { runCatching { it.release() } }
+            readers.clear()
             retrievers.values.forEach { runCatching { it.release() } }
             retrievers.clear()
             lastFrames.clear()
