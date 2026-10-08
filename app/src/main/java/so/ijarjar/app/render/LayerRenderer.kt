@@ -715,13 +715,20 @@ object LayerRenderer {
             TextAnimator.draw(canvas, l, textSpec(l, canvasW), m, t, alpha)
             return
         }
-        val bmp: Bitmap = when {
+        val bmp0: Bitmap = when {
             l.isTextLike() -> textBitmap(l, canvasW, pose.visibleChars)
             l.kind == LayerKind.SHAPE -> shapeBitmap(l, canvasW, pose.sx, pose.sy)
             else -> picture(context, l, t, content, maxDim) ?: return
         }
-        val pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
+        var pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
         pre.postConcat(m)
+        // AE Fast Box Blur: the picture with room around it, shrunk and stretched back (smooth and cheap)
+        var bmp = bmp0
+        if (l.fxBlur > 0.01f) {
+            val (b2, pad) = fastBlur(bmp0, l.fxBlur)
+            val pm = Matrix(); pm.setTranslate(-pad, -pad); pm.postScale(cw / bmp0.width, ch / bmp0.height); pm.postConcat(m)
+            bmp = b2; pre = pm
+        }
         if (l.glowColor != 0) drawGlow(canvas, bmp, pre, l, alpha)
         if (l.mockup != so.ijarjar.app.model.MockupKind.NONE && l.isPicture()) {
             Mockups.draw(canvas, l, pose, canvasW, canvasH, bmp, alpha, cw, ch)
@@ -842,11 +849,38 @@ object LayerRenderer {
         }
         val flat = Pose(pose.cx, pose.cy, pose.scale, pose.rotation, pose.opacity, sx = pose.sx, sy = pose.sy, z = pose.z)
         val m = matrix(l, flat, canvasW, canvasH)
-        val pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
+        var pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
         pre.postConcat(m)
-        if (l.glowColor != 0) drawGlow(canvas, bmp, pre, l, alpha)
+        var bmp2 = bmp
+        if (l.fxBlur > 0.01f) {
+            val (b2, pad) = fastBlur(bmp, l.fxBlur)
+            val pm = Matrix(); pm.setTranslate(-pad, -pad); pm.postScale(cw / bmp.width, ch / bmp.height); pm.postConcat(m)
+            bmp2 = b2; pre = pm
+        }
+        if (l.glowColor != 0) drawGlow(canvas, bmp2, pre, l, alpha)
         bmpPaint.alpha = alpha; bmpPaint.maskFilter = null; bmpPaint.colorFilter = null
-        canvas.drawBitmap(bmp, pre, bmpPaint)
+        canvas.drawBitmap(bmp2, pre, bmpPaint)
+    }
+
+    private val blurCache = LruCache<String, Pair<Bitmap, Float>>(12)
+
+    /** Blurred copy of [src] with a margin (so the blur can spread past the edges); returns it and the margin in px. */
+    private fun fastBlur(src: Bitmap, amount: Float): Pair<Bitmap, Float> {
+        val key = "${System.identityHashCode(src)}|${src.generationId}|${(amount * 100).toInt()}"
+        blurCache.get(key)?.let { return it }
+        val pad = (maxOf(src.width, src.height) * 0.18f * amount).coerceAtLeast(2f)
+        val padded = Bitmap.createBitmap((src.width + pad * 2).toInt(), (src.height + pad * 2).toInt(), Bitmap.Config.ARGB_8888)
+        Canvas(padded).drawBitmap(src, pad, pad, Paint(Paint.FILTER_BITMAP_FLAG))
+        val k = 1f + amount * 18f
+        var b = padded
+        repeat(2) {
+            val sw = (b.width / k).toInt().coerceAtLeast(2); val sh = (b.height / k).toInt().coerceAtLeast(2)
+            val small = Bitmap.createScaledBitmap(b, sw, sh, true)
+            b = Bitmap.createScaledBitmap(small, padded.width, padded.height, true)
+        }
+        val out = Pair(b, pad)
+        blurCache.put(key, out)
+        return out
     }
 
     private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)

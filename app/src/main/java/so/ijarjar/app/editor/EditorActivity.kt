@@ -2023,9 +2023,49 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.show()
     }
 
+    /** After Effects-like looks for shapes (and any picture layer): one tap. */
+    private class ShapeFx(val so: String, val en: String, val fn: (Layer) -> Unit)
+    private val shapeFx = listOf(
+        ShapeFx("Caadi", "Clean", { it.fxBlur = 0f; it.glowColor = 0; it.shadow = false; it.strokeColor = 0; it.textColor2 = 0 }),
+        ShapeFx("Fast Blur", "Fast Blur", { it.fxBlur = 0.35f; it.glowColor = 0 }),
+        ShapeFx("Blur adag", "Heavy Blur", { it.fxBlur = 0.75f; it.glowColor = 0 }),
+        ShapeFx("Glow", "Glow", { it.glowColor = it.textColor; it.glowSize = 0.45f; it.fxBlur = 0f }),
+        ShapeFx("Glow blur", "Glow Blur", { it.glowColor = it.textColor; it.glowSize = 0.7f; it.fxBlur = 0.2f }),
+        ShapeFx("Neon", "Neon", { it.glowColor = it.textColor; it.glowSize = 0.9f; it.strokeColor = Color.WHITE; it.strokeWidth = 0.05f; it.fxBlur = 0f }),
+        ShapeFx("Hoos (shadow)", "Drop Shadow", { it.shadow = true }),
+        ShapeFx("Gradient", "Gradient Ramp", { val h = FloatArray(3); Color.colorToHSV(it.textColor, h); h[0] = (h[0] + 60f) % 360f; h[2] = h[2] * 0.75f; it.textColor2 = Color.HSVToColor(h) }),
+        ShapeFx("Xariiq", "Stroke", { it.strokeColor = Color.WHITE; it.strokeWidth = 0.06f }),
+        ShapeFx("Iftiin jilicsan", "Soft Light", { it.fxBlur = 0.5f; it.glowColor = it.textColor; it.glowSize = 0.5f; it.opacity = 0.85f })
+    )
+
     private fun showShapeEditor(l: Layer) {
         val (d, root) = Ui.sheet(this, l.shape.label) { commit() }
         Ui.tabs(this, root, listOf(
+            tr("Preset", "Presets") to { body: LinearLayout ->
+                body.addView(Ui.label(this, tr("Muuqaal diyaar ah sida After Effects (Fast Blur, Glow…)", "Ready looks like After Effects (Fast Blur, Glow…)")))
+                val grid = android.widget.GridLayout(this).apply { columnCount = 4 }
+                for (fx in shapeFx) {
+                    val sample = l.copy().also { s -> s.keyframes.clear(); s.cx = 0.5f; s.cy = 0.5f; s.scale = 1f; s.rotation = 0f; s.opacity = 1f; s.startMs = 0; s.endMs = 1000
+                        s.animIn = LayerAnim.NONE; s.animOut = LayerAnim.NONE; s.animLoop = LoopAnim.NONE; s.baseW = 0.55f; fx.fn(s) }
+                    val tile = object : LoopTile(this, 1000) {
+                        override fun animated() = false
+                        override fun drawContent(canvas: android.graphics.Canvas, t: Long) {
+                            bg.color = 0xFF2A2A33.toInt(); canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bg)
+                            LayerRenderer.draw(context, canvas, sample, 500, width, height, null, 256)
+                        }
+                    }
+                    grid.addView(tileWithLabel(this, tile, tr(fx.so, fx.en), 64f) { fx.fn(l); live() },
+                        android.widget.GridLayout.LayoutParams(android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED), android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f)).apply { width = 0 })
+                }
+                body.addView(grid)
+            },
+            tr("Effects", "Effects") to { body: LinearLayout ->
+                body.addView(Ui.sliderRow(this, "Fast Blur", 0f, 1f, l.fxBlur.coerceIn(0f, 1f)) { l.fxBlur = it; live() })
+                body.addView(Ui.label(this, "Glow"))
+                body.addView(Ui.colorRow(this, l.glowColor, true) { l.glowColor = it; live() })
+                body.addView(Ui.sliderRow(this, tr("Glow cabbir", "Glow size"), 0.02f, 1f, l.glowSize.coerceIn(0.02f, 1f)) { l.glowSize = it; live() })
+                body.addView(Ui.choiceRow(this, listOf("Drop shadow: " + tr("Maya", "Off"), "Drop shadow: " + tr("Haa", "On")), if (l.shadow) 1 else 0) { l.shadow = it == 1; live() })
+            },
             tr("Qaab", "Shape") to { body: LinearLayout ->
                 body.addView(Ui.choiceRow(this, ShapeKind.entries.map { it.label }, ShapeKind.entries.indexOf(l.shape)) { l.shape = ShapeKind.entries[it]; live() })
                 val defRound = if (l.shape == ShapeKind.ROUND_RECT) 0.4f else 0f

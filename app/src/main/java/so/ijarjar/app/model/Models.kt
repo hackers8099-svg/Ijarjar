@@ -519,6 +519,7 @@ class Layer(
     // glow around text / shapes / pictures
     var glowColor: Int = 0,
     var glowSize: Float = 0.3f,
+    var fxBlur: Float = 0f,           // AE "Fast Box Blur" on the layer, 0..1
     // device mockup around a picture or video
     var mockup: MockupKind = MockupKind.NONE,
     var mockupColor: Int = 0xFF1C1C1E.toInt(),
