@@ -661,7 +661,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     t(R.drawable.ic_effects, tr("Beddel", "Change")) { showEffects(l) }
                     t(R.drawable.ic_opacity, tr("Xoog", "Strength")) { showOpacity(l, tr("Xoogga saameynta", "Effect strength")) }
                 } else {
-                    if (l.kind == LayerKind.TEXT) t(R.drawable.ic_pencil, tr("Qoraal", "Edit text")) { showTextEditor(l) }
+                    if (l.kind == LayerKind.TEXT) t(R.drawable.ic_pencil, tr("Qoraal + animation", "Text & animation")) { showTextEditor(l) }
                     if (l.kind == LayerKind.STICKER) t(R.drawable.ic_pencil, tr("Wax ka beddel", "Edit")) { showTextEditor(l) }
                     if (l.kind == LayerKind.SHAPE) t(R.drawable.ic_pencil, tr("Qaabka", "Style")) { showShapeEditor(l) }
                     if (l.kind == LayerKind.DRAW) t(R.drawable.ic_brush, tr("Sawir", "Draw")) { showDraw(l) }
@@ -694,7 +694,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                                 l.animLoop != LoopAnim.NONE || l.textLoop != TextLoop.NONE) { showAnimation(l) }
                         t(R.drawable.ic_keyframe, tr("Keyframe & Presets", "Keyframes & presets"), l.keyframes.isNotEmpty() || l.exprCode.isNotEmpty()) { showKeyframes(l) }
                         t(R.drawable.ic_expression, "Expression", l.expr != Expression.NONE || l.motionBlur || l.exprCode.isNotEmpty()) { showExpression(l) }
-                        if (project.clips.any { it.kind == MediaKind.VIDEO }) t(R.drawable.ic_track, tr("Raac (track)", "Track"), l.keyframes.size > 8) { showTrack(l) }
+                        t(R.drawable.ic_track, tr("Raac (track motion)", "Track motion"), l.keyframes.size > 8) {
+                            if (project.clips.any { it.kind == MediaKind.VIDEO }) showTrack(l)
+                            else toast(tr("Track motion wuxuu u baahan yahay video track-ga weyn ku jira", "Track motion needs a video on the main track"))
+                        }
                     }
                     group(tr("Muuqaal", "Look"))
                     if (l.isPicture()) t(R.drawable.ic_filter, tr("Filter", "Filters"), !l.adjust.isIdentity()) { showFilters(l.adjust, null, layerThumb(l)) }
@@ -864,8 +867,62 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             if (animate) toolScroll.scrollTo(0, 0)
         }
         catHolder.removeAllViews()
-        if (nonEmpty.size > 1) catHolder.addView(Ui.tabBar(this, nonEmpty.map { it.first }, sel) { fill(it) })
+        lastTools = nonEmpty.flatMap { (g, list) -> list.map { g to it } }
+        val catRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        catRow.addView(Ui.iconButton(this, R.drawable.ic_search, 18f, Ui.TEXT2) { showToolSearch() })
+        if (nonEmpty.size > 1) catRow.addView(Ui.tabBar(this, nonEmpty.map { it.first }, sel) { fill(it) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        catHolder.addView(catRow)
         fill(sel)
+    }
+
+    private var lastTools: List<Pair<String, ToolSpec>> = emptyList()
+
+    /** Find any tool by name (track motion, text, mask, 3D…), in Somali or English. */
+    private fun showToolSearch() {
+        val (d, root) = Ui.sheet(this, tr("Raadi", "Search"))
+        val input = android.widget.EditText(this).apply {
+            hint = tr("Qor: track, text, mask, 3D, filter…", "Type: track, text, mask, 3D, filter…")
+            setTextColor(Ui.TEXT); setHintTextColor(Ui.TEXT2); isSingleLine = true
+            background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()); setPadding(dp(14f), dp(10f), dp(14f), dp(10f))
+        }
+        d.top.addView(input)
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        root.addView(list)
+        // what you can always add, plus the tools of what is picked now
+        val extra = listOf<Pair<String, ToolSpec>>(
+            tr("Ku dar", "Add") to ToolSpec(R.drawable.ic_text, tr("Qoraal", "Text"), false) { d.dismiss(); addText() },
+            tr("Ku dar", "Add") to ToolSpec(R.drawable.ic_caption, tr("Qoraal-hoosaad (captions)", "Captions"), false) { d.dismiss(); showCaptions() },
+            tr("Ku dar", "Add") to ToolSpec(R.drawable.ic_mockup, tr("Taleefan 3D", "3D phone"), false) { d.dismiss(); showPhonePicker() },
+            tr("Mashruuc", "Project") to ToolSpec(R.drawable.ic_filter, tr("Filter", "Filters"), false) { d.dismiss(); project.clips.getOrNull(selectedClipIndex().coerceAtLeast(0))?.let { c -> showFilters(c.adjust, { for (o in project.clips) o.adjust = c.adjust.copy() }) } })
+        val all = (lastTools + extra).distinctBy { it.second.label }
+        fun norm(x: String) = x.lowercase().replace("(", " ").replace(")", " ")
+        fun show(q: String) {
+            list.removeAllViews()
+            val words = norm(q).split(" ").filter { it.isNotBlank() }
+            val hits = all.filter { (g, t) -> words.all { w -> norm(t.label + " " + g).contains(w) } }
+            if (hits.isEmpty()) { list.addView(Ui.label(this, tr("Waxba lama helin — dooro layer ama clip kadib raadi mar kale.", "Nothing found — pick a layer or clip, then search again."))); return }
+            for ((g, t) in hits.take(40)) {
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(6f), dp(10f), dp(6f), dp(10f)); background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat())
+                    setOnClickListener { d.dismiss(); t.f() }
+                }
+                Ui.press(row, 0.97f)
+                row.addView(ImageView(this).apply { setImageResource(t.icon); imageTintList = ColorStateList.valueOf(if (t.active) Ui.ACCENT else Ui.TEXT) }, LinearLayout.LayoutParams(dp(22f), dp(22f)).apply { marginEnd = dp(12f) })
+                row.addView(Ui.text(this, t.label, 14f, Ui.TEXT), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                row.addView(Ui.text(this, g, 11f, Ui.TEXT2))
+                list.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) })
+            }
+        }
+        input.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(a: CharSequence?, b: Int, c: Int, e: Int) {}
+            override fun onTextChanged(a: CharSequence?, b: Int, c: Int, e: Int) { show(a?.toString().orEmpty()) }
+            override fun afterTextChanged(a: android.text.Editable?) {}
+        })
+        show("")
+        d.show()
+        input.requestFocus()
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).showSoftInput(input, 0)
     }
 
     // ------------------------------------------------------------------ commit / undo
@@ -1870,7 +1927,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(hlBox)
                 hlOptions()
             }
-        ))
+        // everything for text in one place: text, style, font… and its animations
+        ) + animTabs(l).map { (name, f) -> (tr("Anim ", "Anim ") + name) to f })
         if (l.isCaption) buttonRow(root, tr("U dabaq dhammaan qoraal-hoosaadyada", "Apply to all captions") to {
             for (o in project.layers) if (o.isCaption && o.id != l.id) copyTextStyle(l, o)
             d.dismiss()
@@ -2081,10 +2139,16 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun showAnimation(l: Layer) {
         val (d, root) = Ui.sheet(this, tr("Dhaqdhaqaaq", "Animation")) { commit() }
+        Ui.tabs(this, root, animTabs(l))
+        d.show()
+    }
+
+    /** In / Out / Loop animation tabs (used by the Animation panel and inside the Text panel). */
+    private fun animTabs(l: Layer): List<Pair<String, (LinearLayout) -> Unit>> {
         val isText = l.kind == LayerKind.TEXT
         val sample = sampleText(l)
         fun layerTile(setup: (Layer) -> Unit): LoopTile = AnimTile(this, if (isText) sample else "★") { setup(it) }
-        Ui.tabs(this, root, listOf(
+        return listOf(
             tr("Gal", "In") to { body: LinearLayout ->
                 if (isText) {
                     unitRow(body, l)
@@ -2100,7 +2164,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             },
             tr("Bax", "Out") to { body: LinearLayout ->
                 if (isText) {
-                    unitRow(body, l)
+                    unitRow(body, l, false)
                     tileRow(body, TextAnim.entries, { it == l.textOut }, { it.label }, { k -> AnimTile(this, sample) { it.textOut = k; it.textIn = TextAnim.NONE; it.textUnit = l.textUnit } }) { k ->
                         l.textOut = k; if (k != TextAnim.NONE) l.animOut = LayerAnim.NONE; previewAnim(l, false)
                     }
@@ -2138,8 +2202,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.label(this, tr("Dhammaan layer-ka", "Whole layer")))
                 tileRow(body, LoopAnim.entries, { it == l.animLoop }, { it.label }, { k -> layerTile { it.animLoop = k; it.endMs = 2600 } }) { k -> l.animLoop = k; live() }
             }
-        ))
-        d.show()
+        )
     }
 
     private fun showExpression(l: Layer) {
@@ -2718,11 +2781,26 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     /** Letters / words / lines for the text animations (like CapCut's "By letter / By word"). */
-    private fun unitRow(body: LinearLayout, l: Layer) {
+    private fun unitRow(body: LinearLayout, l: Layer, isIn: Boolean = true) {
         body.addView(Ui.label(this, tr("Sida uu u socdo", "Animate by")))
         body.addView(Ui.choiceRow(this, listOf(tr("Caadi", "Auto"), tr("Xaraf xaraf", "Letters"), tr("Eray eray", "Words"), tr("Sadar sadar", "Lines")), l.textUnit + 1) {
-            l.textUnit = it - 1; previewAnim(l, true)
+            l.textUnit = it - 1; previewAnim(l, isIn)
         })
+        // how long the animation lasts: quick presets + exact slider
+        body.addView(Ui.label(this, tr("Mudada", "Duration")))
+        val presets = listOf(300L, 500L, 800L, 1200L, 2000L, 3000L)
+        val cur = if (isIn) l.animInMs else l.animOutMs
+        val lbl = Ui.text(this, "%.1fs".format(cur / 1000f), 12f, Ui.ACCENT)
+        val slider = Ui.slider(this, 0.1f, 5f, (cur / 1000f).coerceIn(0.1f, 5f), 0.1f) { v ->
+            val ms = (v * 1000).toLong(); if (isIn) l.animInMs = ms else l.animOutMs = ms; lbl.text = "%.1fs".format(v)
+        }
+        body.addView(Ui.choiceRow(this, presets.map { "%.1fs".format(it / 1000f) }, presets.indexOf(cur)) { i ->
+            val ms = presets[i]; if (isIn) l.animInMs = ms else l.animOutMs = ms
+            slider.value = (ms / 1000f).coerceIn(0.1f, 5f); lbl.text = "%.1fs".format(ms / 1000f); previewAnim(l, isIn)
+        })
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        row.addView(slider, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)); row.addView(lbl)
+        body.addView(row)
     }
 
     /** Pick one of the built-in 3D phones, then a screenshot or video for its screen. */
