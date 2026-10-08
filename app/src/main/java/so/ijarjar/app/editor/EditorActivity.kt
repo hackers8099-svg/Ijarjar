@@ -832,6 +832,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 t(R.drawable.ic_waveform, tr("Codka video", "Audio from video")) { pickVideoAudio.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
                 t(R.drawable.ic_audio, tr("Kale", "More")) { showAudioMenu() }
                 group(tr("Mashruuc", "Project"))
+                t(R.drawable.ic_text, tr("Fonts-kayga", "My fonts")) { showFontManager() }
                 t(R.drawable.ic_edit, tr("Wax ka beddel", "Edit clip")) {
                     if (project.clips.isNotEmpty()) setSelection(TimelineView.Sel.ClipSel(project.clipIndexAt(timeMs)))
                 }
@@ -1802,22 +1803,100 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     private var fontTarget: Layer? = null
-    private val pickFont = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        val l = fontTarget ?: return@registerForActivityResult
-        if (uri == null) return@registerForActivityResult
-        io.execute {
-            val name = MediaUtils.displayName(this, uri).replace(Regex("[^A-Za-z0-9._ -]"), "_")
+    // ---- Fonts: import many at once (files, a .zip, or a whole folder) into "My fonts"
+    private fun fontsDir() = File(filesDir, "fonts").apply { mkdirs() }
+    fun myFonts(): List<File> = fontsDir().listFiles()?.filter { it.extension.lowercase() in setOf("ttf", "otf") }?.sortedBy { it.name.lowercase() }.orEmpty()
+
+    /** Copies fonts in; a .zip is opened and every .ttf / .otf inside is taken. Returns how many worked. */
+    private fun importFontUris(uris: List<Uri>): Int {
+        var n = 0
+        fun save(name0: String, write: (File) -> Unit) {
+            val name = name0.substringAfterLast('/').replace(Regex("[^A-Za-z0-9._ -]"), "_")
             val ext = name.substringAfterLast('.', "").lowercase()
-            val dir = File(filesDir, "fonts").apply { mkdirs() }
-            val f = File(dir, if (ext == "ttf" || ext == "otf") name else "$name.ttf")
-            val ok = runCatching { contentResolver.openInputStream(uri)?.use { i -> f.outputStream().use { i.copyTo(it) } }; android.graphics.Typeface.createFromFile(f) }.isSuccess
-            main.post {
-                if (!ok) { f.delete(); toast(tr("Font-kan lama furi karo", "This font can't be opened")); return@post }
-                l.fontPath = f.absolutePath; commit()
-                toast(tr("Font-ka waa la soo geliyay ✓", "Font imported ✓"))
-                showTextEditor(l)
-            }
+            if (ext != "ttf" && ext != "otf") return
+            val f = File(fontsDir(), name)
+            val ok = runCatching { write(f); android.graphics.Typeface.createFromFile(f) }.isSuccess
+            if (ok) n++ else f.delete()
         }
+        for (u in uris) {
+            val name = MediaUtils.displayName(this, u)
+            if (name.lowercase().endsWith(".zip")) runCatching {
+                contentResolver.openInputStream(u)?.use { ins ->
+                    val z = java.util.zip.ZipInputStream(ins)
+                    var e = z.nextEntry
+                    while (e != null) {
+                        if (!e.isDirectory) save(e.name) { f -> f.outputStream().use { z.copyTo(it) } }
+                        e = z.nextEntry
+                    }
+                }
+            } else save(if ('.' in name) name else "$name.ttf") { f -> contentResolver.openInputStream(u)?.use { i -> f.outputStream().use { i.copyTo(it) } } }
+        }
+        return n
+    }
+
+    private fun afterFontImport(n: Int) {
+        toast(if (n > 0) tr("$n font ayaa la soo geliyay ✓", "$n font(s) imported ✓") else tr("Font lama helin (.ttf / .otf / .zip)", "No fonts found (.ttf / .otf / .zip)"))
+        val l = fontTarget
+        if (l != null) showTextEditor(l) else showFontManager()
+    }
+
+    private val pickFont = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        io.execute { val n = importFontUris(uris); main.post { afterFontImport(n) } }
+    }
+
+    /** A whole folder of fonts at once. */
+    private val pickFontFolder = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
+        if (tree == null) return@registerForActivityResult
+        io.execute {
+            val uris = ArrayList<Uri>()
+            fun walk(docId: String, depth: Int) {
+                val children = android.provider.DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
+                contentResolver.query(children, arrayOf(android.provider.DocumentsContract.Document.COLUMN_DOCUMENT_ID, android.provider.DocumentsContract.Document.COLUMN_DISPLAY_NAME, android.provider.DocumentsContract.Document.COLUMN_MIME_TYPE), null, null, null)?.use { c ->
+                    while (c.moveToNext()) {
+                        val id = c.getString(0); val nm = c.getString(1) ?: ""; val mime = c.getString(2) ?: ""
+                        if (mime == android.provider.DocumentsContract.Document.MIME_TYPE_DIR) { if (depth < 3) walk(id, depth + 1) }
+                        else if (nm.lowercase().let { it.endsWith(".ttf") || it.endsWith(".otf") || it.endsWith(".zip") }) uris.add(android.provider.DocumentsContract.buildDocumentUriUsingTree(tree, id))
+                    }
+                }
+            }
+            runCatching { walk(android.provider.DocumentsContract.getTreeDocumentId(tree), 0) }
+            val n = importFontUris(uris)
+            main.post { afterFontImport(n) }
+        }
+    }
+
+    private val fontMimes = arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/zip", "application/octet-stream", "*/*")
+
+    /** A tile that shows a font in itself. */
+    private fun fontTile(name: String, tf: android.graphics.Typeface?, selected: Boolean, onClick: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            setPadding(dp(8f), dp(8f), dp(8f), dp(6f))
+            background = Ui.roundBg(if (selected) 0x2219D3C5 else Ui.SURFACE2, dp(12f).toFloat(), dp(1.5f), if (selected) Ui.ACCENT else Ui.SURFACE2)
+            addView(Ui.text(context, "Aa", 22f, Ui.TEXT).apply { typeface = tf; gravity = Gravity.CENTER })
+            addView(Ui.text(context, name, 10f, Ui.TEXT2).apply { maxLines = 1; gravity = Gravity.CENTER; ellipsize = android.text.TextUtils.TruncateAt.END })
+            setOnClickListener { onClick() }
+            Ui.press(this)
+        }
+
+    /** "My fonts": see every imported font, add many at once, delete. */
+    private fun showFontManager() {
+        fontTarget = null
+        val (d, root) = Ui.sheet(this, tr("Fonts-kayga", "My fonts"))
+        buttonRow(root, tr("+ Fonts (badan)", "+ Fonts (many)") to { d.dismiss(); pickFont.launch(fontMimes) },
+            tr("+ Folder dhan", "+ Whole folder") to { d.dismiss(); pickFontFolder.launch(null) })
+        root.addView(Ui.label(this, tr("Waxaad dooran kartaa fonts badan hal mar, .zip, ama folder dhan.", "Pick many fonts at once, a .zip, or a whole folder.")))
+        val fonts = myFonts()
+        if (fonts.isEmpty()) root.addView(Ui.label(this, tr("Weli font lama soo gelin.", "No fonts yet.")))
+        for (f in fonts) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10f), dp(8f), dp(4f), dp(8f)); background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()) }
+            val tf = runCatching { android.graphics.Typeface.createFromFile(f) }.getOrNull()
+            row.addView(Ui.text(this, "Aa  " + f.nameWithoutExtension, 16f, Ui.TEXT).apply { typeface = tf; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            row.addView(Ui.iconButton(this, R.drawable.ic_delete, 20f, Ui.TEXT2) { f.delete(); d.dismiss(); showFontManager() })
+            root.addView(row, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = dp(6f) })
+        }
+        d.show()
     }
 
     /** Every part of a title template in one place: its texts and the colours of its shapes. */
@@ -1871,12 +1950,20 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             },
             tr("Farta", "Font") to { body: LinearLayout ->
                 body.addView(Ui.choiceRow(this, LayerRenderer.FONTS, if (l.fontPath == null) l.font else -1) { l.font = it; l.fontPath = null; live() })
-                val mine = File(filesDir, "fonts").listFiles()?.filter { it.extension.lowercase() in setOf("ttf", "otf") }?.sortedBy { it.name }.orEmpty()
+                val mine = myFonts()
+                body.addView(Ui.label(this, tr("Fonts-kayga", "My fonts") + " (${mine.size})"))
                 if (mine.isNotEmpty()) {
-                    body.addView(Ui.label(this, tr("Fonts-kaaga", "Your fonts")))
-                    body.addView(Ui.choiceRow(this, mine.map { it.nameWithoutExtension.take(18) }, mine.indexOfFirst { it.absolutePath == l.fontPath }) { i -> l.fontPath = mine[i].absolutePath; live() })
+                    val grid = android.widget.GridLayout(this).apply { columnCount = 4 }
+                    for (f in mine) {
+                        val tf = runCatching { android.graphics.Typeface.createFromFile(f) }.getOrNull()
+                        grid.addView(fontTile(f.nameWithoutExtension, tf, f.absolutePath == l.fontPath) { l.fontPath = f.absolutePath; live() },
+                            android.widget.GridLayout.LayoutParams(android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED), android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED, 1f)).apply { width = 0; setMargins(dp(3f), dp(3f), dp(3f), dp(3f)) })
+                    }
+                    body.addView(grid)
                 }
-                buttonRow(body, tr("+ Soo geli font (.ttf / .otf)", "+ Import font (.ttf / .otf)") to { fontTarget = l; pickFont.launch(arrayOf("font/*", "application/x-font-ttf", "application/x-font-otf", "application/octet-stream", "*/*")) })
+                buttonRow(body, tr("+ Fonts (badan)", "+ Fonts (many)") to { fontTarget = l; d.dismiss(); pickFont.launch(fontMimes) },
+                    tr("+ Folder", "+ Folder") to { fontTarget = l; d.dismiss(); pickFontFolder.launch(null) },
+                    tr("Maamul", "Manage") to { d.dismiss(); showFontManager() })
                 body.addView(Ui.choiceRow(this, listOf(tr("Adag", "Bold"), tr("Caadi", "Regular")), if (l.bold) 0 else 1) { l.bold = it == 0; live() })
                 body.addView(Ui.choiceRow(this, listOf(tr("Bidix", "Left"), tr("Dhexe", "Center"), tr("Midig", "Right")), l.align) { l.align = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Kala fogaan", "Spacing"), -0.1f, 0.5f, l.letterSpacing.coerceIn(-0.1f, 0.5f)) { l.letterSpacing = it; live() })
