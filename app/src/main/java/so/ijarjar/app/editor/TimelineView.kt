@@ -439,9 +439,8 @@ class TimelineView(context: Context) : View(context) {
             // keyframe diamonds
             paint.color = 0xFFFFCC00.toInt()
             for (k in l.keyframes) {
-                val x = xOf(l.startMs + k.t); val cy = r.bottom - dp(5f); val s = dp(4f)
-                val d = Path().apply { moveTo(x, cy - s); lineTo(x + s, cy); lineTo(x, cy + s); lineTo(x - s, cy); close() }
-                canvas.drawPath(d, paint)
+                val x = xOf(l.startMs + k.t); val cy = r.bottom - dp(5f)
+                KeyIcon.draw(canvas, l, k, x, cy, dp(4.5f), paint)
             }
             canvas.restore()
             if (l.id in multi) drawSelection(canvas, r, 0xFF19D3C5.toInt())

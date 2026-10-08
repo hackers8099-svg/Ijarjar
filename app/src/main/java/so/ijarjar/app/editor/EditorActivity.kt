@@ -876,6 +876,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun undo() {
         // changes made inside the open panel are saved as a step first, so undo removes them
+        main.removeCallbacks(panelStep)
         if (panel != null) { val cur = ProjectStore.toJson(project); if (cur != history.current()) history.push(cur) }
         val s = history.undo() ?: return
         restore(s)
@@ -886,11 +887,20 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         restore(s)
     }
 
-    /** Re-apply the project to the preview without adding an undo step. */
+    /** Re-apply the project to the preview. Inside a panel, each change becomes its own undo step once you stop. */
     private fun live() {
         engine.refreshVolumes()
         stage.refresh()
         timeline.invalidate()
+        if (panel != null) { main.removeCallbacks(panelStep); main.postDelayed(panelStep, 450) }
+    }
+
+    /** One undo step for what was just done in an open panel (so undo goes back one keyframe at a time). */
+    private val panelStep = Runnable { stepNow() }
+    private fun stepNow() {
+        if (panel == null) return
+        val cur = ProjectStore.toJson(project)
+        if (cur != history.current()) { history.push(cur); updateUndo(); scheduleSave() }
     }
 
     // ------------------------------------------------------------------ listeners
@@ -2364,7 +2374,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             if (l.keyframes.size == 1) toast(tr("Keyframe waa la daray. U dhaqaaji waqti kale oo layer-ka beddel — keyframe cusub ayaa samaysmaya.",
                 "Keyframe added. Move to another time and change the layer — a new keyframe is made automatically."))
         }
-        if (save) commit() else live()
+        if (save) commit() else { live(); main.removeCallbacks(panelStep); stepNow() }
     }
 
     private fun splitLayer(l: Layer) {
@@ -3207,43 +3217,49 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 graph.playheadMs = timeMs
                 refreshBody = { graph.playheadMs = timeMs; graph.invalidate() }
                 body.addView(Ui.choiceRow(this, KEY_PROPS, 0) { graph.prop = it })
-                val zr = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                zr.addView(Ui.text(this, tr("Zoom (laba farood ama):", "Zoom (two fingers, or):"), 12f, Ui.TEXT2), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                zr.addView(Ui.button(this, "−", false) { graph.zoom(0.5f, timeMs - l.startMs) })
-                zr.addView(Ui.button(this, "+", false) { graph.zoom(2f, timeMs - l.startMs) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
-                zr.addView(Ui.button(this, tr("Dhammaan", "Fit"), false) { graph.fit() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(6f) })
-                body.addView(zr)
-                body.addView(graph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(200f)).apply { topMargin = dp(6f) })
-                body.addView(Ui.label(this, tr("Taabo keyframe ◆, kadib jiid labada bar ee cad si aad u beddesho xawaaraha (sida AE Graph Editor).",
-                    "Tap a keyframe ◆, then drag the two white handles to shape its speed (like the AE Graph Editor).")))
-                fun setEase(e: Easing, b: FloatArray?, all: Boolean) {
-                    val targets = if (all) l.keyframes else easeTargets(l, graph.selected ?: LayerRenderer.keyframeAt(l, timeMs)).ifEmpty { l.keyframes }
-                    for (k in targets) { k.ease = e; if (b != null) { k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3] } }
-                    live(); graph.invalidate()
-                }
+                // AE-style: tap a keyframe, then pick how it moves; its icon changes shape
                 var all = false
-                body.addView(Ui.choiceRow(this, listOf(tr("Keyframe-kan", "This keyframe"), tr("Dhammaan", "All keyframes")), 0) { all = it == 1 })
-                body.addView(Ui.choiceRow(this, listOf("Easy Ease", "Ease In", "Ease Out", "Linear", "Hold", "Back", "Bounce", "Elastic"), -1) { i ->
-                    when (i) {
-                        0 -> setEase(Easing.CUSTOM, floatArrayOf(0.333f, 0f, 0.667f, 1f), all)
-                        1 -> setEase(Easing.CUSTOM, floatArrayOf(0.333f, 0f, 1f, 1f), all)
-                        2 -> setEase(Easing.CUSTOM, floatArrayOf(0f, 0f, 0.667f, 1f), all)
-                        3 -> setEase(Easing.LINEAR, null, all)
-                        4 -> setEase(Easing.HOLD, null, all)
-                        5 -> setEase(Easing.BACK, null, all)
-                        6 -> setEase(Easing.BOUNCE, null, all)
-                        else -> setEase(Easing.ELASTIC, null, all)
+                fun ease(mode: Int) {
+                    val ks = l.keyframes.sortedBy { it.t }
+                    if (ks.isEmpty()) { toast(tr("Marka hore keyframe ku dar", "Add keyframes first")); return }
+                    val sel = graph.selected ?: LayerRenderer.keyframeAt(l, timeMs)
+                    val targets = if (all || sel == null) ks else listOf(sel)
+                    fun setOut(k: Keyframe, eased: Boolean) {
+                        val b = KeyIcon.bez(k); b[0] = 0.333f; b[1] = if (eased) 0f else 0.333f
+                        k.ease = Easing.CUSTOM; k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3]
                     }
-                })
-                val k0 = graph.selected ?: LayerRenderer.keyframeAt(l, timeMs) ?: l.keyframes.minByOrNull { it.t }
-                if (k0 != null) {
-                    body.addView(Ui.sliderRow(this, tr("Saameyn bax %", "Influence out %"), 0f, 100f, (if (k0.ease == Easing.CUSTOM) k0.bx1 else 0.333f) * 100) { v ->
-                        (graph.selected ?: LayerRenderer.keyframeAt(l, timeMs) ?: k0).let { k -> if (k.ease != Easing.CUSTOM) { k.ease = Easing.CUSTOM; k.bx1 = 0.333f; k.by1 = 0f; k.bx2 = 0.667f; k.by2 = 1f }; k.bx1 = v / 100f; live(); graph.invalidate() }
-                    })
-                    body.addView(Ui.sliderRow(this, tr("Saameyn gal %", "Influence in %"), 0f, 100f, (1f - (if (k0.ease == Easing.CUSTOM) k0.bx2 else 0.667f)) * 100) { v ->
-                        (graph.selected ?: LayerRenderer.keyframeAt(l, timeMs) ?: k0).let { k -> if (k.ease != Easing.CUSTOM) { k.ease = Easing.CUSTOM; k.bx1 = 0.333f; k.by1 = 0f; k.bx2 = 0.667f; k.by2 = 1f }; k.bx2 = 1f - v / 100f; live(); graph.invalidate() }
-                    })
+                    fun setIn(k: Keyframe, eased: Boolean) {
+                        val prev = ks.getOrNull(ks.indexOf(k) - 1) ?: return
+                        if (prev.ease == Easing.HOLD) return
+                        val b = KeyIcon.bez(prev); b[2] = 0.667f; b[3] = if (eased) 1f else 0.667f
+                        prev.ease = Easing.CUSTOM; prev.bx1 = b[0]; prev.by1 = b[1]; prev.bx2 = b[2]; prev.by2 = b[3]
+                    }
+                    for (k in targets) when (mode) {
+                        0 -> { setIn(k, false); if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, false) }   // linear
+                        1 -> { setIn(k, true); setOut(k, true) }                                                          // easy ease
+                        2 -> setIn(k, true)                                                                               // ease in (arrives slowly)
+                        3 -> { if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, true) }                       // ease out (leaves slowly)
+                        else -> k.ease = Easing.HOLD                                                                      // hold
+                    }
+                    live(); graph.invalidate(); miniTimeline?.invalidate(); timeline.invalidate()
                 }
+                val (esv, erow) = Ui.hrow(this)
+                listOf(Triple(KeyIcon.LINEAR, KeyIcon.LINEAR, "Linear"), Triple(KeyIcon.EASED, KeyIcon.EASED, "Easy Ease"),
+                    Triple(KeyIcon.EASED, KeyIcon.LINEAR, "Ease In"), Triple(KeyIcon.LINEAR, KeyIcon.EASED, "Ease Out"),
+                    Triple(KeyIcon.LINEAR, KeyIcon.HOLD, "Hold")).forEachIndexed { i, (a, b, name) ->
+                    erow.addView(Ui.press(EaseButton(this, a, b, name).apply { setOnClickListener { ease(i) } }),
+                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6f) })
+                }
+                body.addView(esv)
+                val opts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+                opts.addView(Ui.choiceRow(this, listOf(tr("Keyframe-kan", "This keyframe"), tr("Dhammaan", "All")), 0) { all = it == 1 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                opts.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { graph.zoom(0.5f, timeMs - l.startMs) })
+                opts.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { graph.zoom(2f, timeMs - l.startMs) })
+                opts.addView(Ui.button(this, tr("Dhammaan", "Fit"), false) { graph.fit() })
+                body.addView(opts)
+                body.addView(graph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(230f)).apply { topMargin = dp(6f) })
+                body.addView(Ui.label(this, tr("Taabo ◆ si aad u doorato · jiid ◆ si aad waqtiga u beddesho · jiid xariiqda casaanka ama sare si aad u socoto · laba farood = zoom · xariiqda hoose jiid si aad u aragto keyframe-yada kale",
+                    "Tap ◆ to pick · drag ◆ to retime · drag the pink line or the ruler to move · two fingers = zoom · drag the bottom strip to see other keyframes")))
             },
             tr("Diyaar", "Presets") to { body: LinearLayout ->
                 body.addView(Ui.label(this, tr("Preset-ku wuxuu galiyaa keyframe-yo dhab ah — kadib waad beddeli kartaa.", "A preset adds real keyframes — you can edit them after.")))

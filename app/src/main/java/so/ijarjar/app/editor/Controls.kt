@@ -139,6 +139,81 @@ class ScrubDial(
  * keyframes on it, and two bezier handles for the selected keyframe's curve to the next one.
  */
 @SuppressLint("ViewConstructor")
+/**
+ * Keyframe icons like After Effects: each half shows how the value moves on that side —
+ * ◆ half = linear, ⧓ half (wide outside, point in the middle) = eased, ■ half = hold.
+ */
+object KeyIcon {
+    const val LINEAR = 0; const val EASED = 1; const val HOLD = 2
+
+    /** Bezier handles (x1, y1, x2, y2) of the segment that starts at [k]. */
+    fun bez(k: Keyframe): FloatArray = when (k.ease) {
+        Easing.CUSTOM -> floatArrayOf(k.bx1, k.by1, k.bx2, k.by2)
+        Easing.LINEAR -> floatArrayOf(0.333f, 0.333f, 0.667f, 0.667f)
+        Easing.EASE_IN -> floatArrayOf(0.333f, 0f, 1f, 1f)
+        Easing.EASE_OUT -> floatArrayOf(0f, 0f, 0.667f, 1f)
+        Easing.EASE_IN_OUT -> floatArrayOf(0.333f, 0f, 0.667f, 1f)
+        else -> floatArrayOf(0.333f, 0.333f, 0.667f, 0.667f)
+    }
+
+    /** (incoming side, outgoing side) of [k] inside [l]. */
+    fun kinds(l: Layer, k: Keyframe): Pair<Int, Int> {
+        val ks = l.keyframes.sortedBy { it.t }
+        val i = ks.indexOf(k)
+        val prev = ks.getOrNull(i - 1)
+        val inK = when {
+            prev == null -> LINEAR
+            prev.ease == Easing.HOLD -> HOLD
+            prev.ease in listOf(Easing.BACK, Easing.BOUNCE, Easing.ELASTIC) -> LINEAR
+            else -> bez(prev).let { if (it[3] >= 0.98f && it[2] < 0.97f) EASED else LINEAR }
+        }
+        val outK = when (k.ease) {
+            Easing.HOLD -> HOLD
+            Easing.BACK, Easing.BOUNCE, Easing.ELASTIC -> LINEAR
+            else -> bez(k).let { if (it[1] <= 0.02f && it[0] > 0.03f) EASED else LINEAR }
+        }
+        return Pair(inK, outK)
+    }
+
+    private val path = Path()
+
+    fun draw(c: Canvas, x: Float, y: Float, r: Float, inK: Int, outK: Int, fill: Paint, outline: Paint? = null) {
+        path.reset()
+        // left half
+        when (inK) {
+            EASED -> { path.moveTo(x, y); path.lineTo(x - r * 0.85f, y - r); path.lineTo(x - r * 0.85f, y + r); path.close() }
+            HOLD -> path.addRect(x - r * 0.8f, y - r * 0.8f, x, y + r * 0.8f, Path.Direction.CW)
+            else -> { path.moveTo(x, y - r); path.lineTo(x - r, y); path.lineTo(x, y + r); path.close() }
+        }
+        when (outK) {
+            EASED -> { path.moveTo(x, y); path.lineTo(x + r * 0.85f, y - r); path.lineTo(x + r * 0.85f, y + r); path.close() }
+            HOLD -> path.addRect(x, y - r * 0.8f, x + r * 0.8f, y + r * 0.8f, Path.Direction.CW)
+            else -> { path.moveTo(x, y - r); path.lineTo(x + r, y); path.lineTo(x, y + r); path.close() }
+        }
+        if (outline != null) c.drawPath(path, outline)
+        c.drawPath(path, fill)
+    }
+
+    fun draw(c: Canvas, l: Layer, k: Keyframe, x: Float, y: Float, r: Float, fill: Paint, outline: Paint? = null) {
+        val (a, b) = kinds(l, k); draw(c, x, y, r, a, b, fill, outline)
+    }
+}
+
+/** A small button with an AE keyframe icon and a name (Linear, Easy Ease, Ease In, Ease Out, Hold). */
+@SuppressLint("ViewConstructor")
+class EaseButton(context: Context, private val inK: Int, private val outK: Int, private val label: String) : View(context) {
+    private val d = resources.displayMetrics.density
+    private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.SURFACE2 }
+    private val ic = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
+    private val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.TEXT; textSize = 11f * d; textAlign = Paint.Align.CENTER }
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension((74 * d).toInt(), (58 * d).toInt())
+    override fun onDraw(c: Canvas) {
+        c.drawRoundRect(RectF(2 * d, 2 * d, width - 2 * d, height - 2 * d), 12 * d, 12 * d, bg)
+        KeyIcon.draw(c, width / 2f, 22 * d, 10 * d, inK, outK, ic)
+        c.drawText(label, width / 2f, height - 10 * d, tp)
+    }
+}
+
 class GraphView(context: Context, private val layer: Layer, private val onEdit: () -> Unit, private val onSeek: (Long) -> Unit) : View(context) {
 
     /** 0 X, 1 Y, 2 scale, 3 rotation, 4 opacity, 5 rotate X, 6 rotate Y, 7 Z, 8 width, 9 height */
@@ -185,6 +260,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
     private var lastMid = 0f
     private var gx = 0f; private var gy = 0f; private var decided = false
     private var keyStartT = 0L; private var moved = false
+    private var panStart = 0L
     private val gslop = android.view.ViewConfiguration.get(context).scaledTouchSlop
 
     private fun v(p: Pose): Float = when (prop) {
@@ -199,7 +275,21 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
     private val padL get() = 34 * d
     private val padR get() = 12 * d
     private val padT get() = 24 * d
-    private val padB get() = 18 * d
+    private val padB get() = 36 * d
+    // overview strip at the bottom: the whole layer, all keyframes, and the part you see (drag it)
+    private val navTop get() = height - 15 * d
+    private val navBot get() = height - 3 * d
+    private fun navX(t: Long) = padL + (width - padL - padR) * (t.toFloat() / layer.durationMs.coerceAtLeast(1))
+    private fun navT(x: Float) = ((x - padL) / (width - padL - padR) * layer.durationMs).toLong()
+    private fun zoomed() = vEnd() - viewStart < layer.durationMs - 1
+    private fun panTo(startMs: Long) {
+        val span = vEnd() - viewStart
+        viewStart = startMs.coerceIn(0, (layer.durationMs - span).coerceAtLeast(0)); viewEnd = viewStart + span; invalidate()
+    }
+    private val navBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2C2C35.toInt() }
+    private val navWin = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x5519D3C5; }
+    private val navWinEdge = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.ACCENT; style = Paint.Style.STROKE; strokeWidth = 1.5f * d }
+    private val keyOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 2.5f * d; strokeJoin = Paint.Join.ROUND }
     private fun tx(t: Long) = padL + (width - padL - padR) * ((t - viewStart).toFloat() / (vEnd() - viewStart).coerceAtLeast(1))
     private fun ty(v: Float) = padT + (height - padT - padB) * (1f - (v - vMin) / (vMax - vMin).coerceAtLeast(1e-4f))
     private fun tOf(x: Float) = (viewStart + (x - padL) / (width - padL - padR) * (vEnd() - viewStart)).toLong().coerceIn(0, layer.durationMs)
@@ -261,18 +351,29 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 gx = e.x; gy = e.y; decided = false
-                dragging = 2
+                panStart = viewStart
+                // overview strip: drag the window to see other keyframes
+                if (e.y > navTop - 6 * d) {
+                    dragging = 5; decided = true; parent?.requestDisallowInterceptTouchEvent(true)
+                    panTo(navT(e.x) - (vEnd() - viewStart) / 2); return true
+                }
+                // ruler on top, or the playhead line itself: move the playhead
+                val px = tx(playheadMs - layer.startMs)
+                if (e.y < padT || abs(e.x - px) < 16 * d) {
+                    dragging = 2; decided = true; parent?.requestDisallowInterceptTouchEvent(true)
+                    onSeek(layer.startMs + tOf(e.x)); return true
+                }
+                dragging = 6
                 handles()?.let { (h1, h2) ->
                     if (hypot(e.x - h1[0], e.y - h1[1]) < 22 * d) dragging = 0
                     else if (hypot(e.x - h2[0], e.y - h2[1]) < 22 * d) dragging = 1
                 }
-                // a keyframe ◆ under the finger: drag it left / right to change its time
-                if (dragging == 2) {
+                if (dragging == 6) {
                     val hit = layer.keyframes.minByOrNull { hypot(tx(it.t) - e.x, ty(kv(it)) - e.y) }
                     if (hit != null && hypot(tx(hit.t) - e.x, ty(kv(hit)) - e.y) < 20 * d) { selected = hit; dragging = 4; keyStartT = hit.t }
                 }
                 // handles and keyframes grab the finger at once; elsewhere we wait to see if it is a scroll
-                if (dragging != 2) { parent?.requestDisallowInterceptTouchEvent(true); decided = true }
+                if (dragging != 6) { parent?.requestDisallowInterceptTouchEvent(true); decided = true }
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!decided) {
@@ -283,6 +384,13 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                 }
                 val a = selected
                 if (dragging == 3) return true
+                if (dragging == 5) { panTo(navT(e.x) - (vEnd() - viewStart) / 2); return true }
+                // empty graph: slide the view when zoomed in, otherwise move the playhead
+                if (dragging == 6) dragging = if (zoomed()) 7 else 2
+                if (dragging == 7) {
+                    val dt = ((gx - e.x) / (width - padL - padR) * (vEnd() - viewStart)).toLong()
+                    panTo(panStart + dt); return true
+                }
                 if (dragging == 4 && a != null) {
                     val ks = layer.keyframes.sortedBy { it.t }
                     val i = ks.indexOf(a)
@@ -309,7 +417,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
             MotionEvent.ACTION_UP -> {
                 if (dragging == 4 && !moved) selected?.let { onSeek(layer.startMs + it.t) }
                 moved = false
-                if (!decided && dragging == 2) {
+                if (!decided && (dragging == 2 || dragging == 6)) {
                     // a tap: pick a keyframe or move the playhead
                     val hit = layer.keyframes.minByOrNull { abs(tx(it.t) - e.x) }
                     if (hit != null && abs(tx(hit.t) - e.x) < 18 * d) { selected = hit; onSeek(layer.startMs + hit.t) } else onSeek(layer.startMs + tOf(e.x))
@@ -366,9 +474,7 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         // keyframes
         for (k in layer.keyframes) {
             val x = tx(k.t); val y = ty(kv(k))
-            val r = 6 * d
-            val dia = Path().apply { moveTo(x, y - r); lineTo(x + r, y); lineTo(x, y + r); lineTo(x - r, y); close() }
-            c.drawPath(dia, if (k === selected) keySel else keyP)
+            KeyIcon.draw(c, layer, k, x, y, 7 * d, if (k === selected) keySel else keyP, keyOutline)
         }
         // handles of the selected segment
         handles()?.let { (h1, h2) ->
@@ -388,6 +494,14 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         val bx = (px - tw / 2).coerceIn(padL, width - padR - tw)
         c.drawRoundRect(RectF(bx, 2 * d, bx + tw, padT - 10 * d), 5 * d, 5 * d, playP)
         c.drawText(lab, bx + 6 * d, padT - 14 * d, bubbleText)
+        // overview strip
+        val nr = RectF(padL, navTop, width - padR, navBot)
+        c.drawRoundRect(nr, 5 * d, 5 * d, navBg)
+        val wr = RectF(navX(viewStart), navTop, navX(vEnd()).coerceAtLeast(navX(viewStart) + 6 * d), navBot)
+        c.drawRoundRect(wr, 5 * d, 5 * d, navWin); c.drawRoundRect(wr, 5 * d, 5 * d, navWinEdge)
+        for (k in layer.keyframes) KeyIcon.draw(c, layer, k, navX(k.t), (navTop + navBot) / 2, 4.5f * d, if (k === selected) keySel else keyP)
+        val npx = navX((playheadMs - layer.startMs).coerceIn(0, layer.durationMs))
+        c.drawLine(npx, navTop - 2 * d, npx, navBot + 2 * d, playP)
     }
 }
 
@@ -409,19 +523,64 @@ class MiniTimeline(context: Context, private val duration: () -> Long, private v
 
     private val l get() = 46 * d
     private val r get() = width - 10 * d
-    private fun x(t: Long) = l + (r - l) * (t.toFloat() / duration().coerceAtLeast(1))
-    private fun t(x: Float) = (((x - l) / (r - l)).coerceIn(0f, 1f) * duration()).toLong()
+    // visible part (zoom): starts on the selected layer so its keyframes are easy to see
+    private var vs = -1L
+    private var ve = -1L
+    private var lastLayerId: String? = null
+    private fun range(): Pair<Long, Long> {
+        val dur = duration().coerceAtLeast(1)
+        val ly = layer()
+        if (ly?.id != lastLayerId) {
+            lastLayerId = ly?.id
+            if (ly != null && ly.durationMs < dur * 0.6) {
+                val pad = (ly.durationMs * 0.15).toLong().coerceAtLeast(300)
+                vs = (ly.startMs - pad).coerceAtLeast(0); ve = (ly.endMs + pad).coerceAtMost(dur)
+            } else { vs = 0; ve = dur }
+        }
+        if (vs < 0 || ve <= vs) { vs = 0; ve = dur }
+        ve = ve.coerceAtMost(dur); if (ve - vs < 300) ve = (vs + 300).coerceAtMost(dur)
+        return Pair(vs, ve)
+    }
+    private fun x(t: Long): Float { val (a, b) = range(); return l + (r - l) * ((t - a).toFloat() / (b - a).coerceAtLeast(1)) }
+    private fun t(x: Float): Long { val (a, b) = range(); return (a + ((x - l) / (r - l)).coerceIn(0f, 1f) * (b - a)).toLong() }
 
     private var dragKey: so.ijarjar.app.model.Keyframe? = null
     var onKeyMoved: (() -> Unit)? = null
+    private var pinch = 0f
+    private var pinchMid = 0f
+    private val keyOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * d; strokeJoin = Paint.Join.ROUND }
+    private val gest = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDoubleTap(e: MotionEvent): Boolean { vs = 0; ve = duration(); invalidate(); return true }
+    })
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        gest.onTouchEvent(e)
+        // two fingers: pinch = zoom, move = slide
+        if (e.pointerCount >= 2) {
+            val sp = abs(e.getX(0) - e.getX(1)).coerceAtLeast(1f)
+            val mid = (e.getX(0) + e.getX(1)) / 2
+            when (e.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> { pinch = sp; pinchMid = mid; dragKey = null }
+                MotionEvent.ACTION_MOVE -> if (pinch > 0f) {
+                    val (a, b) = range(); val dur = duration().coerceAtLeast(1)
+                    val focus = t(mid)
+                    val span = ((b - a) * pinch / sp).toLong().coerceIn(300L.coerceAtMost(dur), dur)
+                    val frac = ((focus - a).toFloat() / (b - a).coerceAtLeast(1))
+                    var ns = focus - (span * frac).toLong()
+                    ns -= ((mid - pinchMid) / (r - l) * span).toLong()
+                    ns = ns.coerceIn(0, dur - span)
+                    vs = ns; ve = ns + span; pinch = sp; pinchMid = mid; invalidate()
+                }
+            }
+            return true
+        }
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
             parent?.requestDisallowInterceptTouchEvent(true)
             val ly = layer()
-            dragKey = ly?.keyframes?.minByOrNull { abs(x(ly.startMs + it.t) - e.x) }?.takeIf { abs(x(ly.startMs + it.t) - e.x) < 9 * d && abs(e.y - height / 2f) < 14 * d }
+            dragKey = ly?.keyframes?.minByOrNull { abs(x(ly.startMs + it.t) - e.x) }?.takeIf { abs(x(ly.startMs + it.t) - e.x) < 11 * d && abs(e.y - height / 2f) < 16 * d }
         }
+        if (e.actionMasked == MotionEvent.ACTION_POINTER_UP) return true
         val dk = dragKey
         val ly = layer()
         if (dk != null && ly != null && e.actionMasked == MotionEvent.ACTION_MOVE) {
@@ -434,6 +593,10 @@ class MiniTimeline(context: Context, private val duration: () -> Long, private v
         if (e.actionMasked == MotionEvent.ACTION_UP) dragKey = null
         if (e.actionMasked == MotionEvent.ACTION_DOWN || e.actionMasked == MotionEvent.ACTION_MOVE) {
             var tt = t(e.x)
+            // at the edges the view slides along, so you can scrub past what you see
+            val (a, b) = range(); val dur = duration()
+            if (e.x > r - 6 * d && b < dur) { val st = ((b - a) / 40).coerceAtLeast(16); vs = (a + st).coerceAtMost(dur - (b - a)); ve = vs + (b - a); tt = ve }
+            else if (e.x < l + 6 * d && a > 0) { val st = ((b - a) / 40).coerceAtLeast(16); vs = (a - st).coerceAtLeast(0); ve = vs + (b - a); tt = vs }
             // snap to a keyframe when close
             layer()?.let { ly -> ly.keyframes.minByOrNull { abs(x(ly.startMs + it.t) - e.x) }?.let { k -> if (abs(x(ly.startMs + k.t) - e.x) < 10 * d) tt = ly.startMs + k.t } }
             onSeek(tt); invalidate()
@@ -443,17 +606,27 @@ class MiniTimeline(context: Context, private val duration: () -> Long, private v
 
     override fun onDraw(c: Canvas) {
         val cy = height / 2f
+        val now = time()
+        // keep the playhead in view while playing
+        val (a0, b0) = range()
+        if (now < a0 || now > b0) { val span = b0 - a0; vs = (now - span / 4).coerceIn(0, (duration() - span).coerceAtLeast(0)); ve = vs + span }
+        val (a, b) = range()
+        c.save(); c.clipRect(l - 8 * d, 0f, r + 8 * d, height.toFloat())
         c.drawRoundRect(RectF(l, cy - 7 * d, r, cy + 7 * d), 7 * d, 7 * d, track)
         layer()?.let { ly ->
-            c.drawRoundRect(RectF(x(ly.startMs), cy - 7 * d, x(ly.endMs), cy + 7 * d), 7 * d, 7 * d, span)
+            c.drawRoundRect(RectF(x(ly.startMs).coerceAtLeast(l), cy - 7 * d, x(ly.endMs).coerceAtMost(r), cy + 7 * d), 7 * d, 7 * d, span)
             for (k in ly.keyframes) {
-                val kx = x(ly.startMs + k.t); val s = 5 * d
-                c.drawPath(Path().apply { moveTo(kx, cy - s); lineTo(kx + s, cy); lineTo(kx, cy + s); lineTo(kx - s, cy); close() }, key)
+                val kx = x(ly.startMs + k.t)
+                if (kx < l - 6 * d || kx > r + 6 * d) continue
+                KeyIcon.draw(c, ly, k, kx, cy, 7 * d, key, keyOutline)
             }
         }
-        val now = time()
         val hx = x(now)
         c.drawLine(hx, cy - 13 * d, hx, cy + 13 * d, head)
+        c.restore()
         c.drawText("%d:%02d.%d".format(now / 60000, (now / 1000) % 60, (now % 1000) / 100), 4 * d, cy + 4 * d, txt)
+        // zoomed in: small marks show there is more on either side
+        if (a > 0) c.drawText("‹", l - 7 * d, cy + 4 * d, txt)
+        if (b < duration()) c.drawText("›", r + 2 * d, cy + 4 * d, txt)
     }
 }
