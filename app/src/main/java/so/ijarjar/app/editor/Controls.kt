@@ -674,15 +674,15 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
     var onSelect: ((Keyframe?) -> Unit)? = null
     var onRow: ((Int) -> Unit)? = null
 
-    private class Row(val name: String, val graphProp: Int, val value: (Keyframe) -> FloatArray)
+    private class Row(val name: String, val graphProp: Int, val bit: Int, val value: (Keyframe) -> FloatArray)
     private val rows: List<Row> get() {
         val r = arrayListOf(
-            Row("Position", 0) { floatArrayOf(it.cx, it.cy) },
-            Row("Scale", 2) { floatArrayOf(it.scale, it.sx, it.sy) },
-            Row("Rotate", 3) { floatArrayOf(it.rotation) },
-            Row("Opacity", 4) { floatArrayOf(it.opacity) })
+            Row("Position", 0, Keyframe.POS) { floatArrayOf(it.cx, it.cy) },
+            Row("Scale", 2, Keyframe.SCALE) { floatArrayOf(it.scale, it.sx, it.sy) },
+            Row("Rotate", 3, Keyframe.ROT) { floatArrayOf(it.rotation) },
+            Row("Opacity", 4, Keyframe.OPA) { floatArrayOf(it.opacity) })
         if (layer.kind == so.ijarjar.app.model.LayerKind.MODEL3D || layer.keyframes.any { it.rx != 0f || it.ry != 0f || it.z != 0f } || layer.rotX != 0f || layer.rotY != 0f)
-            r.add(Row("3D X/Y/Z", 5) { floatArrayOf(it.rx, it.ry, it.z) })
+            r.add(Row("3D X/Y/Z", 5, Keyframe.D3) { floatArrayOf(it.rx, it.ry, it.z) })
         return r
     }
 
@@ -691,6 +691,7 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
     /** Big rows when the sheet fills the screen (Fit). */
     var big = false
         set(v) { field = v; requestLayout(); invalidate() }
+    private var splitDone = false
     /** True while a finger is on the sheet. */
     var touching = false
     var onTouchStart: (() -> Unit)? = null
@@ -716,7 +717,10 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
     private fun panTo(s: Long) { val span = vEnd() - vs; vs = s.coerceIn(0, (layer.durationMs - span).coerceAtLeast(0)); ve = vs + span; invalidate() }
 
     /** Does this row's value change at keyframe [k]? (AE shows a key only where the property is keyed.) */
-    private fun keyed(row: Row, k: Keyframe, ks: List<Keyframe>): Boolean {
+    private fun keyed(row: Row, k: Keyframe, ks0: List<Keyframe>): Boolean {
+        if (!k.has(row.bit)) return false
+        if (k.mask != Keyframe.ALL) return true
+        val ks = ks0.filter { it.has(row.bit) }
         if (ks.size <= 1) return true
         val i = ks.indexOf(k); val v = row.value(k)
         fun diff(o: Keyframe?) = o != null && row.value(o).zip(v.toList()).any { (a, b) -> abs(a - b) > 1e-4f }
@@ -824,7 +828,7 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
                 val px = x(time() - layer.startMs)
                 val k = if (e.y > rulerH) keyAt(e.x, e.y) else null
                 mode = when {
-                    k != null -> { dragKey = k; selected = k; onSelect?.invoke(k); 2 }
+                    k != null -> { dragKey = k; splitDone = false; selected = k; onSelect?.invoke(k); 2 }
                     e.y < rulerH || abs(e.x - px) < 14 * d -> 1
                     else -> 5
                 }
@@ -842,9 +846,22 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
                     1 -> onSeek(layer.startMs + t(e.x))
                     2 -> dragKey?.let { k ->
                         if (abs(e.x - downX) < slop) return true
+                        // only this row's keyframe moves: the other properties keep a keyframe where it was
+                        if (!splitDone) {
+                            splitDone = true
+                            val bit = rows.getOrNull(((downY - rulerH) / rowH).toInt().coerceIn(0, rows.size - 1))?.bit ?: Keyframe.ALL
+                            if (k.has(bit) && k.mask != bit) {
+                                // the other rows where this keyframe shows stay where they are
+                                val ks = layer.keyframes.sortedBy { it.t }
+                                var others = 0
+                                for (r in rows) if (r.bit != bit && keyed(r, k, ks)) others = others or r.bit
+                                if (others != 0) layer.keyframes.add(k.copyAt(k.t, others))
+                                k.mask = bit
+                            }
+                        }
                         // free: a keyframe can go anywhere, even past the others
                         var nt = t(e.x)
-                        while (layer.keyframes.any { it !== k && abs(it.t - nt) < 10 }) nt += 10
+                        while (layer.keyframes.any { it !== k && it.mask and k.mask != 0 && abs(it.t - nt) < 10 }) nt += 10
                         k.t = nt.coerceIn(0, layer.durationMs)
                         onSeek(layer.startMs + k.t); onEdit(); invalidate()
                     }

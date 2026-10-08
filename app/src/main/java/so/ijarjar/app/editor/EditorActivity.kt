@@ -367,7 +367,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelBox = object : FrameLayout(this) {
             // the panel never takes more than ~38% of the screen, so the preview stays big
             override fun onMeasure(w: Int, h: Int) {
-                val maxH = (resources.displayMetrics.heightPixels * (if (panelFull) 0.86f else 0.38f)).toInt()
+                // Fit: the panel grows, but the whole preview stays visible on top (≈230dp)
+                val hp = resources.displayMetrics.heightPixels
+                val maxH = if (panelFull) (hp - dp(350f)).coerceAtLeast((hp * 0.5f).toInt()) else (hp * 0.38f).toInt()
                 val mode = MeasureSpec.getMode(h)
                 val limit = if (mode == MeasureSpec.UNSPECIFIED) maxH else minOf(maxH, MeasureSpec.getSize(h))
                 super.onMeasure(w, MeasureSpec.makeMeasureSpec(limit, MeasureSpec.AT_MOST))
@@ -1005,8 +1007,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         stage.refresh()
         timeline.invalidate()
         if (panel != null) { main.removeCallbacks(panelStep); main.postDelayed(panelStep, 450) }
-        // Fit: changing a value below brings the controls up (the sheet gets small rows), touching the sheet makes it big again
-        activeDope?.let { if (panelFull && it.big && !it.touching) it.big = false }
     }
 
     /** One undo step for what was just done in an open panel (so undo goes back one keyframe at a time). */
@@ -3641,7 +3641,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             refreshNav(); refreshBody(); sheet.invalidate()
         }
         sheet.onRow = { p -> graphProp = p; activeGraph?.prop = p }
-        sheet.onTouchStart = { if (panelFull && !sheet.big) sheet.big = true }
         val ctl = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val pb = Ui.iconButton(this, if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play, 22f) { togglePlay() }
         panelPlay = pb
@@ -3705,7 +3704,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val fitBtn = Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(10f), dp(7f), dp(10f), dp(7f)); background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()); Ui.press(this) }
         fitBtn.setOnClickListener {
             panelFull = !panelFull
-            sheet.big = panelFull; sheet.fit()
+            sheet.big = false; sheet.fit()
             fitBtn.text = if (panelFull) "Fit ✕" else "Fit"
             fitBtn.background = Ui.roundBg(if (panelFull) Ui.ACCENT else Ui.SURFACE2, dp(12f).toFloat())
             fitBtn.setTextColor(if (panelFull) 0xFF00201E.toInt() else Ui.TEXT)

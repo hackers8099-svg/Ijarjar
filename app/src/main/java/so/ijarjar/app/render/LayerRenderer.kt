@@ -147,6 +147,7 @@ object LayerRenderer {
                 rel = if (k % 2 == 0L) first.t + r else last.t - r
             }
         }
+        if (sorted.any { it.mask != Keyframe.ALL }) return maskedPose(l, sorted, rel)
         if (rel <= first.t) return poseOf(first)
         if (rel >= last.t) return poseOf(last)
         for (k in 0 until sorted.size - 1) {
@@ -160,6 +161,43 @@ object LayerRenderer {
             }
         }
         return poseOf(last)
+    }
+
+    /** Each property from its own keyframes (a keyframe moved in one row does not move the others). */
+    private fun maskedPose(l: Layer, sorted: List<Keyframe>, rel: Long): Pose {
+        fun seg(bit: Int): Triple<Keyframe, Keyframe, Float>? {
+            val ks = sorted.filter { it.has(bit) }
+            if (ks.isEmpty()) return null
+            if (rel <= ks.first().t) return Triple(ks.first(), ks.first(), 0f)
+            if (rel >= ks.last().t) return Triple(ks.last(), ks.last(), 0f)
+            for (i in 0 until ks.size - 1) {
+                val a = ks[i]; val b = ks[i + 1]
+                if (rel >= a.t && rel <= b.t) {
+                    val x = if (b.t == a.t) 1f else (rel - a.t).toFloat() / (b.t - a.t)
+                    return Triple(a, b, Ease.apply(a.ease, x, a.bx1, a.by1, a.bx2, a.by2))
+                }
+            }
+            return Triple(ks.last(), ks.last(), 0f)
+        }
+        val p = Pose(l.cx, l.cy, l.scale, l.rotation, l.opacity, sx = l.stretchX, sy = l.stretchY, rx = l.rotX, ry = l.rotY, z = l.posZ)
+        seg(Keyframe.POS)?.let { (a, b, f) -> p.cx = lerp(a.cx, b.cx, f); p.cy = lerp(a.cy, b.cy, f) }
+        seg(Keyframe.SCALE)?.let { (a, b, f) -> p.scale = lerp(a.scale, b.scale, f); p.sx = lerp(a.sx, b.sx, f); p.sy = lerp(a.sy, b.sy, f) }
+        seg(Keyframe.ROT)?.let { (a, b, f) -> p.rotation = lerpAngle(a.rotation, b.rotation, f) }
+        seg(Keyframe.OPA)?.let { (a, b, f) -> p.opacity = lerp(a.opacity, b.opacity, f).coerceIn(0f, 1f) }
+        seg(Keyframe.D3)?.let { (a, b, f) -> p.rx = lerp(a.rx, b.rx, f); p.ry = lerp(a.ry, b.ry, f); p.z = lerp(a.z, b.z, f) }
+        return p
+    }
+
+    /** Which properties differ between two poses. */
+    private fun changed(a: Pose, b: Pose): Int {
+        fun ne(x: Float, y: Float) = abs(x - y) > 1e-5f
+        var m = 0
+        if (ne(a.cx, b.cx) || ne(a.cy, b.cy)) m = m or Keyframe.POS
+        if (ne(a.scale, b.scale) || ne(a.sx, b.sx) || ne(a.sy, b.sy)) m = m or Keyframe.SCALE
+        if (ne(a.rotation, b.rotation)) m = m or Keyframe.ROT
+        if (ne(a.opacity, b.opacity)) m = m or Keyframe.OPA
+        if (ne(a.rx, b.rx) || ne(a.ry, b.ry) || ne(a.z, b.z)) m = m or Keyframe.D3
+        return m
     }
 
     private fun poseOf(k: Keyframe) = Pose(k.cx, k.cy, k.scale, k.rotation, k.opacity, sx = k.sx, sy = k.sy, rx = k.rx, ry = k.ry, z = k.z)
@@ -1173,13 +1211,24 @@ object LayerRenderer {
             }
             return
         }
+        val before = basePose(l, t)
+        val diff = changed(before, p)
+        // keyframes of different properties at the same moment become one
+        val near = l.keyframes.filter { abs(it.t - rel) < 17 }
+        if (near.size > 1) {
+            val keep = near.first()
+            for (o in near.drop(1)) { keep.takeFrom(o, o.mask and keep.mask.inv()); keep.mask = keep.mask or o.mask; l.keyframes.remove(o) }
+        }
         val k = l.keyframes.firstOrNull { abs(it.t - rel) < 60 }
             ?: if (keyMode == 1) l.keyframes.minByOrNull { abs(it.t - rel) } else null
-        if (k != null) { k.cx = p.cx; k.cy = p.cy; k.scale = p.scale; k.rotation = p.rotation; k.opacity = p.opacity; k.sx = p.sx; k.sy = p.sy; k.rx = p.rx; k.ry = p.ry; k.z = p.z }
-        else {
-            // new keyframes copy the curve of the keyframe before them
+        if (k != null) {
+            k.cx = p.cx; k.cy = p.cy; k.scale = p.scale; k.rotation = p.rotation; k.opacity = p.opacity; k.sx = p.sx; k.sy = p.sy; k.rx = p.rx; k.ry = p.ry; k.z = p.z
+            k.mask = k.mask or diff
+        } else {
+            // new keyframes copy the curve of the keyframe before them; only the changed property gets a key (like After Effects)
             val prev = l.keyframes.filter { it.t < rel }.maxByOrNull { it.t }
-            l.keyframes.add(Keyframe(rel, p.cx, p.cy, p.scale, p.rotation, p.opacity, p.sx, p.sy, rx = p.rx, ry = p.ry, z = p.z).also { nk ->
+            l.keyframes.add(Keyframe(rel, p.cx, p.cy, p.scale, p.rotation, p.opacity, p.sx, p.sy, rx = p.rx, ry = p.ry, z = p.z,
+                mask = if (diff == 0) Keyframe.ALL else diff).also { nk ->
                 if (prev != null) { nk.ease = prev.ease; nk.bx1 = prev.bx1; nk.by1 = prev.by1; nk.bx2 = prev.bx2; nk.by2 = prev.by2 }
             })
         }

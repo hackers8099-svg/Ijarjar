@@ -411,8 +411,22 @@ class Keyframe(
     var rx: Float = 0f,    // 3D tilt around X
     var ry: Float = 0f,    // 3D turn around Y
     var z: Float = 0f,     // depth (positive = further away)
-    var easeIn: Int = -1   // icon of the incoming side when there is no keyframe before (-1 = linear)
+    var easeIn: Int = -1,  // icon of the incoming side when there is no keyframe before (-1 = linear)
+    var mask: Int = ALL    // which properties this keyframe holds (each property moves on its own keyframes)
 ) {
+    companion object {
+        const val POS = 1; const val SCALE = 2; const val ROT = 4; const val OPA = 8; const val D3 = 16; const val ALL = 31
+    }
+    fun has(bit: Int) = mask and bit != 0
+    fun copyAt(time: Long, newMask: Int) = Keyframe(time, cx, cy, scale, rotation, opacity, sx, sy, ease, bx1, by1, bx2, by2, rx, ry, z, easeIn, newMask)
+    /** Copies the values of the properties in [bits] from [o]. */
+    fun takeFrom(o: Keyframe, bits: Int) {
+        if (bits and POS != 0) { cx = o.cx; cy = o.cy }
+        if (bits and SCALE != 0) { scale = o.scale; sx = o.sx; sy = o.sy }
+        if (bits and ROT != 0) rotation = o.rotation
+        if (bits and OPA != 0) opacity = o.opacity
+        if (bits and D3 != 0) { rx = o.rx; ry = o.ry; z = o.z }
+    }
     fun copy(): Keyframe = gsonCopy(this, Keyframe::class.java)
 }
 
