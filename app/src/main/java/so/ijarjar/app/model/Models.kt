@@ -524,6 +524,7 @@ class Layer(
     var mockupColor: Int = 0xFF1C1C1E.toInt(),
     // custom text animator (letters / words)
     var taUnit: Int = 0,          // 0 letters, 1 words, 2 lines
+    var textUnit: Int = -1,       // in / out text animations go by: -1 the animation's own way, 0 letters, 1 words, 2 lines
     var taDx: Float = 0f,         // offsets in text heights
     var taDy: Float = 0.8f,
     var taScale: Float = 1f,

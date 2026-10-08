@@ -175,11 +175,20 @@ object TextAnimator {
         val until = l.endMs - t
         val inActive = l.textIn != TextAnim.NONE && since < inMs
         val outActive = l.textOut != TextAnim.NONE && until < outMs
-        val animWords = (inActive && wordBased(l.textIn, l)) || (outActive && wordBased(l.textOut, l))
-        val letterAnim = (inActive && l.textIn != TextAnim.NONE && !wordBased(l.textIn, l)) || (outActive && l.textOut != TextAnim.NONE && !wordBased(l.textOut, l))
+        // letters / words / lines: chosen by the user, else the animation's own way
+        fun unitOf(a: TextAnim): Int = when {
+            a == TextAnim.CUSTOM -> l.taUnit
+            l.textUnit in 0..2 -> l.textUnit
+            wordBased(a, l) -> 1
+            else -> 0
+        }
+        val uIn = if (inActive) unitOf(l.textIn) else -1
+        val uOut = if (outActive) unitOf(l.textOut) else -1
+        val animWords = uIn == 1 || uOut == 1
+        val letterAnim = uIn == 0 || uOut == 0
         val wl = wordLoop(l.textLoop)
         val words = animWords || (wl && !letterAnim)
-        val lines = ((inActive && l.textIn == TextAnim.CUSTOM) || (outActive && l.textOut == TextAnim.CUSTOM)) && l.taUnit == 2
+        val lines = uIn == 2 || uOut == 2
         val list = units(sp, words, lines)
         // caption word timing: each word gets time by its length; the last word ends a little before the clip
         val wordList = if (wl) (if (words && !lines) list else units(sp, true)) else emptyList()

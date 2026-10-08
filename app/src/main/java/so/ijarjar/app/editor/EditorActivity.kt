@@ -2087,8 +2087,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         Ui.tabs(this, root, listOf(
             tr("Gal", "In") to { body: LinearLayout ->
                 if (isText) {
-                    body.addView(Ui.label(this, tr("Xarfaha / erayada", "Letters / words")))
-                    tileRow(body, TextAnim.entries, { it == l.textIn }, { it.label }, { k -> AnimTile(this, sample) { it.textIn = k } }) { k ->
+                    unitRow(body, l)
+                    tileRow(body, TextAnim.entries, { it == l.textIn }, { it.label }, { k -> AnimTile(this, sample) { it.textIn = k; it.textUnit = l.textUnit } }) { k ->
                         l.textIn = k; if (k != TextAnim.NONE) l.animIn = LayerAnim.NONE; previewAnim(l, true)
                     }
                 }
@@ -2100,8 +2100,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             },
             tr("Bax", "Out") to { body: LinearLayout ->
                 if (isText) {
-                    body.addView(Ui.label(this, tr("Xarfaha / erayada", "Letters / words")))
-                    tileRow(body, TextAnim.entries, { it == l.textOut }, { it.label }, { k -> AnimTile(this, sample) { it.textOut = k; it.textIn = TextAnim.NONE } }) { k ->
+                    unitRow(body, l)
+                    tileRow(body, TextAnim.entries, { it == l.textOut }, { it.label }, { k -> AnimTile(this, sample) { it.textOut = k; it.textIn = TextAnim.NONE; it.textUnit = l.textUnit } }) { k ->
                         l.textOut = k; if (k != TextAnim.NONE) l.animOut = LayerAnim.NONE; previewAnim(l, false)
                     }
                 }
@@ -2715,6 +2715,14 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 upd(); strip.cursorMs = l.screenSegs.first().start; showFrame(strip.cursorMs)
             }
         }
+    }
+
+    /** Letters / words / lines for the text animations (like CapCut's "By letter / By word"). */
+    private fun unitRow(body: LinearLayout, l: Layer) {
+        body.addView(Ui.label(this, tr("Sida uu u socdo", "Animate by")))
+        body.addView(Ui.choiceRow(this, listOf(tr("Caadi", "Auto"), tr("Xaraf xaraf", "Letters"), tr("Eray eray", "Words"), tr("Sadar sadar", "Lines")), l.textUnit + 1) {
+            l.textUnit = it - 1; previewAnim(l, true)
+        })
     }
 
     /** Pick one of the built-in 3D phones, then a screenshot or video for its screen. */
