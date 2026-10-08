@@ -2031,10 +2031,10 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         ShapeFx("Blur adag", "Heavy Blur", { it.fxBlur = 0.75f; it.glowColor = 0 }),
         ShapeFx("Glow", "Glow", { it.glowColor = it.textColor; it.glowSize = 0.45f; it.fxBlur = 0f }),
         ShapeFx("Glow blur", "Glow Blur", { it.glowColor = it.textColor; it.glowSize = 0.7f; it.fxBlur = 0.2f }),
-        ShapeFx("Neon", "Neon", { it.glowColor = it.textColor; it.glowSize = 0.9f; it.strokeColor = Color.WHITE; it.strokeWidth = 0.05f; it.fxBlur = 0f }),
+        ShapeFx("Neon", "Neon", { it.glowColor = it.textColor; it.glowSize = 0.9f; it.strokeColor = android.graphics.Color.WHITE; it.strokeWidth = 0.05f; it.fxBlur = 0f }),
         ShapeFx("Hoos (shadow)", "Drop Shadow", { it.shadow = true }),
-        ShapeFx("Gradient", "Gradient Ramp", { val h = FloatArray(3); Color.colorToHSV(it.textColor, h); h[0] = (h[0] + 60f) % 360f; h[2] = h[2] * 0.75f; it.textColor2 = Color.HSVToColor(h) }),
-        ShapeFx("Xariiq", "Stroke", { it.strokeColor = Color.WHITE; it.strokeWidth = 0.06f }),
+        ShapeFx("Gradient", "Gradient Ramp", { val h = FloatArray(3); android.graphics.Color.colorToHSV(it.textColor, h); h[0] = (h[0] + 60f) % 360f; h[2] = h[2] * 0.75f; it.textColor2 = android.graphics.Color.HSVToColor(h) }),
+        ShapeFx("Xariiq", "Stroke", { it.strokeColor = android.graphics.Color.WHITE; it.strokeWidth = 0.06f }),
         ShapeFx("Iftiin jilicsan", "Soft Light", { it.fxBlur = 0.5f; it.glowColor = it.textColor; it.glowSize = 0.5f; it.opacity = 0.85f })
     )
 

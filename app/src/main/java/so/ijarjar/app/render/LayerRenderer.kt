@@ -720,7 +720,7 @@ object LayerRenderer {
             l.kind == LayerKind.SHAPE -> shapeBitmap(l, canvasW, pose.sx, pose.sy)
             else -> picture(context, l, t, content, maxDim) ?: return
         }
-        var pre = Matrix().apply { setScale(cw / bmp.width, ch / bmp.height) }
+        var pre = Matrix().apply { setScale(cw / bmp0.width, ch / bmp0.height) }
         pre.postConcat(m)
         // AE Fast Box Blur: the picture with room around it, shrunk and stretched back (smooth and cheap)
         var bmp = bmp0
