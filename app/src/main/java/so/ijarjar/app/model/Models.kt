@@ -479,6 +479,24 @@ class Layer(
     var depth: Float = 0f,
     var depthColor: Int = 0xFF333333.toInt(),
     var letterSpacing: Float = 0f,
+    // text tools (PixelLab-like)
+    var justify: Boolean = false,
+    var lineSpacing: Float = 1f,          // line height multiplier
+    var textPad: Float = 0.3f,            // room around the text (text heights)
+    var bgRound: Float = 0.25f,           // background corner (text heights)
+    var shadowColor: Int = 0x99000000.toInt(),
+    var shadowBlur: Float = 0.08f,
+    var shadowDx: Float = 0.05f,
+    var shadowDy: Float = 0.07f,
+    var innerColor: Int = 0,              // inner shadow (0 = off)
+    var innerSize: Float = 0.06f,
+    var emboss: Float = 0f,
+    var persp: Float = 0f,                // -1..1 keystone (top / bottom narrower)
+    var floorShadow: Float = 0f,          // 3D shadow on the floor, 0 = off
+    var floorColor: Int = 0x99000000.toInt(),
+    var floorAngle: Float = 0.6f,         // skew
+    var reflect: Float = 0f,              // reflection strength, 0 = off
+    var reflectGap: Float = 0f,
     var strokeWidth: Float = 0.12f,
     // letter / word animations
     var textIn: TextAnim = TextAnim.NONE,

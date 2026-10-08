@@ -1781,6 +1781,9 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         to.textColor = from.textColor; to.textColor2 = from.textColor2; to.strokeColor = from.strokeColor
         to.strokeWidth = from.strokeWidth; to.bgColor = from.bgColor; to.textSizeFrac = from.textSizeFrac
         to.bold = from.bold; to.font = from.font; to.align = from.align; to.shadow = from.shadow
+        to.justify = from.justify; to.lineSpacing = from.lineSpacing; to.textPad = from.textPad; to.bgRound = from.bgRound
+        to.shadowColor = from.shadowColor; to.shadowBlur = from.shadowBlur; to.shadowDx = from.shadowDx; to.shadowDy = from.shadowDy
+        to.innerColor = from.innerColor; to.innerSize = from.innerSize; to.emboss = from.emboss; to.letterSpacing = from.letterSpacing
         to.depth = from.depth; to.depthColor = from.depthColor; to.letterSpacing = from.letterSpacing
         to.cx = from.cx; to.cy = from.cy; to.scale = from.scale; to.animIn = from.animIn; to.animOut = from.animOut
         to.textIn = from.textIn; to.textOut = from.textOut; to.textLoop = from.textLoop; to.highlightColor = from.highlightColor
@@ -1966,8 +1969,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     tr("+ Folder", "+ Folder") to { fontTarget = l; d.dismiss(); pickFontFolder.launch(null) },
                     tr("Maamul", "Manage") to { d.dismiss(); showFontManager() })
                 body.addView(Ui.choiceRow(this, listOf(tr("Adag", "Bold"), tr("Caadi", "Regular")), if (l.bold) 0 else 1) { l.bold = it == 0; live() })
-                body.addView(Ui.choiceRow(this, listOf(tr("Bidix", "Left"), tr("Dhexe", "Center"), tr("Midig", "Right")), l.align) { l.align = it; live() })
-                body.addView(Ui.sliderRow(this, tr("Kala fogaan", "Spacing"), -0.1f, 0.5f, l.letterSpacing.coerceIn(-0.1f, 0.5f)) { l.letterSpacing = it; live() })
             },
             tr("Midab", "Colour") to { body: LinearLayout ->
                 body.addView(Ui.colorRow(this, l.textColor, false) { l.textColor = it; live() })
@@ -1976,17 +1977,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.label(this, tr("Midabka iftiinka (karaoke)", "Highlight colour (karaoke)")))
                 body.addView(Ui.colorRow(this, l.highlightColor, false) { l.highlightColor = it; live() })
             },
-            tr("Xariiq", "Outline") to { body: LinearLayout ->
-                body.addView(Ui.colorRow(this, l.strokeColor, true) { l.strokeColor = it; live() })
-                body.addView(Ui.sliderRow(this, tr("Ballac", "Width"), 0.02f, 0.4f, l.strokeWidth.coerceIn(0.02f, 0.4f)) { l.strokeWidth = it; live() })
-                body.addView(Ui.label(this, tr("Gadaal", "Background")))
-                body.addView(Ui.colorRow(this, l.bgColor, true) { l.bgColor = it; live() })
-            },
-            "3D" to { body: LinearLayout ->
-                body.addView(Ui.sliderRow(this, tr("Qoto-dheer", "Depth"), 0f, 1f, l.depth) { l.depth = it; live() })
-                body.addView(Ui.colorRow(this, l.depthColor, false) { l.depthColor = it; live() })
-                body.addView(Ui.choiceRow(this, listOf(tr("Hadh: Haa", "Shadow on"), tr("Hadh: Maya", "Shadow off")), if (l.shadow) 0 else 1) { l.shadow = it == 0; live() })
-            },
+            tr("Qalab", "Tools") to { body: LinearLayout -> textTools(body, l) },
             tr("Dhaqdhaqaaq", "Animate") to { body: LinearLayout ->
                 body.addView(Ui.label(this, tr("Gal (letter / word)", "In (letters / words)")))
                 tileRow(body, TextAnim.entries, { it == l.textIn }, { it.label }, { k -> AnimTile(this, sampleText(l)) { it.textIn = k; it.textOut = TextAnim.NONE } }, 60f) { k ->
@@ -2022,6 +2013,109 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             d.dismiss()
         })
         d.show()
+    }
+
+    private var textToolIdx = 0
+
+    /** PixelLab-like text tools: one row of icons, the picked tool's controls under it. */
+    private fun textTools(body: LinearLayout, l: Layer) {
+        val (sv, strip) = Ui.hrow(this)
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6f), 0, 0) }
+        fun slider(so: String, en: String, from: Float, to: Float, v: Float, set: (Float) -> Unit) =
+            box.addView(Ui.sliderRow(this, tr(so, en), from, to, v.coerceIn(from, to)) { set(it); live() })
+        fun label(so: String, en: String) = box.addView(Ui.label(this, tr(so, en)))
+        fun pose(f: (so.ijarjar.app.render.Pose) -> Unit) { val p = LayerRenderer.basePose(l, timeMs); f(p); LayerRenderer.writePose(l, timeMs, p); live() }
+        class T(val icon: Int, val so: String, val en: String, val on: () -> Boolean, val build: () -> Unit)
+        lateinit var show: (Int) -> Unit
+        val tools = listOf(
+            T(R.drawable.ic_ta_center, "Toosin", "Align", { false }) {
+                val (rsv, row) = Ui.hrow(this)
+                val icons = listOf(R.drawable.ic_ta_left, R.drawable.ic_ta_center, R.drawable.ic_ta_right)
+                val names = listOf(tr("Bidix", "Left"), tr("Dhexe", "Center"), tr("Midig", "Right"))
+                for (i in 0..2) row.addView(Ui.tool(this, icons[i], names[i], l.align == i && !l.justify) { l.align = i; l.justify = false; live(); show(textToolIdx) })
+                row.addView(Ui.tool(this, R.drawable.ic_ta_justify, "Justify", l.justify) { l.justify = !l.justify; live(); show(textToolIdx) })
+                box.addView(rsv)
+            },
+            T(R.drawable.ic_text, "Cabbir", "Size", { false }) { slider("Cabbirka", "Size", 0.02f, 0.3f, l.textSizeFrac) { l.textSizeFrac = it } },
+            T(R.drawable.ic_tx_bg, "Gadaal", "Background", { l.bgColor != 0 }) {
+                box.addView(Ui.colorRow(this, l.bgColor, true) { l.bgColor = it; live() })
+                slider("Geesaha wareeg", "Corner round", 0f, 1.5f, l.bgRound) { l.bgRound = it }
+                slider("Meel bannaan", "Padding", 0f, 1.5f, l.textPad) { l.textPad = it }
+            },
+            T(R.drawable.ic_tx_spacing, "Kala fogaan", "Spacing", { l.letterSpacing != 0f }) { slider("Xarfaha", "Letters", -0.1f, 0.6f, l.letterSpacing) { l.letterSpacing = it } },
+            T(R.drawable.ic_tx_linespacing, "Sadarrada", "Line spacing", { l.lineSpacing != 1f }) { slider("Sadarrada u dhexeeya", "Between lines", 0.5f, 3f, l.lineSpacing) { l.lineSpacing = it } },
+            T(R.drawable.ic_tx_stroke, "Xariiq", "Stroke", { l.strokeColor != 0 }) {
+                box.addView(Ui.colorRow(this, l.strokeColor, true) { l.strokeColor = it; live() })
+                slider("Ballac", "Width", 0.02f, 0.4f, l.strokeWidth) { l.strokeWidth = it }
+            },
+            T(R.drawable.ic_tx_shadow, "Hadh", "Shadow", { l.shadow }) {
+                box.addView(Ui.choiceRow(this, listOf(tr("Maya", "Off"), tr("Haa", "On")), if (l.shadow) 1 else 0) { l.shadow = it == 1; live(); show(textToolIdx) })
+                box.addView(Ui.colorRow(this, l.shadowColor, false) { l.shadowColor = (it and 0xFFFFFF) or (0x99 shl 24); l.shadow = true; live() })
+                slider("Qariin", "Blur", 0f, 0.4f, l.shadowBlur) { l.shadowBlur = it; l.shadow = true }
+                slider("X", "X", -0.5f, 0.5f, l.shadowDx) { l.shadowDx = it; l.shadow = true }
+                slider("Y", "Y", -0.5f, 0.5f, l.shadowDy) { l.shadowDy = it; l.shadow = true }
+            },
+            T(R.drawable.ic_tx_inner, "Hadh gudaha", "Inner shadow", { l.innerColor != 0 }) {
+                box.addView(Ui.colorRow(this, l.innerColor, true) { l.innerColor = if (it == 0) 0 else (it and 0xFFFFFF) or (0xB3 shl 24); live() })
+                slider("Cabbir", "Size", 0.01f, 0.3f, l.innerSize) { l.innerSize = it; if (l.innerColor == 0) l.innerColor = 0xB3000000.toInt() }
+            },
+            T(R.drawable.ic_tx_emboss, "Emboss", "Emboss", { l.emboss > 0f }) { slider("Xoog", "Strength", 0f, 1f, l.emboss) { l.emboss = it } },
+            T(R.drawable.ic_tx_persp, "Perspective", "Perspective", { l.persp != 0f }) { slider("Kor / hoos", "Top / bottom", -1f, 1f, l.persp) { l.persp = it } },
+            T(R.drawable.ic_tx_rotate3d, "3D wareeg", "3D rotate", { l.rotX != 0f || l.rotY != 0f }) {
+                val p0 = LayerRenderer.basePose(l, timeMs)
+                slider("Kor-hoos (X)", "Tilt (X)", -80f, 80f, p0.rx) { v -> pose { it.rx = v } }
+                slider("Bidix-midig (Y)", "Turn (Y)", -80f, 80f, p0.ry) { v -> pose { it.ry = v } }
+            },
+            T(R.drawable.ic_tx_3dtext, "3D qoraal", "3D text", { l.depth > 0f }) {
+                slider("Qoto-dheer", "Depth", 0f, 1f, l.depth) { l.depth = it }
+                box.addView(Ui.colorRow(this, l.depthColor, false) { l.depthColor = it; if (l.depth == 0f) l.depth = 0.4f; live() })
+            },
+            T(R.drawable.ic_tx_3dshadow, "3D hadh", "3D shadow", { l.floorShadow > 0f }) {
+                slider("Dherer", "Length", 0f, 1f, l.floorShadow) { l.floorShadow = it }
+                slider("Jiho", "Angle", -2f, 2f, l.floorAngle) { l.floorAngle = it; if (l.floorShadow == 0f) l.floorShadow = 0.4f }
+                box.addView(Ui.colorRow(this, l.floorColor, false) { l.floorColor = (it and 0xFFFFFF) or (0x99 shl 24); if (l.floorShadow == 0f) l.floorShadow = 0.4f; live() })
+            },
+            T(R.drawable.ic_tx_reflect, "Muraayad", "Reflection", { l.reflect > 0f }) {
+                slider("Xoog", "Strength", 0f, 1f, l.reflect) { l.reflect = it }
+                slider("Fogaan", "Gap", 0f, 1f, l.reflectGap) { l.reflectGap = it; if (l.reflect == 0f) l.reflect = 0.6f }
+            },
+            T(R.drawable.ic_tx_padding, "Meel bannaan", "Padding", { l.textPad != 0.3f }) { slider("Meel bannaan", "Padding", 0f, 1.5f, l.textPad) { l.textPad = it } },
+            T(R.drawable.ic_tx_position, "Meel", "Position", { false }) {
+                label("Shaashadda meesha la dhigo", "Place on the screen")
+                val ar = project.aspectRatio().coerceAtLeast(0.05f)
+                fun place(hx: Int, vy: Int) = pose { p ->
+                    val (cw, ch) = LayerRenderer.contentSize(l, 1000)
+                    val hw = (cw * kotlin.math.abs(p.scale * p.sx) / 2f / 1000f).coerceAtMost(0.5f)
+                    val hh = (ch * kotlin.math.abs(p.scale * p.sy) / 2f / (1000f / ar)).coerceAtMost(0.5f)
+                    if (hx >= 0) p.cx = when (hx) { 0 -> 0.04f + hw; 2 -> 0.96f - hw; else -> 0.5f }
+                    if (vy >= 0) p.cy = when (vy) { 0 -> 0.04f + hh; 2 -> 0.96f - hh; else -> 0.5f }
+                }
+                val names = listOf(listOf("↖", "↑", "↗"), listOf("←", "•", "→"), listOf("↙", "↓", "↘"))
+                for (r in 0..2) buttonRow(box, *Array(3) { c -> names[r][c] to { place(c, r) } })
+                buttonRow(box, tr("Dhexe ↔", "Center ↔") to { place(1, -1) }, tr("Dhexe ↕", "Center ↕") to { place(-1, 1) })
+            },
+            T(R.drawable.ic_tx_order, "Kala horreyn", "Order", { false }) {
+                fun move(to: (Int) -> Int) {
+                    val i = project.layers.indexOf(l); if (i < 0) return
+                    val j = to(i).coerceIn(0, project.layers.size - 1); if (j == i) return
+                    project.layers.removeAt(i); project.layers.add(j, l); live()
+                }
+                buttonRow(box, tr("Gadaal u dir", "To back") to { move { 0 } }, tr("Hal gadaal", "Back one") to { move { it - 1 } })
+                buttonRow(box, tr("Hal hore", "Forward one") to { move { it + 1 } }, tr("Hore u keen", "To front") to { move { Int.MAX_VALUE } })
+            },
+            T(R.drawable.ic_gradient, "Midab", "Colour", { false }) { box.addView(Ui.colorRow(this, l.textColor, false) { l.textColor = it; live() }) }
+        )
+        show = { idx ->
+            textToolIdx = idx.coerceIn(0, tools.size - 1)
+            strip.removeAllViews()
+            for ((i, t) in tools.withIndex()) strip.addView(Ui.tool(this, t.icon, tr(t.so, t.en) + if (t.on()) " •" else "", i == textToolIdx) { show(i) })
+            box.removeAllViews()
+            tools[textToolIdx].build()
+        }
+        body.addView(sv)
+        body.addView(box)
+        show(textToolIdx)
+        sv.post { strip.getChildAt(textToolIdx)?.let { sv.scrollTo((it.left - dp(40f)).coerceAtLeast(0), 0) } }
     }
 
     /** After Effects-like looks for shapes (and any picture layer): one tap. */

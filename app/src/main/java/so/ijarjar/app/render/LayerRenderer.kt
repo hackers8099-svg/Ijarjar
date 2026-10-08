@@ -65,8 +65,18 @@ class TextSpec(
     val bh: Int,
     val textPx: Float,
     val raw: String,
-    val alignment: Layout.Alignment
+    val alignment: Layout.Alignment,
+    val chars: CharSequence = raw
 )
+
+/** A space that is wider, so a line fills the whole width (justify). */
+class JustifySpace(private val w: Float) : android.text.style.ReplacementSpan() {
+    override fun getSize(paint: Paint, text: CharSequence?, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
+        if (fm != null) paint.getFontMetricsInt(fm)
+        return kotlin.math.round(w).toInt()
+    }
+    override fun draw(canvas: Canvas, text: CharSequence?, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {}
+}
 
 /**
  * Draws layers. Used by both the live preview and the exporters so the result matches.
@@ -281,6 +291,38 @@ object LayerRenderer {
         }
     }
 
+    private val extraPaint = Paint()
+    private val fadePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /** 3D floor shadow and reflection under a layer. [drawWith] draws the layer with a given matrix at full strength. */
+    private fun drawExtras(canvas: Canvas, l: Layer, m: Matrix, cw: Float, ch: Float, alpha: Int, drawWith: (Matrix) -> Unit) {
+        if (l.floorShadow > 0.01f) {
+            val fm = Matrix()
+            fm.setScale(1f, 0.12f + 0.55f * l.floorShadow.coerceIn(0f, 1f), 0f, ch)
+            fm.postSkew(-l.floorAngle.coerceIn(-2f, 2f), 0f, 0f, ch)
+            fm.postConcat(m)
+            extraPaint.reset()
+            extraPaint.colorFilter = PorterDuffColorFilter(l.floorColor or (0xFF shl 24), PorterDuff.Mode.SRC_IN)
+            extraPaint.alpha = Color.alpha(l.floorColor) * alpha / 255
+            val b = RectF(0f, 0f, cw, ch); fm.mapRect(b); b.inset(-4f, -4f)
+            val s = canvas.saveLayer(b, extraPaint)
+            drawWith(fm)
+            canvas.restoreToCount(s)
+        }
+        if (l.reflect > 0.01f) {
+            val rm = Matrix()
+            rm.setScale(1f, -1f, 0f, ch * (1f + l.reflectGap.coerceIn(0f, 1f) * 0.5f))
+            rm.postConcat(m)
+            val b = RectF(0f, 0f, cw, ch); rm.mapRect(b); b.inset(-4f, -4f)
+            val s = canvas.saveLayerAlpha(b, alpha)
+            drawWith(rm)
+            fadePaint.shader = LinearGradient(0f, ch, 0f, ch * 0.25f, Color.argb((255 * l.reflect.coerceIn(0f, 1f) * 0.7f).toInt(), 0, 0, 0), 0, Shader.TileMode.CLAMP)
+            fadePaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN)
+            canvas.save(); canvas.concat(rm); canvas.drawRect(0f, 0f, cw, ch, fadePaint); canvas.restore()
+            canvas.restoreToCount(s)
+        }
+    }
+
     /** Overshoot ease ("back out") with a chosen strength. */
     private fun backOut(x: Float, k: Float): Float {
         val t = x.coerceIn(0f, 1f) - 1f
@@ -326,7 +368,7 @@ object LayerRenderer {
     }
     private val specCache = LruCache<String, TextSpec>(40)
 
-    private fun hidden(raw: String, visibleChars: Int): CharSequence {
+    private fun hidden(raw: CharSequence, visibleChars: Int): CharSequence {
         if (visibleChars < 0 || visibleChars >= raw.length) return raw
         val s = SpannableString(raw)
         s.setSpan(ForegroundColorSpan(Color.TRANSPARENT), visibleChars, raw.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -335,7 +377,8 @@ object LayerRenderer {
 
     private fun textKey(l: Layer, canvasW: Int) =
         "${l.text}|${l.textColor}|${l.textColor2}|${l.strokeColor}|${l.strokeWidth}|${l.bgColor}|${l.textSizeFrac}|" +
-            "${l.bold}|${l.font}|${l.fontPath}|${l.align}|${l.shadow}|${l.depth}|${l.depthColor}|${l.letterSpacing}|$canvasW|${l.kind}"
+            "${l.bold}|${l.font}|${l.fontPath}|${l.align}|${l.shadow}|${l.depth}|${l.depthColor}|${l.letterSpacing}|$canvasW|${l.kind}" +
+            "|${l.justify}|${l.lineSpacing}|${l.textPad}|${l.bgRound}|${l.shadowColor}|${l.shadowBlur}|${l.shadowDx}|${l.shadowDy}|${l.innerColor}|${l.innerSize}|${l.emboss}"
 
     fun textSpec(l: Layer, canvasW: Int): TextSpec {
         val key = textKey(l, canvasW)
@@ -357,13 +400,54 @@ object LayerRenderer {
             2 -> Layout.Alignment.ALIGN_OPPOSITE
             else -> Layout.Alignment.ALIGN_CENTER
         }
-        val layout = StaticLayout.Builder.obtain(raw, 0, raw.length, paint, layoutW)
-            .setAlignment(alignment).setIncludePad(true).build()
-        val pad = (textPx * 0.3f).toInt()
+        // justify: widen the spaces of each line so it fills the box
+        var chars: CharSequence = raw
+        if (l.justify) {
+            val sb = android.text.SpannableString(raw)
+            val spaceW = paint.measureText(" ")
+            var start = 0
+            for (line in raw.split("\n")) {
+                val w = paint.measureText(line)
+                val spaces = line.indices.filter { line[it] == ' ' && it > 0 && it < line.trimEnd().length }
+                if (spaces.isNotEmpty() && w < layoutW - 0.5f && w <= maxW) {
+                    val extra = (layoutW - w) / spaces.size
+                    for (i in spaces) sb.setSpan(JustifySpace(spaceW + extra - 0.5f), start + i, start + i + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+                start += line.length + 1
+            }
+            chars = sb
+        }
+        val layout = textLayout(chars, paint, layoutW, alignment, l)
+        val pad = (textPx * l.textPad.coerceIn(0f, 2f)).toInt()
         val depthPx = (l.depth * textPx * 0.25f).toInt()
-        val spec = TextSpec(paint, layout, layoutW, pad, depthPx, layoutW + pad * 2 + depthPx, layout.height + pad * 2 + depthPx, textPx, raw, alignment)
+        val spec = TextSpec(paint, layout, layoutW, pad, depthPx, layoutW + pad * 2 + depthPx, layout.height + pad * 2 + depthPx, textPx, raw, alignment, chars)
         specCache.put(key, spec)
         return spec
+    }
+
+    private fun textLayout(chars: CharSequence, paint: TextPaint, w: Int, alignment: Layout.Alignment, l: Layer): StaticLayout {
+        val b = StaticLayout.Builder.obtain(chars, 0, chars.length, paint, w)
+            .setAlignment(alignment).setIncludePad(true).setLineSpacing(0f, l.lineSpacing.coerceIn(0.5f, 3f))
+        if (l.justify) b.setJustificationMode(Layout.JUSTIFICATION_MODE_INTER_WORD)
+        return b.build()
+    }
+
+    /** Inner shadow: colour coming in from the edges of the letters, drawn only on the letters. */
+    private fun innerShade(c: Canvas, w: Int, h: Int, sp: TextSpec, l: Layer, color: Int, dx: Float, dy: Float, blur: Float, visibleChars: Int) {
+        val hole = Bitmap.createBitmap(w, h, Bitmap.Config.ALPHA_8)
+        val hc = Canvas(hole)
+        hc.drawColor(Color.BLACK)
+        hc.save(); hc.translate(sp.pad + dx, sp.pad + dy)
+        val cut = TextPaint(sp.paint).apply { shader = null; color = Color.BLACK; xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR) }
+        textLayout(hidden(sp.chars, visibleChars), cut, sp.layoutW, sp.alignment, l).draw(hc)
+        hc.restore()
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = color
+            if (blur > 0.5f) maskFilter = BlurMaskFilter(blur, BlurMaskFilter.Blur.NORMAL)
+            xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_ATOP)
+        }
+        c.drawBitmap(hole, 0f, 0f, p)
+        hole.recycle()
     }
 
     fun textBitmap(l: Layer, canvasW: Int, visibleChars: Int = -1): Bitmap {
@@ -372,14 +456,14 @@ object LayerRenderer {
         val sp = textSpec(l, canvasW)
         val textPx = sp.textPx
         val raw = sp.raw
-        fun build(p: TextPaint) = StaticLayout.Builder.obtain(hidden(raw, visibleChars), 0, raw.length, p, sp.layoutW)
-            .setAlignment(sp.alignment).setIncludePad(true).build()
+        fun build(p: TextPaint) = textLayout(hidden(sp.chars, visibleChars), p, sp.layoutW, sp.alignment, l)
         val paint = TextPaint(sp.paint)
         val bmp = Bitmap.createBitmap(sp.bw.coerceAtLeast(1), sp.bh.coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
         if (l.bgColor != 0) {
             val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = l.bgColor }
-            c.drawRoundRect(RectF(0f, 0f, (sp.bw - sp.depthPx).toFloat(), (sp.bh - sp.depthPx).toFloat()), textPx * 0.25f, textPx * 0.25f, bg)
+            val rr = textPx * l.bgRound.coerceIn(0f, 3f)
+            c.drawRoundRect(RectF(0f, 0f, (sp.bw - sp.depthPx).toFloat(), (sp.bh - sp.depthPx).toFloat()), rr, rr, bg)
         }
         c.save()
         c.translate(sp.pad.toFloat(), sp.pad.toFloat())
@@ -388,8 +472,8 @@ object LayerRenderer {
             for (i in sp.depthPx downTo 1) { c.save(); c.translate(i.toFloat(), i.toFloat()); dl.draw(c); c.restore() }
         }
         if (l.shadow) {
-            val shp = TextPaint(paint).apply { color = 0x99000000.toInt(); maskFilter = BlurMaskFilter(textPx * 0.08f, BlurMaskFilter.Blur.NORMAL) }
-            c.save(); c.translate(textPx * 0.05f, textPx * 0.07f); build(shp).draw(c); c.restore()
+            val shp = TextPaint(paint).apply { shader = null; color = l.shadowColor; val r = textPx * l.shadowBlur; if (r > 0.5f) maskFilter = BlurMaskFilter(r, BlurMaskFilter.Blur.NORMAL) }
+            c.save(); c.translate(textPx * l.shadowDx, textPx * l.shadowDy); build(shp).draw(c); c.restore()
         }
         if (l.strokeColor != 0) {
             build(TextPaint(paint).apply {
@@ -398,8 +482,27 @@ object LayerRenderer {
             }).draw(c)
         }
         if (l.textColor2 != 0) paint.shader = LinearGradient(0f, 0f, 0f, sp.layout.height.toFloat(), l.textColor, l.textColor2, Shader.TileMode.CLAMP)
-        build(paint).draw(c)
-        c.restore()
+        if (l.innerColor != 0 || l.emboss > 0.01f) {
+            // the letters on their own picture, so inner shadow / emboss touch only the letters
+            val fb = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
+            val fc = Canvas(fb)
+            fc.save(); fc.translate(sp.pad.toFloat(), sp.pad.toFloat()); build(paint).draw(fc); fc.restore()
+            if (l.emboss > 0.01f) {
+                val e = textPx * 0.035f * l.emboss.coerceIn(0f, 1f) * 2f
+                innerShade(fc, fb.width, fb.height, sp, l, 0xB3FFFFFF.toInt(), e, e, e, visibleChars)
+                innerShade(fc, fb.width, fb.height, sp, l, 0x99000000.toInt(), -e, -e, e, visibleChars)
+            }
+            if (l.innerColor != 0) {
+                val s = textPx * l.innerSize.coerceIn(0f, 0.5f)
+                innerShade(fc, fb.width, fb.height, sp, l, l.innerColor, s * 0.5f, s * 0.5f, s, visibleChars)
+            }
+            c.restore()
+            c.drawBitmap(fb, 0f, 0f, null)
+            fb.recycle()
+        } else {
+            build(paint).draw(c)
+            c.restore()
+        }
         textCache.put(key, bmp)
         return bmp
     }
@@ -671,6 +774,16 @@ object LayerRenderer {
         val (cw, ch) = contentSize(l, canvasW)
         return Matrix().apply {
             postTranslate(-cw / 2f, -ch / 2f)
+            if (l.persp != 0f) {
+                // keystone: top (or bottom) narrower, like looking at a sign
+                val k = l.persp.coerceIn(-1f, 1f) * 0.6f
+                val ft = 1f - maxOf(k, 0f); val fb = 1f - maxOf(-k, 0f)
+                val hw = cw / 2f; val hh = ch / 2f
+                val pm = Matrix()
+                pm.setPolyToPoly(floatArrayOf(-hw, -hh, hw, -hh, hw, hh, -hw, hh), 0,
+                    floatArrayOf(-hw * ft, -hh, hw * ft, -hh, hw * fb, hh, -hw * fb, hh), 0, 4)
+                postConcat(pm)
+            }
             postScale((if (l.flipH) -p.scale else p.scale) * p.flipX * p.sx, p.scale * p.sy)
             val z = p.z + extraZ
             if (p.rx != 0f || p.ry != 0f || z != 0f) {
@@ -767,13 +880,23 @@ object LayerRenderer {
         if (l.kind == LayerKind.DRAW) { drawStrokes(canvas, l, m, cw, ch, alpha); return }
         if (l.kind == LayerKind.MODEL3D) { drawModel(context, canvas, l, pose, t, canvasW, canvasH, cw, ch, alpha, maxDim, content); return }
         if (l.kind == LayerKind.TEXT && usesGlyphs(l, t)) {
-            TextAnimator.draw(canvas, l, textSpec(l, canvasW), m, t, alpha)
+            val spec = textSpec(l, canvasW)
+            drawExtras(canvas, l, m, cw, ch, alpha) { mm -> TextAnimator.draw(canvas, l, spec, mm, t, 255) }
+            TextAnimator.draw(canvas, l, spec, m, t, alpha)
             return
         }
         val bmp0: Bitmap = when {
             l.isTextLike() -> textBitmap(l, canvasW, pose.visibleChars)
             l.kind == LayerKind.SHAPE -> shapeBitmap(l, canvasW, pose.sx, pose.sy)
             else -> picture(context, l, t, content, maxDim) ?: return
+        }
+        if (l.floorShadow > 0.01f || l.reflect > 0.01f) {
+            val ep = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+            if (l.isPicture()) ep.colorFilter = Filters.colorFilter(l.adjust)
+            drawExtras(canvas, l, m, cw, ch, alpha) { mm ->
+                val pm = Matrix(); pm.setScale(cw / bmp0.width, ch / bmp0.height); pm.postConcat(mm)
+                canvas.drawBitmap(bmp0, pm, ep)
+            }
         }
         var pre = Matrix().apply { setScale(cw / bmp0.width, ch / bmp0.height) }
         pre.postConcat(m)

@@ -225,7 +225,7 @@ object TextAnimator {
         if (l.bgColor != 0) {
             bgPaint.color = l.bgColor
             bgPaint.alpha = (Color.alpha(l.bgColor) * layerAlpha / 255 * minOf(inP, outP).coerceIn(0f, 1f)).toInt()
-            canvas.drawRoundRect(RectF(0f, 0f, (sp.bw - sp.depthPx).toFloat(), (sp.bh - sp.depthPx).toFloat()), px * 0.25f, px * 0.25f, bgPaint)
+            canvas.drawRoundRect(RectF(0f, 0f, (sp.bw - sp.depthPx).toFloat(), (sp.bh - sp.depthPx).toFloat()), px * l.bgRound, px * l.bgRound, bgPaint)
         }
         canvas.translate(sp.pad.toFloat(), sp.pad.toFloat())
 
@@ -235,7 +235,7 @@ object TextAnimator {
             style = Paint.Style.STROKE; strokeWidth = px * l.strokeWidth.coerceIn(0.01f, 0.5f); strokeJoin = Paint.Join.ROUND
         } else null
         val depth = if (sp.depthPx > 0) TextPaint(sp.paint).apply { color = l.depthColor } else null
-        val shadow = if (l.shadow) TextPaint(sp.paint).apply { color = 0x99000000.toInt(); maskFilter = BlurMaskFilter(px * 0.08f, BlurMaskFilter.Blur.NORMAL) } else null
+        val shadow = if (l.shadow) TextPaint(sp.paint).apply { color = l.shadowColor; val r = px * l.shadowBlur; if (r > 0.5f) maskFilter = BlurMaskFilter(r, BlurMaskFilter.Blur.NORMAL) } else null
         val glow = if (l.glowColor != 0) TextPaint(sp.paint).apply {
             color = l.glowColor; maskFilter = BlurMaskFilter(px * (0.1f + l.glowSize * 0.5f), BlurMaskFilter.Blur.NORMAL)
             style = Paint.Style.FILL_AND_STROKE; strokeWidth = px * 0.08f
@@ -318,7 +318,7 @@ object TextAnimator {
                 glow.alpha = a
                 canvas.drawText(sp.raw, u.start, u.end, u.x, u.baseline, glow)
             }
-            if (shadow != null) { shadow.alpha = a * 150 / 255; canvas.drawText(sp.raw, u.start, u.end, u.x + px * 0.05f, u.baseline + px * 0.07f, shadow) }
+            if (shadow != null) { shadow.alpha = a * android.graphics.Color.alpha(l.shadowColor) / 255; canvas.drawText(sp.raw, u.start, u.end, u.x + px * l.shadowDx, u.baseline + px * l.shadowDy, shadow) }
             if (stroke != null) {
                 stroke.color = l.strokeColor; stroke.alpha = a; stroke.maskFilter = blur
                 canvas.drawText(sp.raw, u.start, u.end, u.x, u.baseline, stroke)
