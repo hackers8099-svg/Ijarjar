@@ -404,14 +404,14 @@ class Keyframe(
     var sx: Float = 1f,
     var sy: Float = 1f,
     var ease: Easing = Easing.EASE_IN_OUT,  // curve towards the NEXT keyframe
-    var easeIn: Int = -1,                    // icon of the incoming side when there is no keyframe before (-1 = linear)
     var bx1: Float = 0.42f,
     var by1: Float = 0f,
     var bx2: Float = 0.58f,
     var by2: Float = 1f,
     var rx: Float = 0f,    // 3D tilt around X
     var ry: Float = 0f,    // 3D turn around Y
-    var z: Float = 0f      // depth (positive = further away)
+    var z: Float = 0f,     // depth (positive = further away)
+    var easeIn: Int = -1   // icon of the incoming side when there is no keyframe before (-1 = linear)
 ) {
     fun copy(): Keyframe = gsonCopy(this, Keyframe::class.java)
 }
@@ -612,8 +612,9 @@ class Layer(
 
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     /** Hidden with the eye in the timeline: not drawn, not heard, not exported. */
-    var row: Int = -1,                   // timeline row; layers that do not overlap in time can share a row
     var hidden: Boolean = false
+    /** Timeline row; layers that do not overlap in time can share a row. */
+    var row: Int = -1
     fun isActive(t: Long) = !hidden && t >= startMs && t < endMs
     fun isTextLike() = kind == LayerKind.TEXT || kind == LayerKind.STICKER
     fun isEffect() = kind == LayerKind.EFFECT

@@ -691,6 +691,9 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
     /** Big rows when the sheet fills the screen (Fit). */
     var big = false
         set(v) { field = v; requestLayout(); invalidate() }
+    /** True while a finger is on the sheet. */
+    var touching = false
+    var onTouchStart: (() -> Unit)? = null
     var onAddKey: ((Long) -> Unit)? = null
     private val rowH get() = (if (big) 44 else 26) * d
     override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (rulerH + rowH * rows.size + 4 * d).toInt())
@@ -804,6 +807,8 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
             }
             return true
         }
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) { touching = true; onTouchStart?.invoke() }
+        if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) touching = false
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; panStart = vs

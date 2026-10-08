@@ -1005,6 +1005,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         stage.refresh()
         timeline.invalidate()
         if (panel != null) { main.removeCallbacks(panelStep); main.postDelayed(panelStep, 450) }
+        // Fit: changing a value below brings the controls up (the sheet gets small rows), touching the sheet makes it big again
+        activeDope?.let { if (panelFull && it.big && !it.touching) it.big = false }
     }
 
     /** One undo step for what was just done in an open panel (so undo goes back one keyframe at a time). */
@@ -2473,7 +2475,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     /** Keyframe curves (After Effects graph presets + custom bezier). */
-    private fun showCurve(l: Layer) = showKeyframes(l, 1)
+    private fun showCurve(l: Layer) = showKeyframes(l, 2)
 
     /** Mask like CapCut: shapes, then position / size / rotate / feather / round corner — on screen or with dials. */
     private fun showMask(l: Layer) {
@@ -3487,6 +3489,35 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             })
         }
         body.addView(sv)
+        // Custom: drag the two white handles; it changes the picked keyframes (or all) while you drag
+        body.addView(Ui.label(this, tr("Gaar ah (Custom) — jiid labada bar ee cad", "Custom — drag the two white handles")))
+        fun customTargets(): List<Keyframe> {
+            val picked = activeDope?.picked?.toList().orEmpty()
+            return when {
+                mtAll -> l.keyframes.sortedBy { it.t }.dropLast(1)
+                picked.isNotEmpty() -> picked.flatMap { easeTargets(l, it) }.distinct()
+                else -> easeTargets(l, LayerRenderer.keyframeAt(l, timeMs))
+            }
+        }
+        val start = customTargets().firstOrNull()?.let { KeyIcon.bez(it) } ?: floatArrayOf(0.333f, 0f, 0.667f, 1f)
+        val custom = CurveView(this).apply { easing = Easing.CUSTOM; b = start }
+        val customInfo = Ui.text(this, "", 12f, Ui.TEXT2)
+        fun showB(b: FloatArray) { customInfo.text = "cubic-bezier(%.2f, %.2f, %.2f, %.2f)".format(b[0], b[1], b[2], b[3]) }
+        showB(start)
+        custom.onChange = { nb ->
+            val targets = customTargets()
+            for (o in targets) { o.ease = Easing.CUSTOM; o.bx1 = nb[0]; o.by1 = nb[1]; o.bx2 = nb[2]; o.by2 = nb[3] }
+            showB(nb)
+            if (targets.isNotEmpty()) { live(); activeDope?.invalidate(); easeLabelRef?.invoke() }
+        }
+        val cbox = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        cbox.addView(custom, LinearLayout.LayoutParams(dp(170f), dp(170f)))
+        val cside = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12f), 0, 0, 0) }
+        cside.addView(customInfo)
+        cside.addView(Ui.button(this, "Reset", false) { val r = floatArrayOf(0.333f, 0f, 0.667f, 1f); custom.b = r; custom.onChange?.invoke(r) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8f) })
+        cbox.addView(cside, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        body.addView(cbox)
         body.addView(Ui.label(this, tr("Dhaqdhaqaaq diyaar ah (wuxuu ka bilaabmaa xariiqda)", "Ready moves (start at the playhead)")))
         val moves = listOf<Pair<String, () -> Unit>>(
             "Zoom in" to { addMotion(l, listOf(0L to { _ -> }, 1000L to { p -> p.scale *= 1.2f })) },
@@ -3610,6 +3641,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             refreshNav(); refreshBody(); sheet.invalidate()
         }
         sheet.onRow = { p -> graphProp = p; activeGraph?.prop = p }
+        sheet.onTouchStart = { if (panelFull && !sheet.big) sheet.big = true }
         val ctl = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val pb = Ui.iconButton(this, if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play, 22f) { togglePlay() }
         panelPlay = pb
@@ -3692,26 +3724,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 refreshBody = { body.removeAllViews(); blurRow(); keyDials(body, l) { refreshNav() } }
                 blurRow()
                 keyDials(body, l) { refreshNav() }
-            },
-            tr("Garaaf", "Graph") to { body: LinearLayout ->
-                val graph = GraphView(this, l, { live() }) { t -> onKeyframeTap(t); refreshNav() }
-                activeGraph = graph
-                // no keyframe is picked until you tap one, so scrolling never bends a curve by accident
-                graph.selected = null
-                graph.playheadMs = timeMs
-                refreshBody = { graph.playheadMs = timeMs; graph.invalidate() }
-                graph.prop = graphProp
-                graph.selected = activeDope?.selected
-                body.addView(Ui.choiceRow(this, KEY_PROPS, graphProp) { graph.prop = it; graphProp = it })
-                val opts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                opts.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-                opts.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { graph.zoom(0.5f, timeMs - l.startMs) })
-                opts.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { graph.zoom(2f, timeMs - l.startMs) })
-                opts.addView(Ui.button(this, tr("Dhammaan", "Fit"), false) { graph.fit() })
-                body.addView(opts)
-                body.addView(graph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(230f)).apply { topMargin = dp(6f) })
-                body.addView(Ui.label(this, tr("Taabo ◆ si aad u doorato · jiid ◆ si aad waqtiga u beddesho · jiid xariiqda casaanka ama sare si aad u socoto · laba farood = zoom · xariiqda hoose jiid si aad u aragto keyframe-yada kale",
-                    "Tap ◆ to pick · drag ◆ to retime · drag the pink line or the ruler to move · two fingers = zoom · drag the bottom strip to see other keyframes")))
             },
             tr("Diyaar", "Presets") to { body: LinearLayout ->
                 body.addView(Ui.label(this, tr("Preset-ku wuxuu galiyaa keyframe-yo dhab ah — kadib waad beddeli kartaa.", "A preset adds real keyframes — you can edit them after.")))
