@@ -598,8 +598,6 @@ class MiniTimeline(context: Context, private val duration: () -> Long, private v
             val (a, b) = range(); val dur = duration()
             if (e.x > r - 6 * d && b < dur) { val st = ((b - a) / 40).coerceAtLeast(16); vs = (a + st).coerceAtMost(dur - (b - a)); ve = vs + (b - a); tt = ve }
             else if (e.x < l + 6 * d && a > 0) { val st = ((b - a) / 40).coerceAtLeast(16); vs = (a - st).coerceAtLeast(0); ve = vs + (b - a); tt = vs }
-            // snap to a keyframe when close
-            layer()?.let { ly -> ly.keyframes.minByOrNull { abs(x(ly.startMs + it.t) - e.x) }?.let { k -> if (abs(x(ly.startMs + k.t) - e.x) < 10 * d) tt = ly.startMs + k.t } }
             onSeek(tt); invalidate()
         }
         return true

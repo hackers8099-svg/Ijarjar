@@ -975,7 +975,8 @@ object LayerRenderer {
 
     fun keyframeAt(l: Layer, t: Long): Keyframe? {
         val rel = t - l.startMs
-        return l.keyframes.firstOrNull { abs(it.t - rel) < 60 }
+        // only "on" a keyframe when really on it (half a frame): moving the playhead a little and tapping ◆ adds a new one
+        return l.keyframes.firstOrNull { abs(it.t - rel) < 17 }
     }
 
     @Suppress("unused")
