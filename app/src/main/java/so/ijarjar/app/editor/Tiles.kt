@@ -70,6 +70,20 @@ abstract class LoopTile(context: Context, private val periodMs: Long) : View(con
     abstract fun drawContent(canvas: Canvas, t: Long)
 }
 
+/** Animation preview on a copy of a real layer (shapes, stickers, pictures). */
+class LayerAnimTile(context: Context, base: Layer, private val setup: (Layer) -> Unit) : LoopTile(context, 2600) {
+    private val layer = base.copy().also { s ->
+        s.keyframes = mutableListOf(); s.cx = 0.5f; s.cy = 0.5f; s.scale = 1f; s.rotation = 0f; s.opacity = 1f
+        s.startMs = 0; s.endMs = 2000; s.animInMs = 900; s.animOutMs = 700
+        s.animIn = so.ijarjar.app.model.LayerAnim.NONE; s.animOut = so.ijarjar.app.model.LayerAnim.NONE; s.animLoop = so.ijarjar.app.model.LoopAnim.NONE
+        s.baseW = 0.42f
+    }.also(setup)
+
+    override fun drawContent(canvas: Canvas, t: Long) {
+        if (layer.isActive(t)) LayerRenderer.draw(context, canvas, layer, t, width, height, null, 256)
+    }
+}
+
 /** Text / layer animation preview. */
 class AnimTile(context: Context, sample: String, private val setup: (Layer) -> Unit) : LoopTile(context, 2600) {
     private val layer = Layer(kind = LayerKind.TEXT, text = sample, textSizeFrac = 0.26f, startMs = 0, endMs = 2000,

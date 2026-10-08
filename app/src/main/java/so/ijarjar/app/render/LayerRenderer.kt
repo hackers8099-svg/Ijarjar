@@ -243,7 +243,48 @@ object LayerRenderer {
                 if (l.isTextLike()) p.visibleChars = (l.text.length * raw.coerceIn(0f, 1f)).toInt()
                 else p.opacity *= f
             }
+            LayerAnim.POP_UP -> {
+                p.scale *= backOut(raw, 2.6f).coerceAtLeast(0.01f)
+                p.cy += (1f - ease(raw)) * 0.06f
+                p.opacity *= minOf(1f, raw * 3f)
+            }
+            LayerAnim.BOUNCE_IN -> { p.scale *= Ease.apply(so.ijarjar.app.model.Easing.BOUNCE, raw).coerceAtLeast(0.01f); p.opacity *= minOf(1f, raw * 4f) }
+            LayerAnim.ELASTIC -> { p.scale *= Ease.apply(so.ijarjar.app.model.Easing.ELASTIC, raw).coerceAtLeast(0.01f); p.opacity *= minOf(1f, raw * 4f) }
+            LayerAnim.JELLY -> {
+                val w = sin(raw * PI.toFloat() * 5f) * (1f - raw) * 0.45f
+                p.sx *= 1f + w; p.sy *= 1f - w
+                p.scale *= minOf(1f, 0.3f + raw * 2f); p.opacity *= minOf(1f, raw * 4f)
+            }
+            LayerAnim.SQUASH -> {
+                val fall = (raw / 0.55f).coerceIn(0f, 1f)
+                p.cy -= (1f - fall * fall) * 0.4f
+                if (raw > 0.55f) {
+                    val k = (raw - 0.55f) / 0.45f
+                    val w = sin(k * PI.toFloat() * 2.5f) * (1f - k) * 0.35f
+                    p.sx *= 1f + w; p.sy *= 1f - w
+                }
+                p.opacity *= minOf(1f, raw * 5f)
+            }
+            LayerAnim.RISE_BOUNCE -> { p.cy += (1f - Ease.apply(so.ijarjar.app.model.Easing.BOUNCE, raw)) * 0.3f; p.opacity *= minOf(1f, raw * 4f) }
+            LayerAnim.STRETCH -> { p.sx *= backOut(raw, 1.8f).coerceAtLeast(0.01f); p.opacity *= minOf(1f, raw * 3f) }
+            LayerAnim.SWING_IN -> {
+                val d = (1f - raw)
+                p.rotation += (if (isIn) 1f else -1f) * 50f * d * d * cos(raw * PI.toFloat() * 3.5f)
+                p.opacity *= minOf(1f, raw * 3f)
+            }
+            LayerAnim.SHAKE_IN -> { p.cx += sin(raw * 55f) * (1f - raw) * 0.035f; p.opacity *= minOf(1f, raw * 3f) }
+            LayerAnim.ROLL -> {
+                p.cx -= g * 0.45f * (if (isIn) 1f else -1f)
+                p.rotation -= g * 360f * (if (isIn) 1f else -1f)
+                p.opacity *= f
+            }
         }
+    }
+
+    /** Overshoot ease ("back out") with a chosen strength. */
+    private fun backOut(x: Float, k: Float): Float {
+        val t = x.coerceIn(0f, 1f) - 1f
+        return t * t * ((k + 1f) * t + k) + 1f
     }
 
     private fun loop(p: Pose, a: LoopAnim, s: Float) {
@@ -261,6 +302,20 @@ object LayerRenderer {
                 val beat = if (ph < 0.12f) sin(ph / 0.12f * PI.toFloat()) else if (ph in 0.2f..0.32f) 0.6f * sin((ph - 0.2f) / 0.12f * PI.toFloat()) else 0f
                 p.scale *= 1f + 0.12f * beat
             }
+            LoopAnim.BOUNCE -> {
+                val ph = (s * 1.4f) % 1f
+                val hgt = 4f * ph * (1f - ph)
+                p.cy -= 0.04f * hgt
+                if (ph < 0.12f || ph > 0.88f) { val q = 1f - hgt * 4f; p.sx *= 1f + 0.12f * q.coerceIn(0f, 1f); p.sy *= 1f - 0.12f * q.coerceIn(0f, 1f) }
+            }
+            LoopAnim.JELLY -> { val w = 0.07f * sin(s * tau * 1.6f); p.sx *= 1f + w; p.sy *= 1f - w }
+            LoopAnim.WIGGLE -> {
+                p.rotation += 4f * sin(s * 11f) + 3f * sin(s * 17.3f)
+                p.cx += 0.006f * sin(s * 7.1f) + 0.004f * sin(s * 12.7f)
+                p.cy += 0.006f * sin(s * 8.3f) + 0.004f * sin(s * 10.9f)
+            }
+            LoopAnim.BREATHE -> { val b = sin(s * tau * 0.45f); p.scale *= 1f + 0.05f * b; p.opacity *= 0.85f + 0.15f * (0.5f + 0.5f * b) }
+            LoopAnim.FLIP_SPIN -> { val c = cos(s * tau * 0.5f); p.flipX *= if (abs(c) < 0.02f) (if (c < 0f) -0.02f else 0.02f) else c }
         }
     }
 

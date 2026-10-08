@@ -84,7 +84,17 @@ enum class LayerAnim(val so: String, val en: String) {
     FLIP("Rog", "Flip"),
     DROP("Dhac", "Drop"),
     BLUR("Qariin", "Blur"),
-    TYPEWRITER("Qoraal-qor", "Typewriter");
+    TYPEWRITER("Qoraal-qor", "Typewriter"),
+    POP_UP("Kor u bood", "Pop up"),
+    BOUNCE_IN("Booddo", "Bounce"),
+    ELASTIC("Laastig", "Elastic"),
+    JELLY("Jelly", "Jelly"),
+    SQUASH("Dhac-cadaadis", "Squash"),
+    RISE_BOUNCE("Kor booddo", "Rise bounce"),
+    STRETCH("Fidi", "Stretch"),
+    SWING_IN("Lulo gal", "Swing in"),
+    SHAKE_IN("Gariir gal", "Shake in"),
+    ROLL("Giraangir", "Roll in");
 
     val label: String get() = L.t(so, en)
 }
@@ -160,7 +170,12 @@ enum class LoopAnim(val so: String, val en: String) {
     BLINK("Libdhi", "Blink"),
     ROTATE("Wareeg", "Rotate"),
     SHAKE("Gariir", "Shake"),
-    HEARTBEAT("Garaac", "Heartbeat");
+    HEARTBEAT("Garaac", "Heartbeat"),
+    BOUNCE("Booddo", "Bounce"),
+    JELLY("Jelly", "Jelly"),
+    WIGGLE("Wiggle", "Wiggle"),
+    BREATHE("Neefso", "Breathe"),
+    FLIP_SPIN("Rog wareeg", "Flip spin");
 
     val label: String get() = L.t(so, en)
 }

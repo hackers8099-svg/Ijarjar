@@ -2046,7 +2046,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.label(this, tr("Muuqaal diyaar ah sida After Effects (Fast Blur, Glow…)", "Ready looks like After Effects (Fast Blur, Glow…)")))
                 val grid = android.widget.GridLayout(this).apply { columnCount = 4 }
                 for (fx in shapeFx) {
-                    val sample = l.copy().also { s -> s.keyframes.clear(); s.cx = 0.5f; s.cy = 0.5f; s.scale = 1f; s.rotation = 0f; s.opacity = 1f; s.startMs = 0; s.endMs = 1000
+                    val sample = l.copy().also { s -> s.keyframes = mutableListOf(); s.cx = 0.5f; s.cy = 0.5f; s.scale = 1f; s.rotation = 0f; s.opacity = 1f; s.startMs = 0; s.endMs = 1000
                         s.animIn = LayerAnim.NONE; s.animOut = LayerAnim.NONE; s.animLoop = LoopAnim.NONE; s.baseW = 0.55f; fx.fn(s) }
                     val tile = object : LoopTile(this, 1000) {
                         override fun animated() = false
@@ -2087,7 +2087,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 body.addView(Ui.colorRow(this, l.strokeColor, true) { l.strokeColor = it; live() })
                 body.addView(Ui.sliderRow(this, tr("Ballac", "Width"), 0.02f, 0.3f, l.strokeWidth.coerceIn(0.02f, 0.3f)) { l.strokeWidth = it; live() })
             }
-        ))
+        ) + animTabs(l) { d.dismiss(); showShapeEditor(l) }.filter { it.first != tr("Gaar ah", "Custom") }.map { (name, f) -> (tr("Anim ", "Anim ") + name) to f })
         d.show()
     }
 
@@ -2275,7 +2275,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun animTabs(l: Layer, reopen: () -> Unit = {}): List<Pair<String, (LinearLayout) -> Unit>> {
         val isText = l.kind == LayerKind.TEXT
         val sample = sampleText(l)
-        fun layerTile(setup: (Layer) -> Unit): LoopTile = AnimTile(this, if (isText) sample else "★") { setup(it) }
+        val isShape = l.kind == LayerKind.SHAPE
+        fun layerTile(setup: (Layer) -> Unit): LoopTile = if (isShape) LayerAnimTile(this, l) { setup(it) } else AnimTile(this, if (isText) sample else "★") { setup(it) }
         return listOf(
             tr("Gal", "In") to { body: LinearLayout ->
                 if (isText) {
