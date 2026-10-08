@@ -111,11 +111,58 @@ class TimelineView(context: Context) : View(context) {
     }
     private val subH get() = dp(30f)
     private fun hasScreen(l: Layer) = l.kind == LayerKind.MODEL3D && l.videoSource() != null
+    // ------------------------------------------------------------------ rows: layers can share a row (no overlap in time) or have their own
+    private var rowOf = IntArray(0)
+    private var rowY = FloatArray(1)          // top of each row from layersTop(); last = bottom of all rows
+    private val rowCount get() = rowY.size - 1
+
+    /** Gives every layer a row, closes empty rows and (when [resolve]) moves a layer that overlaps another in its row to a new row under it. */
+    private fun layoutRows(p: Project, resolve: Boolean) {
+        val ls = p.layers
+        var maxRow = ls.maxOfOrNull { it.row } ?: -1
+        for (l in ls) if (l.row < 0) l.row = ++maxRow
+        if (resolve) resolveOverlaps(p)
+        val distinct = ls.map { it.row }.distinct().sorted()
+        if (distinct.isNotEmpty() && distinct.last() != distinct.size - 1) {
+            val map = HashMap<Int, Int>(); for ((k, v) in distinct.withIndex()) map[v] = k
+            for (l in ls) l.row = map[l.row] ?: 0
+        }
+        val n = distinct.size
+        val scr = BooleanArray(n)
+        for (l in ls) if (hasScreen(l)) scr[l.row] = true
+        rowOf = IntArray(ls.size) { ls[it].row }
+        val ys = FloatArray(n + 1); var y = 0f
+        for (r in 0 until n) { ys[r] = y; y += layerH + gap * 0.6f + (if (scr[r]) subH + gap * 0.4f else 0f) }
+        ys[n] = y
+        rowY = ys
+    }
+
+    private fun resolveOverlaps(p: Project) {
+        val selId = (selection as? Sel.LayerSel)?.id
+        repeat(60) {
+            val ls = p.layers
+            for (r in ls.map { it.row }.distinct()) {
+                val inRow = ls.filter { it.row == r }.sortedBy { it.startMs }
+                var prev: Layer? = null
+                for (b in inRow) {
+                    val a = prev
+                    if (a != null && b.startMs < a.endMs - 1) {
+                        val mv = if (a.id == selId) a else b
+                        for (o in ls) if (o.row > r) o.row++
+                        mv.row = r + 1
+                        return@repeat
+                    }
+                    if (a == null || b.endMs > a.endMs) prev = b
+                }
+            }
+            return
+        }
+    }
+
+    private fun rowTop(r: Int) = layersTop() + rowY.getOrElse(r.coerceIn(0, rowY.size - 1)) { 0f }
     private fun layerTop(i: Int): Float {
-        var y = layersTop()
-        val ls = project?.layers ?: return y
-        for (k in 0 until minOf(i, ls.size)) y += layerH + gap * 0.6f + (if (hasScreen(ls[k])) subH + gap * 0.4f else 0f)
-        return y
+        val r = rowOf.getOrNull(i) ?: return rowTop(rowCount)
+        return rowTop(r)
     }
     /** Top of the screen-video row under layer [i]. */
     private fun screenTop(i: Int) = layerTop(i) + layerH + gap * 0.4f
@@ -131,15 +178,13 @@ class TimelineView(context: Context) : View(context) {
         return out
     }
 
-    private fun contentHeight(): Float {
-        val n = project?.layers?.size ?: 0
-        return layerTop(n) + vScroll + gap
-    }
+    private fun contentHeight(): Float = rowTop(rowCount) + vScroll + gap
 
     // ------------------------------------------------------------------ drawing
 
     override fun onDraw(canvas: Canvas) {
         val p = project ?: return
+        layoutRows(p, drag == Drag.NONE && !lifted)
         canvas.drawColor(0xFF121216.toInt())
         drawClips(canvas, p)
         drawAudio(canvas, p)
@@ -183,11 +228,15 @@ class TimelineView(context: Context) : View(context) {
             if (cy < rulerH || cy > height) continue
             gutterBtn(canvas, col2, cy, if (a.volume == 0f) R.drawable.ic_mute else R.drawable.ic_volume, a.volume != 0f)
         }
-        for ((i, l) in p.layers.withIndex()) {
-            val cy = layerTop(i) + layerH / 2
+        for (r in 0 until rowCount) {
+            val cy = rowTop(r) + layerH / 2
             if (cy < rulerH || cy > height) continue
-            gutterBtn(canvas, col1, cy, if (l.hidden) R.drawable.ic_eye_off else R.drawable.ic_eye, !l.hidden)
-            if (hasSound(l)) gutterBtn(canvas, col2, cy, if (l.volume == 0f) R.drawable.ic_mute else R.drawable.ic_volume, l.volume != 0f)
+            val members = p.layers.filter { it.row == r }
+            if (members.isEmpty()) continue
+            val hid = members.all { it.hidden }
+            gutterBtn(canvas, col1, cy, if (hid) R.drawable.ic_eye_off else R.drawable.ic_eye, !hid)
+            val snd = members.filter { hasSound(it) }
+            if (snd.isNotEmpty()) { val muted = snd.all { it.volume == 0f }; gutterBtn(canvas, col2, cy, if (muted) R.drawable.ic_mute else R.drawable.ic_volume, !muted) }
         }
     }
 
@@ -214,12 +263,15 @@ class TimelineView(context: Context) : View(context) {
                 return done()
             }
         }
-        for ((i, l) in p.layers.withIndex()) {
-            val top = layerTop(i)
+        for (r in 0 until rowCount) {
+            val top = rowTop(r)
             if (y in (top - dp(3f))..(top + layerH + dp(3f))) {
-                if (eye || !hasSound(l)) l.hidden = !l.hidden
-                else if (l.volume == 0f) { l.volume = if (l.muteVol > 0f) l.muteVol else 1f; l.muteVol = -1f }
-                else { l.muteVol = l.volume; l.volume = 0f }
+                val members = p.layers.filter { it.row == r }
+                if (members.isEmpty()) return false
+                val snd = members.filter { hasSound(it) }
+                if (eye || snd.isEmpty()) { val hide = !members.all { it.hidden }; for (l in members) l.hidden = hide }
+                else if (snd.all { it.volume == 0f }) { for (l in snd) { l.volume = if (l.muteVol > 0f) l.muteVol else 1f; l.muteVol = -1f } }
+                else { for (l in snd) if (l.volume != 0f) { l.muteVol = l.volume; l.volume = 0f } }
                 return done()
             }
         }
@@ -551,8 +603,36 @@ class TimelineView(context: Context) : View(context) {
         val groups = p.layers.mapNotNull { it.linkGroup }.distinct()
         val selLayer = (selection as? Sel.LayerSel)?.let { s -> p.layers.firstOrNull { it.id == s.id } }
         for ((i, l) in p.layers.withIndex()) if (hasScreen(l)) drawScreenRow(canvas, l, i)
-        for ((i, l) in p.layers.withIndex()) {
-            val top = layerTop(i)
+        val liftId = if (lifted) selLayer?.id else null
+        if (liftId != null) {
+            // where the lifted layer will land: a row outline (shares the row) or a line (new row)
+            val (row, insert) = dropTarget(p, liftY)
+            paint.color = 0xFF19D3C5.toInt()
+            if (insert) {
+                val y = rowTop(row) - gap * 0.3f
+                canvas.drawRoundRect(RectF(gutterW, y - dp(1.5f), width.toFloat(), y + dp(1.5f)), dp(2f), dp(2f), paint)
+            } else {
+                paint.style = Paint.Style.STROKE; paint.strokeWidth = dp(1.5f)
+                val t0 = rowTop(row)
+                canvas.drawRoundRect(RectF(gutterW + dp(2f), t0 - dp(3f), width - dp(2f), t0 + layerH + dp(3f)), dp(6f), dp(6f), paint)
+                paint.style = Paint.Style.FILL
+            }
+        }
+        val order = p.layers.indices.sortedBy { if (p.layers[it].id == liftId) 1 else 0 }
+        for (i in order) {
+            val l = p.layers[i]
+            val lift = l.id == liftId
+            if (lift) {
+                // ghost where it was
+                paint.color = 0x33FFFFFF
+                val t0 = layerTop(i)
+                canvas.drawRoundRect(RectF(xOf(l.startMs), t0, xOf(l.endMs), t0 + layerH), dp(5f), dp(5f), paint)
+            }
+            val top = if (lift) liftY - layerH / 2 else layerTop(i)
+            if (lift) {
+                paint.color = 0x88000000.toInt()
+                canvas.drawRoundRect(RectF(xOf(l.startMs) + dp(3f), top + dp(5f), xOf(l.endMs) + dp(3f), top + layerH + dp(5f)), dp(6f), dp(6f), paint)
+            }
             if (top > height || top + layerH < rulerH) continue
             val r = RectF(xOf(l.startMs), top, xOf(l.endMs), top + layerH)
             paint.color = layerColor(l)
@@ -640,6 +720,63 @@ class TimelineView(context: Context) : View(context) {
         return l.keyframes.minByOrNull { abs(xOf(l.startMs + it.t) - x) }?.takeIf { abs(xOf(l.startMs + it.t) - x) < dp(12f) }
     }
 
+    // hold a layer, then drag it up / down: share another row or get a new row
+    private var lifted = false
+    private var liftY = 0f
+    private val liftRun = Runnable {
+        val p = project ?: return@Runnable
+        if (decided || drag != Drag.NONE) return@Runnable
+        val idx = layerHit(p, downX, downY)
+        if (idx < 0) return@Runnable
+        val l = p.layers[idx]
+        if ((selection as? Sel.LayerSel)?.id != l.id) select(Sel.LayerSel(l.id))
+        performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        decided = true; lifted = true; liftY = lastY
+        drag = Drag.LAYER_MOVE
+        downX = lastX; autoMs = 0L
+        beginDrag(p)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        invalidate()
+    }
+
+    private fun layerHit(p: Project, x: Float, y: Float): Int {
+        if (x < gutterW) return -1
+        val t = tOf(x)
+        for ((i, l) in p.layers.withIndex()) {
+            val top = layerTop(i)
+            if (y in top..(top + layerH) && t >= l.startMs && t <= l.endMs) return i
+        }
+        return -1
+    }
+
+    /** Row under [y]: (row, true) = a new row goes in at that place, (row, false) = join that row. */
+    private fun dropTarget(p: Project, y: Float): Pair<Int, Boolean> {
+        val l = selectedLayer(p) ?: return Pair(0, false)
+        val n = rowCount
+        val rel = y - layersTop()
+        if (n == 0 || rel < 0f) return Pair(0, true)
+        if (rel >= rowY[n]) return Pair(n, true)
+        var r = 0
+        while (r < n - 1 && rel >= rowY[r + 1]) r++
+        val local = rel - rowY[r]
+        val h = rowY[r + 1] - rowY[r]
+        val edge = layerH * 0.22f
+        if (local < edge && r > 0 || local < edge * 0.6f) return Pair(r, true)
+        if (local > h - edge) return Pair(r + 1, true)
+        val fits = p.layers.none { it !== l && it.row == r && it.startMs < l.endMs - 1 && l.startMs < it.endMs - 1 }
+        return if (fits || l.row == r) Pair(r, false) else Pair(if (local < h / 2) r else r + 1, true)
+    }
+
+    private fun dropLifted(p: Project) {
+        val l = selectedLayer(p) ?: return
+        val (row, insert) = dropTarget(p, liftY)
+        if (insert) {
+            for (o in p.layers) if (o !== l && o.row >= row) o.row++
+            l.row = row
+        } else l.row = row
+        layoutRows(p, true)
+    }
+
     private var drag = Drag.NONE
     private var downX = 0f
     private var downY = 0f
@@ -702,6 +839,7 @@ class TimelineView(context: Context) : View(context) {
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val p = project ?: return false
         if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+            layoutRows(p, true)
             scroller.forceFinished(true); flingKind = Drag.NONE
             pinching = false; downTimeMs = timeMs; autoMs = 0L
             velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
@@ -714,6 +852,7 @@ class TimelineView(context: Context) : View(context) {
             pinching = true
         }
         if (pinching || e.pointerCount > 1) {
+            removeCallbacks(liftRun); lifted = false
             drag = Drag.NONE
             if (e.actionMasked == MotionEvent.ACTION_UP) { pinching = false; velocity?.recycle(); velocity = null }
             return true
@@ -724,11 +863,15 @@ class TimelineView(context: Context) : View(context) {
                 downX = e.x; downY = e.y; lastX = e.x; lastY = e.y; decided = false
                 pendingDrag = handleAt(p, e.x, e.y)
                 drag = Drag.NONE
+                lifted = false
+                removeCallbacks(liftRun)
+                if (layerHit(p, e.x, e.y) >= 0) postDelayed(liftRun, 380)
             }
             MotionEvent.ACTION_MOVE -> {
                 if (!decided) {
                     val dx = abs(e.x - downX); val dy = abs(e.y - downY)
                     if (dx < dp(6f) && dy < dp(6f)) return true
+                    removeCallbacks(liftRun)
                     decided = true
                     drag = when {
                         pendingDrag != Drag.NONE -> pendingDrag
@@ -749,6 +892,7 @@ class TimelineView(context: Context) : View(context) {
                         invalidate()
                     }
                     else -> {
+                        if (lifted) liftY = e.y
                         applyEdit(p, e.x - downX); listener?.onTimelineEditing(); invalidate()
                         // finger near the left / right edge: the timeline keeps sliding so the drag never stops
                         lastEditX = e.x
@@ -757,13 +901,16 @@ class TimelineView(context: Context) : View(context) {
                 }
             }
             MotionEvent.ACTION_UP -> {
+                removeCallbacks(liftRun)
+                if (lifted) { liftY = e.y; dropLifted(p); lifted = false; performHapticFeedback(android.view.HapticFeedbackConstants.KEYBOARD_TAP) }
+                else if (decided && drag != Drag.SCRUB && drag != Drag.VSCROLL && drag != Drag.NONE) { drag = Drag.NONE; layoutRows(p, true) }
                 if (!decided) onTap(p, e.x, e.y)
                 else if (drag != Drag.SCRUB && drag != Drag.VSCROLL && drag != Drag.NONE) { if (autoMs != 0L) listener?.onScrub(timeMs); listener?.onTimelineEdited() }
                 else startFling(p)
                 drag = Drag.NONE
                 velocity?.recycle(); velocity = null
             }
-            MotionEvent.ACTION_CANCEL -> drag = Drag.NONE
+            MotionEvent.ACTION_CANCEL -> { removeCallbacks(liftRun); if (lifted) { lifted = false; invalidate() }; drag = Drag.NONE }
         }
         return true
     }

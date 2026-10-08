@@ -404,6 +404,7 @@ class Keyframe(
     var sx: Float = 1f,
     var sy: Float = 1f,
     var ease: Easing = Easing.EASE_IN_OUT,  // curve towards the NEXT keyframe
+    var easeIn: Int = -1,                    // icon of the incoming side when there is no keyframe before (-1 = linear)
     var bx1: Float = 0.42f,
     var by1: Float = 0f,
     var bx2: Float = 0.58f,
@@ -611,6 +612,7 @@ class Layer(
 
     val durationMs: Long get() = (endMs - startMs).coerceAtLeast(1)
     /** Hidden with the eye in the timeline: not drawn, not heard, not exported. */
+    var row: Int = -1,                   // timeline row; layers that do not overlap in time can share a row
     var hidden: Boolean = false
     fun isActive(t: Long) = !hidden && t >= startMs && t < endMs
     fun isTextLike() = kind == LayerKind.TEXT || kind == LayerKind.STICKER

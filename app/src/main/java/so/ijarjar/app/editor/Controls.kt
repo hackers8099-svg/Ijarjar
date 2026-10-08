@@ -162,7 +162,7 @@ object KeyIcon {
         val i = ks.indexOf(k)
         val prev = ks.getOrNull(i - 1)
         val inK = when {
-            prev == null -> LINEAR
+            prev == null -> if (k.easeIn == EASED) EASED else LINEAR
             prev.ease == Easing.HOLD -> HOLD
             prev.ease in listOf(Easing.BACK, Easing.BOUNCE, Easing.ELASTIC) -> LINEAR
             else -> bez(prev).let { if (it[3] >= 0.98f && it[2] < 0.97f) EASED else LINEAR }

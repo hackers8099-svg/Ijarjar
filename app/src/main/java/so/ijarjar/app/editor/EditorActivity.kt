@@ -3624,6 +3624,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 k.ease = Easing.CUSTOM; k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3]
             }
             fun setIn(k: Keyframe, eased: Boolean) {
+                k.easeIn = if (eased) KeyIcon.EASED else KeyIcon.LINEAR
                 val prev = ks.getOrNull(ks.indexOf(k) - 1) ?: return
                 if (prev.ease == Easing.HOLD) return
                 val b = KeyIcon.bez(prev); b[2] = 0.667f; b[3] = if (eased) 1f else 0.667f
@@ -3632,8 +3633,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             for (k in targets) when (mode) {
                 0 -> { setIn(k, false); if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, false) }
                 1 -> { setIn(k, true); setOut(k, true) }
-                2 -> setIn(k, true)
-                3 -> { if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, true) }
+                2 -> { setIn(k, true); if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, false) }
+                3 -> { setIn(k, false); if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, true) }
                 else -> k.ease = Easing.HOLD
             }
             live(); sheet.invalidate(); activeGraph?.invalidate(); timeline.invalidate(); easeLabelRef?.invoke()
