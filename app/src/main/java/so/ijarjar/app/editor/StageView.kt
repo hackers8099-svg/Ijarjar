@@ -67,6 +67,8 @@ class StageView(context: Context) : FrameLayout(context) {
     var project: Project? = null
     var timeMs: Long = 0
     var selectedLayerId: String? = null
+    /** True while the video plays: grab smaller video frames so playback stays smooth. */
+    var playing = false
     /** "Select" mode: taps add / remove layers instead of switching to one. */
     var multiMode = false
         set(v) { field = v; overlay.invalidate() }
@@ -109,6 +111,7 @@ class StageView(context: Context) : FrameLayout(context) {
         addView(videoLayerHost, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(fadeView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         addView(overlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        LayerRenderer.onAsyncFrame = { overlay.invalidate() }
         fadeView.alpha = 0f
         videoLayerHost.clipChildren = false
     }
@@ -317,7 +320,7 @@ class StageView(context: Context) : FrameLayout(context) {
                 val (vw, vh) = videoSizes.getOrPut(l.videoSource() ?: "") {
                     so.ijarjar.app.media.MediaUtils.probe(context, android.net.Uri.parse(l.videoSource()))?.let { Pair(it.width, it.height) } ?: Pair(720, 1280)
                 }
-                val k = 1280f / maxOf(vw, vh).coerceAtLeast(1)
+                val k = (if (playing) 800f else 1280f) / maxOf(vw, vh).coerceAtLeast(1)
                 bw = (vw * minOf(1f, k)).toInt().coerceAtLeast(16); bh = (vh * minOf(1f, k)).toInt().coerceAtLeast(16)
             } else {
                 val (cw, ch) = LayerRenderer.contentSize(l, w)

@@ -73,6 +73,8 @@ object Model3D {
     }
     private val textures = HashMap<String, Texture>()
     private var assetLen = -1L
+    private var pixBuf: ByteBuffer? = null
+    private var rawBmp: Bitmap? = null
     /** UV set used by each material's colour / glow picture in the file (so a new picture lines up the same way). */
     private var matUv: Map<String, Int> = emptyMap()
 
@@ -419,18 +421,43 @@ object Model3D {
         val a = asset ?: return null
         val tm = e.transformManager
         tm.setTransform(tm.getInstance(a.root), modelMatrix(rx, ry))
-        val pixels = ByteBuffer.allocateDirect(w * h * 4)
+        // reuse the pixel buffer and the raw picture between frames (less memory churn = fewer stutters)
+        val pixels = pixBuf?.takeIf { it.capacity() == w * h * 4 } ?: ByteBuffer.allocateDirect(w * h * 4).also { pixBuf = it }
+        pixels.clear()
         if (!r.beginFrame(swap!!, 0L)) return null
         r.render(v)
         r.readPixels(0, 0, w, h, Texture.PixelBufferDescriptor(pixels, Texture.Format.RGBA, Texture.Type.UBYTE))
         r.endFrame()
         e.flushAndWait()
         pixels.rewind()
-        val raw = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val raw = rawBmp?.takeIf { it.width == w && it.height == h } ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { rawBmp = it }
         raw.copyPixelsFromBuffer(pixels)
         // GL rows start at the bottom
         val flip = Matrix().apply { preScale(1f, -1f) }
         return Bitmap.createBitmap(raw, 0, 0, w, h, flip, false)
+    }
+
+    private class Job(val context: Context, val uri: String, val w: Int, val h: Int, val rx: Float, val ry: Float,
+                      val looks: List<Look>, val light: Light, val done: (Bitmap?) -> Unit)
+    private val jobs = HashMap<String, Job>()
+    private val mainHandler = Handler(android.os.Looper.getMainLooper())
+
+    /**
+     * Renders in the background and calls [done] on the main thread. Only the newest request per [tag]
+     * is drawn, so a fast moving / playing model never piles up work or freezes the screen.
+     */
+    fun renderAsync(context: Context, tag: String, uri: String, w: Int, h: Int, rx: Float, ry: Float,
+                    looks: List<Look>, light: Light, done: (Bitmap?) -> Unit) {
+        val hd = synchronized(this) {
+            if (handler == null) { val t = HandlerThread("ijarjar-3d").also { it.start() }; thread = t; handler = Handler(t.looper) }
+            handler!!
+        }
+        synchronized(jobs) { jobs[tag] = Job(context.applicationContext, uri, w, h, rx, ry, looks, light, done) }
+        hd.post {
+            val j = synchronized(jobs) { jobs.remove(tag) } ?: return@post
+            val b = try { renderNow(j.context, j.uri, j.w.coerceIn(16, 2048), j.h.coerceIn(16, 2048), j.rx, j.ry, j.looks, null, j.light) } catch (t: Throwable) { null }
+            mainHandler.post { j.done(b) }
+        }
     }
 
     /** Renders the model; safe to call from any thread (waits up to 2 s). */

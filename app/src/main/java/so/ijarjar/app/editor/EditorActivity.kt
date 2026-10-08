@@ -260,6 +260,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             } else smoothT = -1.0
             val t = if (photo) 0 else timeMs
             stage.timeMs = t
+            stage.playing = engine.isPlaying
             // redraw the preview only when something moves (saves battery, keeps scrolling smooth)
             if (engine.isPlaying || t != lastDrawnT || frameTimeNanos - lastRefreshNs > 250_000_000L) {
                 stage.refresh(); lastDrawnT = t; lastRefreshNs = frameTimeNanos

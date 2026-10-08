@@ -784,14 +784,18 @@ object LayerRenderer {
     }
 
     private class ModelFrame(val key: String, val bmp: Bitmap)
-    private val modelFrames = HashMap<String, ModelFrame>()
+    private val modelFrames = java.util.concurrent.ConcurrentHashMap<String, ModelFrame>()
+    private val modelRequested = HashMap<String, String>()
+    /** Called (on the main thread) when a 3D picture drawn in the background is ready. */
+    var onAsyncFrame: (() -> Unit)? = null
 
     /** 3D model: the model turns in real 3D (rotX / rotY / spin); the layer box is flat. */
     private fun drawModel(context: Context, canvas: Canvas, l: Layer, pose: Pose, t: Long, canvasW: Int, canvasH: Int,
                           cw: Float, ch: Float, alpha: Int, maxDim: Int, content: Bitmap? = null) {
         val uri = l.uri ?: return
         // render a bit bigger than shown so edges stay smooth
-        val size = (cw * pose.scale * 1.4f).toInt().coerceIn(96, minOf((maxDim * 1.4f).toInt(), 1800))
+        val onScreen = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+        val size = (cw * pose.scale * (if (onScreen) 1.15f else 1.4f)).toInt().coerceIn(96, minOf((maxDim * 1.4f).toInt(), if (onScreen) 1100 else 1800))
         val spin = l.modelSpin * (t - l.startMs) / 1000f * 360f
         val looks = ArrayList<Model3D.Look>()
         if (l.modelTexture != null || l.modelColor != 0) looks.add(Model3D.Look(l.modelMaterial ?: "", l.modelTexture, color = l.modelColor))
@@ -809,7 +813,25 @@ object LayerRenderer {
         val key = "$uri|$size|${pose.rx}|${pose.ry + spin}|${l.lightPower},${l.lightAmbient},${l.lightAz},${l.lightEl},${l.lightSize}|" + looks.joinToString(";") { "${it.material}|${it.texUri}|${it.color}|${it.hidden}|${it.flipV}|${it.flipH}" } + "|$liveKey"
         // a few frames per layer are kept, so motion blur (earlier moments) doesn't re-render every time
         val cached = modelFrames["${l.id}|$key"] ?: modelFrames[l.id]
-        val bmp = if (cached != null && cached.key == key) cached.bmp else {
+        val onMain = android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+        val bmp = if (cached != null && cached.key == key) cached.bmp
+        else if (onMain) {
+            // preview: never wait for the 3D renderer on the screen thread — show the last picture,
+            // draw the new one in the background and refresh when it is ready
+            if (modelRequested[l.id] != key) {
+                modelRequested[l.id] = key
+                val id = l.id
+                Model3D.renderAsync(context, id, uri, size, size, pose.rx, pose.ry + spin, looks, light) { b ->
+                    if (modelRequested[id] == key) modelRequested.remove(id)
+                    if (b != null) {
+                        modelFrames[id] = ModelFrame(key, b); modelFrames["$id|$key"] = ModelFrame(key, b)
+                        if (modelFrames.size > 40) modelFrames.keys.filter { it.contains('|') }.take(20).forEach { modelFrames.remove(it) }
+                        onAsyncFrame?.invoke()
+                    }
+                }
+            }
+            cached?.bmp ?: return
+        } else {
             val b = Model3D.render(context, uri, size, size, pose.rx, pose.ry + spin, looks, null, light) ?: cached?.bmp ?: return
             modelFrames[l.id] = ModelFrame(key, b)
             modelFrames["${l.id}|$key"] = ModelFrame(key, b)
