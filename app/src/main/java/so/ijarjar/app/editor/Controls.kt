@@ -642,7 +642,9 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
                     private val onSeek: (Long) -> Unit, private val onEdit: () -> Unit) : View(context) {
     private val d = resources.displayMetrics.density
     var selected: Keyframe? = null
-        set(v) { field = v; invalidate() }
+        set(v) { field = v; picked.clear(); if (v != null) picked.add(v); invalidate() }
+    /** Keyframes picked for the next change (one, or a whole row). */
+    val picked = LinkedHashSet<Keyframe>()
     var selectedRow = 0
         set(v) { field = v; invalidate() }
     var onSelect: ((Keyframe?) -> Unit)? = null
@@ -662,7 +664,7 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
 
     private val labelW get() = 76 * d
     private val rulerH get() = 20 * d
-    private val rowH get() = 30 * d
+    private val rowH get() = 26 * d
     override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (rulerH + rowH * rows.size + 4 * d).toInt())
 
     // visible time (ms inside the layer)
@@ -731,7 +733,7 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
             c.save(); c.clipRect(labelW, top, width.toFloat(), top + rowH)
             val keyedHere = ks.filter { keyed(row, it, ks) }
             for (j in 0 until keyedHere.size - 1) c.drawLine(x(keyedHere[j].t), cy, x(keyedHere[j + 1].t), cy, spanP)
-            for (k in keyedHere) KeyIcon.draw(c, layer, k, x(k.t), cy, 7 * d, if (k === selected) keySel else keyP, keyOutline)
+            for (k in keyedHere) KeyIcon.draw(c, layer, k, x(k.t), cy, 7 * d, if (k in picked) keySel else keyP, keyOutline)
             c.restore()
         }
         // playhead
@@ -777,9 +779,14 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = e.x; downY = e.y; panStart = vs
-                if (e.x < labelW && e.y > rulerH) {          // a row name: pick that property
+                if (e.x < labelW && e.y > rulerH) {          // a row name: pick that property and ALL its keyframes
                     val ri = ((e.y - rulerH) / rowH).toInt().coerceIn(0, rows.size - 1)
-                    selectedRow = ri; onRow?.invoke(rows[ri].graphProp); mode = 0; return true
+                    val ks = layer.keyframes.sortedBy { it.t }
+                    val inRow = ks.filter { keyed(rows[ri], it, ks) }
+                    selectedRow = ri
+                    selected = inRow.firstOrNull(); picked.addAll(inRow)
+                    onSelect?.invoke(selected); onRow?.invoke(rows[ri].graphProp); mode = 0
+                    performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP); invalidate(); return true
                 }
                 val px = x(time() - layer.startMs)
                 val k = if (e.y > rulerH) keyAt(e.x, e.y) else null

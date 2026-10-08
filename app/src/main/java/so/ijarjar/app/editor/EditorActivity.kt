@@ -3090,11 +3090,19 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             "Ease In" to floatArrayOf(0.333f, 0f, 1f, 1f), "Ease Out" to floatArrayOf(0f, 0f, 0.667f, 1f), "Strong" to floatArrayOf(0.7f, 0f, 0.3f, 1f),
             "Expo" to floatArrayOf(0.9f, 0f, 0.1f, 1f), "Smooth" to floatArrayOf(0.45f, 0f, 0.55f, 1f), "Overshoot" to floatArrayOf(0.3f, 0f, 0.3f, 1.35f),
             "Anticipate" to floatArrayOf(0.4f, -0.35f, 0.6f, 1f))
+        // like the Ease menu: the keyframes picked on the sheet (one ◆, or a whole row), or all of them
+        var mtAll = false
+        body.addView(Ui.choiceRow(this, listOf(tr("La doortay", "Picked") + " (${activeDope?.picked?.size ?: 0})", tr("Dhammaan", "All keyframes")), 0) { mtAll = it == 1 })
         val (sv, row) = Ui.hrow(this)
         for ((name, b) in eases) {
             val cv = CurveView(this).apply { easing = Easing.CUSTOM; this.b = b }
             row.addView(tileWithLabel(this, cv, name, 64f) {
-                val targets = easeTargets(l, LayerRenderer.keyframeAt(l, timeMs))
+                val picked = activeDope?.picked?.toList().orEmpty()
+                val targets = when {
+                    mtAll -> l.keyframes.sortedBy { it.t }.dropLast(1)
+                    picked.isNotEmpty() -> picked.flatMap { easeTargets(l, it) }.distinct()
+                    else -> easeTargets(l, LayerRenderer.keyframeAt(l, timeMs))
+                }
                 if (targets.isEmpty()) { toast(tr("Marka hore samee ugu yaraan 2 keyframe", "Make at least 2 keyframes first")); return@tileWithLabel }
                 for (o in targets) { o.ease = Easing.CUSTOM; o.bx1 = b[0]; o.by1 = b[1]; o.bx2 = b[2]; o.by2 = b[3] }
                 live(); toast(name + " ✓ (" + targets.size + ")"); after()
@@ -3208,14 +3216,6 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         }
         nav.addView(trash)
         d.top.addView(nav)
-        d.top.addView(Ui.choiceRow(this, listOf(tr("◆ Keyframe cusub", "◆ New keyframe"), tr("Beddel kan u dhow", "Edit nearest"), tr("Dhaqaaji dhammaan", "Move all")), LayerRenderer.keyMode) {
-            LayerRenderer.keyMode = it
-            toast(when (it) {
-                0 -> tr("Marka aad layer-ka beddesho, keyframe cusub ayaa la samaynayaa (sida AE).", "Changing the layer adds a keyframe at the playhead (like AE).")
-                1 -> tr("Isbeddelku wuxuu galayaa keyframe-ka ugu dhow — mid cusub lama samaynayo.", "Changes go into the nearest keyframe — no new one is made.")
-                else -> tr("Animation-ka oo dhan ayaa dhaqaaqaya — keyframe-yada lama tirtirayo.", "The whole animation moves — no keyframe is removed.")
-            })
-        })
         refreshNav()
 
         // ---- After Effects style: a row per property with its keyframes (replaces the small time bar)
@@ -3228,18 +3228,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         val pb = Ui.iconButton(this, if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play, 22f) { togglePlay() }
         panelPlay = pb
         ctl.addView(pb)
-        var allKeys = false
-        ctl.addView(Ui.choiceRow(this, listOf(tr("Keyframe-kan", "This key"), tr("Dhammaan", "All")), 0) { allKeys = it == 1 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { sheet.zoom(0.5f) })
-        ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { sheet.zoom(2f) })
-        ctl.addView(Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(8f), dp(8f), dp(8f), dp(8f)); setOnClickListener { sheet.fit() }; Ui.press(this) })
-        d.top.addView(ctl)
-        d.top.addView(sheet, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
-        fun ease(mode: Int) {
+        fun ease(mode: Int, all: Boolean) {
             val ks = l.keyframes.sortedBy { it.t }
             if (ks.isEmpty()) { toast(tr("Marka hore keyframe ku dar", "Add keyframes first")); return }
-            val sel = sheet.selected ?: activeGraph?.selected ?: LayerRenderer.keyframeAt(l, timeMs)
-            val targets = if (allKeys || sel == null) ks else listOf(sel)
+            val sel = sheet.picked.toList().ifEmpty { listOfNotNull(activeGraph?.selected ?: LayerRenderer.keyframeAt(l, timeMs)) }
+            val targets = if (all || sel.isEmpty()) ks else sel
             fun setOut(k: Keyframe, eased: Boolean) {
                 val b = KeyIcon.bez(k); b[0] = 0.333f; b[1] = if (eased) 0f else 0.333f
                 k.ease = Easing.CUSTOM; k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3]
@@ -3258,19 +3251,48 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 else -> k.ease = Easing.HOLD
             }
             live(); sheet.invalidate(); activeGraph?.invalidate(); timeline.invalidate()
+            toast(tr("${targets.size} keyframe ayaa la beddelay", "${targets.size} keyframe(s) changed"))
         }
-        val (esv, erow) = Ui.hrow(this)
-        listOf(Triple(KeyIcon.LINEAR, KeyIcon.LINEAR, "Linear"), Triple(KeyIcon.EASED, KeyIcon.EASED, "Easy Ease"),
-            Triple(KeyIcon.EASED, KeyIcon.LINEAR, "Ease In"), Triple(KeyIcon.LINEAR, KeyIcon.EASED, "Ease Out"),
-            Triple(KeyIcon.LINEAR, KeyIcon.HOLD, "Hold")).forEachIndexed { i, (a, b, name) ->
-            erow.addView(Ui.press(EaseButton(this, a, b, name, true).apply { setOnClickListener { ease(i) } }),
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(5f) })
+        // Ease ▾ : a small menu — pick the kind, for the picked keyframes or all of them
+        val easeBtn = Ui.button(this, "⧓ Ease ▾", false) {}
+        easeBtn.setOnClickListener {
+            val n = sheet.picked.size
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16f), dp(8f), dp(16f), 0) }
+            var all = n == 0
+            box.addView(Ui.choiceRow(this, listOf(tr("La doortay", "Picked") + " ($n)", tr("Dhammaan keyframe-yada", "All keyframes")), if (all) 1 else 0) { all = it == 1 })
+            box.addView(Ui.label(this, tr("Taabo ◆ (mid) ama magaca safka (dhammaan safkaas), kadib halkan dooro.", "Tap a ◆ (one) or a row name (its whole row), then choose here.")))
+            val (esv, erow) = Ui.hrow(this)
+            box.addView(esv)
+            val dlg = MaterialAlertDialogBuilder(this).setTitle("Ease").setView(box).setNegativeButton(tr("Xir", "Close"), null).create()
+            listOf(Triple(KeyIcon.LINEAR, KeyIcon.LINEAR, "Linear"), Triple(KeyIcon.EASED, KeyIcon.EASED, "Easy Ease"),
+                Triple(KeyIcon.EASED, KeyIcon.LINEAR, "Ease In"), Triple(KeyIcon.LINEAR, KeyIcon.EASED, "Ease Out"),
+                Triple(KeyIcon.LINEAR, KeyIcon.HOLD, "Hold")).forEachIndexed { i, (a, b, name) ->
+                erow.addView(Ui.press(EaseButton(this, a, b, name, true).apply { setOnClickListener { ease(i, all); dlg.dismiss() } }),
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(5f) })
+            }
+            dlg.show()
         }
-        d.top.addView(esv)
+        ctl.addView(easeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4f) })
+        ctl.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { sheet.zoom(0.5f) })
+        ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { sheet.zoom(2f) })
+        ctl.addView(Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(8f), dp(8f), dp(8f), dp(8f)); setOnClickListener { sheet.fit() }; Ui.press(this) })
+        d.top.addView(ctl)
+        d.top.addView(sheet, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
 
         Ui.tabs(this, root, listOf(
             tr("Qiimaha", "Values") to { body: LinearLayout ->
-                fun blurRow() = body.addView(Ui.choiceRow(this, listOf("Motion blur: " + tr("Maya", "Off"), "Motion blur: " + tr("Haa", "On")), if (l.motionBlur) 1 else 0) { l.motionBlur = it == 1; live() })
+                fun blurRow() {
+        body.addView(Ui.choiceRow(this, listOf(tr("◆ Keyframe cusub", "◆ New keyframe"), tr("Beddel kan u dhow", "Edit nearest"), tr("Dhaqaaji dhammaan", "Move all")), LayerRenderer.keyMode) {
+            LayerRenderer.keyMode = it
+            toast(when (it) {
+                0 -> tr("Marka aad layer-ka beddesho, keyframe cusub ayaa la samaynayaa (sida AE).", "Changing the layer adds a keyframe at the playhead (like AE).")
+                1 -> tr("Isbeddelku wuxuu galayaa keyframe-ka ugu dhow — mid cusub lama samaynayo.", "Changes go into the nearest keyframe — no new one is made.")
+                else -> tr("Animation-ka oo dhan ayaa dhaqaaqaya — keyframe-yada lama tirtirayo.", "The whole animation moves — no keyframe is removed.")
+            })
+        })
+                    body.addView(Ui.choiceRow(this, listOf("Motion blur: " + tr("Maya", "Off"), "Motion blur: " + tr("Haa", "On")), if (l.motionBlur) 1 else 0) { l.motionBlur = it == 1; live() })
+                }
                 refreshBody = { body.removeAllViews(); blurRow(); keyDials(body, l) { refreshNav() } }
                 blurRow()
                 keyDials(body, l) { refreshNav() }
