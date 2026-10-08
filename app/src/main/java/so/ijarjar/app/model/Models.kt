@@ -548,6 +548,8 @@ class Layer(
     var screenSegs: MutableList<ScreenSeg> = mutableListOf()
     var screenLoop: Boolean = true
     var screenSpeed: Float = 1f
+    /** When the screen video starts, counted from the start of the layer (ms). */
+    var screenOffset: Long = 0
     /** 3D light: brightness, all-round light, direction (degrees) and size of the main light. */
     var lightPower: Float = 1f
     var lightAmbient: Float = 1f
@@ -557,7 +559,7 @@ class Layer(
 
     /** Where in the screen video file we are at timeline time [t] ([dur] = length of the file). */
     fun screenTime(t: Long, dur: Long): Long {
-        val local = ((t - startMs).coerceAtLeast(0) * screenSpeed).toLong() + trimStartMs
+        val local = ((t - startMs - screenOffset).coerceAtLeast(0) * screenSpeed).toLong() + trimStartMs
         val segs = screenSegs.filter { it.length > 0 }
         if (segs.isEmpty()) return if (dur > 0 && screenLoop) local % dur else if (dur > 0) local.coerceAtMost(dur - 1) else local
         val total = segs.sumOf { it.length }

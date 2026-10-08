@@ -526,7 +526,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     private fun setSelection(s: TimelineView.Sel?) {
         selection = s
         timeline.selection = s
-        stage.selectedLayerId = (s as? TimelineView.Sel.LayerSel)?.id
+        stage.selectedLayerId = (s as? TimelineView.Sel.LayerSel)?.id ?: (s as? TimelineView.Sel.ScreenSel)?.layerId
         stage.canvasTarget = canvasTargetFor(s)
         // like CapCut: picking a layer that isn't on screen now moves the playhead onto it, so its box shows
         if (!photo && !engine.isPlaying) (s as? TimelineView.Sel.LayerSel)?.let { ls ->
@@ -729,6 +729,51 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                     }
                 }
             }
+            s is TimelineView.Sel.ScreenSel && project.layers.any { it.id == s.layerId } -> {
+                key = "screen"
+                val l = project.layers.first { it.id == s.layerId }
+                fun ensure(after: () -> Unit) {
+                    if (l.screenSegs.isNotEmpty()) { after(); return }
+                    val src = l.videoSource() ?: return
+                    io.execute { val d = MediaUtils.probe(this, Uri.parse(src))?.durationMs ?: 0L
+                        main.post { if (d > 0 && l.screenSegs.isEmpty()) l.screenSegs.add(so.ijarjar.app.model.ScreenSeg(0, d)); after() } }
+                }
+                group(tr("Video-ga shaashadda", "Screen video"))
+                t(R.drawable.ic_split, tr("Kala jar", "Split")) { ensure {
+                    // where the playhead is inside the screen video
+                    val segs = l.screenSegs
+                    val total = segs.sumOf { it.length }
+                    var local = ((timeMs - l.startMs - l.screenOffset).coerceAtLeast(0) * l.screenSpeed).toLong()
+                    if (l.screenLoop && total > 0) local %= total
+                    var acc = 0L; var done = false
+                    for ((i, sg) in segs.withIndex()) {
+                        if (local < acc + sg.length) {
+                            val cut = sg.start + (local - acc)
+                            if (cut > sg.start + 100 && cut < sg.end - 100) { segs.add(i + 1, so.ijarjar.app.model.ScreenSeg(cut, sg.end)); sg.end = cut; done = true
+                                setSelection(TimelineView.Sel.ScreenSel(l.id, i + 1)) }
+                            break
+                        }
+                        acc += sg.length
+                    }
+                    if (done) commit() else toast(tr("Xariiqda dhig gudaha qayb video ah", "Put the playhead inside a video piece"))
+                } }
+                t(R.drawable.ic_delete, tr("Tirtir qaybta", "Delete piece")) { ensure {
+                    if (l.screenSegs.size <= 1) { toast(tr("Ugu yaraan hal qayb", "Keep at least one piece")); return@ensure }
+                    l.screenSegs.removeAt(s.seg.coerceIn(0, l.screenSegs.size - 1)); setSelection(TimelineView.Sel.ScreenSel(l.id, 0)); commit()
+                } }
+                t(R.drawable.ic_speed, tr("Xawaare", "Speed"), l.screenSpeed != 1f) {
+                    val sp = listOf(0.5f, 1f, 1.5f, 2f, 3f)
+                    MaterialAlertDialogBuilder(this).setTitle(tr("Xawaare", "Speed")).setItems(sp.map { "${it}x" }.toTypedArray()) { _, i -> l.screenSpeed = sp[i]; commit() }.show()
+                }
+                t(R.drawable.ic_rotate, if (l.screenLoop) tr("Loop: haa", "Loop: on") else tr("Loop: maya", "Loop: off"), l.screenLoop) { l.screenLoop = !l.screenLoop; commit() }
+                t(R.drawable.ic_start_here, tr("Bilow halkan", "Start here")) { l.screenOffset = (timeMs - l.startMs).coerceIn(0, l.durationMs); commit() }
+                t(R.drawable.ic_trim, tr("Tafatir (strip)", "Trim editor")) { showScreenVideo(l) }
+                t(R.drawable.ic_image_add, tr("Beddel video", "Replace")) {
+                    partTarget = l to (l.parts.entries.firstOrNull { it.value.video }?.key ?: "Screen")
+                    pickPartMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly))
+                }
+                t(R.drawable.ic_close, tr("Ka saar video", "Remove video")) { for (pp in l.parts.values) if (pp.video) { pp.video = false; pp.tex = null }; l.screenSegs.clear(); setSelection(TimelineView.Sel.LayerSel(l.id)); commit() }
+            }
             s is TimelineView.Sel.AudioSel && selectedAudio() != null -> {
                 key = "audio"
                 val a = selectedAudio()!!
@@ -840,6 +885,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         if (selection is TimelineView.Sel.ClipSel && selectedClipIndex() >= project.clips.size) selection = null
         if (selection is TimelineView.Sel.LayerSel && selectedLayer() == null) selection = null
         if (selection is TimelineView.Sel.AudioSel && selectedAudio() == null) selection = null
+        (selection as? TimelineView.Sel.ScreenSel)?.let { ss -> if (project.layers.none { it.id == ss.layerId && it.videoSource() != null }) selection = null }
         if (multiMode) {
             MultiSelect.ids.retainAll((project.layers.map { it.id } + project.audios.map { it.id } + project.clips.map { it.id }).toSet())
             timeline.multi = MultiSelect.ids.toSet()
@@ -930,6 +976,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 is TimelineView.Sel.LayerSel -> sel.id
                 is TimelineView.Sel.AudioSel -> sel.id
                 is TimelineView.Sel.ClipSel -> project.clips.getOrNull(sel.index)?.id
+                is TimelineView.Sel.ScreenSel -> null
                 null -> null
             } ?: return
             if (!MultiSelect.ids.remove(id)) MultiSelect.ids.add(id)

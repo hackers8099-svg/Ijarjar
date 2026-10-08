@@ -44,6 +44,8 @@ class TimelineView(context: Context) : View(context) {
         data class ClipSel(val index: Int) : Sel()
         data class LayerSel(val id: String) : Sel()
         data class AudioSel(val id: String) : Sel()
+        /** One piece of the video on a 3D layer's screen (its own row under the layer). */
+        data class ScreenSel(val layerId: String, val seg: Int) : Sel()
     }
 
     interface Listener {
@@ -107,7 +109,27 @@ class TimelineView(context: Context) : View(context) {
         val n = max(1, project?.audios?.size ?: 0)
         return audioTop(n) + gap * 0.4f
     }
-    private fun layerTop(i: Int) = layersTop() + i * (layerH + gap * 0.6f)
+    private val subH get() = dp(30f)
+    private fun hasScreen(l: Layer) = l.kind == LayerKind.MODEL3D && l.videoSource() != null
+    private fun layerTop(i: Int): Float {
+        var y = layersTop()
+        val ls = project?.layers ?: return y
+        for (k in 0 until minOf(i, ls.size)) y += layerH + gap * 0.6f + (if (hasScreen(ls[k])) subH + gap * 0.4f else 0f)
+        return y
+    }
+    /** Top of the screen-video row under layer [i]. */
+    private fun screenTop(i: Int) = layerTop(i) + layerH + gap * 0.4f
+
+    /** Pieces of a 3D layer's screen video on the timeline: (piece index, start, end), first round only. */
+    private fun screenPieces(l: Layer): List<Triple<Int, Long, Long>> {
+        val src = l.videoSource() ?: return emptyList()
+        val segs = l.screenSegs.filter { it.length > 0 }
+        val lens = if (segs.isEmpty()) listOf((mediaDur[src] ?: 0L).coerceAtLeast(0)) else segs.map { it.length }
+        var t = l.startMs + l.screenOffset
+        val out = ArrayList<Triple<Int, Long, Long>>()
+        for ((i, len) in lens.withIndex()) { val d = (len / l.screenSpeed).toLong().coerceAtLeast(1); out.add(Triple(i, t, t + d)); t += d }
+        return out
+    }
 
     private fun contentHeight(): Float {
         val n = project?.layers?.size ?: 0
@@ -463,9 +485,71 @@ class TimelineView(context: Context) : View(context) {
         canvas.drawRect(r, mediaShade)   // keep the name readable
     }
 
+    private val screenBg = Paint().apply { color = 0xFF143A40.toInt() }
+    private val screenPiece = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF1E6B73.toInt() }
+
+    /** The screen video of a 3D layer as its own row: pieces you can pick, trim, split and move. */
+    private fun drawScreenRow(canvas: Canvas, l: Layer, i: Int) {
+        val src = l.videoSource() ?: return
+        val top = screenTop(i)
+        if (top > height || top + subH < rulerH) return
+        if (!mediaDur.containsKey(src)) {
+            mediaDur[src] = -1L
+            executor.execute { val d = MediaUtils.probe(context, Uri.parse(src))?.durationMs ?: 0L; main.post { mediaDur[src] = d; invalidate() } }
+        }
+        val span = RectF(xOf(l.startMs), top, xOf(l.endMs), top + subH)
+        canvas.drawRoundRect(span, dp(4f), dp(4f), screenBg)
+        val pieces = screenPieces(l)
+        val cycle = (pieces.lastOrNull()?.third ?: 0L) - (l.startMs + l.screenOffset)
+        val sel = selection as? Sel.ScreenSel
+        canvas.save(); canvas.clipRect(span)
+        var round = 0
+        while (round < 50) {
+            val shift = round * cycle
+            if (round > 0 && (!l.screenLoop || cycle <= 0 || l.startMs + l.screenOffset + shift > l.endMs)) break
+            for ((k, a, b) in pieces) {
+                val r = RectF(xOf(a + shift) + dp(1f), top + dp(1f), xOf(b + shift) - dp(1f), top + subH - dp(1f))
+                if (r.right < 0 || r.left > width) continue
+                screenPiece.alpha = if (round == 0) 255 else 110
+                canvas.drawRoundRect(r, dp(4f), dp(4f), screenPiece)
+                if (round == 0) {
+                    canvas.save(); canvas.clipRect(r)
+                    // pictures of that piece
+                    val tw = subH * 1.2f
+                    var x = r.left
+                    val segs = l.screenSegs.filter { it.length > 0 }
+                    while (x < r.right && x < width) {
+                        if (x + tw > 0) {
+                            val tt = tOf(x + tw / 2) - (l.startMs + l.screenOffset)
+                            val srcMs = l.screenTime(l.startMs + l.screenOffset + tt.coerceAtLeast(0), (mediaDur[src] ?: 0L).coerceAtLeast(0))
+                            val bucket = (srcMs / 1000) * 1000
+                            val key = "$src#$bucket"
+                            val dst = RectF(x, r.top, x + tw, r.bottom)
+                            if (thumbs.containsKey(key)) thumbs[key]?.let { bm -> canvas.drawBitmap(bm, centerCrop(bm, dst), dst, null) }
+                            else { thumbs[key] = null; executor.execute { val bm = MediaUtils.thumbnail(context, Uri.parse(src), true, bucket, 120); main.post { thumbs[key] = bm; invalidate() } } }
+                        }
+                        x += tw
+                    }
+                    canvas.drawRect(r, mediaShade)
+                    drawIcon(canvas, R.drawable.ic_video, max(r.left, gutterW) + dp(4f), r.centerY(), dp(12f))
+                    val label = (if (segs.size > 1) "${k + 1} · " else "") + fmt((b - a))
+                    canvas.drawText(label, max(r.left, gutterW) + dp(20f), r.centerY() + dp(4f), labelPaint)
+                    canvas.restore()
+                }
+            }
+            if (cycle <= 0) break
+            round++
+        }
+        canvas.restore()
+        if (sel != null && sel.layerId == l.id) pieces.getOrNull(sel.seg)?.let { (_, a, b) ->
+            drawSelection(canvas, RectF(xOf(a), top, xOf(b), top + subH), Color.WHITE)
+        }
+    }
+
     private fun drawLayers(canvas: Canvas, p: Project) {
         val groups = p.layers.mapNotNull { it.linkGroup }.distinct()
         val selLayer = (selection as? Sel.LayerSel)?.let { s -> p.layers.firstOrNull { it.id == s.id } }
+        for ((i, l) in p.layers.withIndex()) if (hasScreen(l)) drawScreenRow(canvas, l, i)
         for ((i, l) in p.layers.withIndex()) {
             val top = layerTop(i)
             if (top > height || top + layerH < rulerH) continue
@@ -539,7 +623,7 @@ class TimelineView(context: Context) : View(context) {
 
     // ------------------------------------------------------------------ touch
 
-    private enum class Drag { NONE, SCRUB, VSCROLL, CLIP_L, CLIP_R, LAYER_L, LAYER_R, LAYER_MOVE, AUDIO_L, AUDIO_R, AUDIO_MOVE, KEYFRAME }
+    private enum class Drag { NONE, SCRUB, VSCROLL, CLIP_L, CLIP_R, LAYER_L, LAYER_R, LAYER_MOVE, AUDIO_L, AUDIO_R, AUDIO_MOVE, KEYFRAME, SCR_L, SCR_R, SCR_MOVE }
 
     private var keyDrag: so.ijarjar.app.model.Keyframe? = null
     private var keyOrigT = 0L
@@ -719,9 +803,25 @@ class TimelineView(context: Context) : View(context) {
                 if (y < top - dp(6f) || y > top + audioH + dp(6f)) return Drag.NONE
                 return edgeDrag(x, xOf(a.startMs), xOf(a.endMs), Drag.AUDIO_L, Drag.AUDIO_R, Drag.AUDIO_MOVE)
             }
+            is Sel.ScreenSel -> {
+                val idx = p.layers.indexOfFirst { it.id == s.layerId }
+                if (idx < 0) return Drag.NONE
+                val l = p.layers[idx]
+                val top = screenTop(idx)
+                if (y < top - dp(6f) || y > top + subH + dp(6f)) return Drag.NONE
+                val pc = screenPieces(l).getOrNull(s.seg) ?: return Drag.NONE
+                return edgeDrag(x, xOf(pc.second), xOf(pc.third), Drag.SCR_L, Drag.SCR_R, Drag.SCR_MOVE)
+            }
             else -> {}
         }
         return Drag.NONE
+    }
+
+    private fun screenLayer(p: Project): Layer? = (selection as? Sel.ScreenSel)?.let { s -> p.layers.firstOrNull { it.id == s.layerId } }
+
+    /** Pieces become real (so their edges can be dragged) the first time they are edited. */
+    private fun ensureSegs(l: Layer) {
+        if (l.screenSegs.isEmpty()) { val d = mediaDur[l.videoSource() ?: ""] ?: 0L; if (d > 0) l.screenSegs.add(so.ijarjar.app.model.ScreenSeg(0, d)) }
     }
 
     private fun beginDrag(p: Project) {
@@ -732,6 +832,11 @@ class TimelineView(context: Context) : View(context) {
                 origTimes = p.linkedWith(l).map { Pair(it.startMs, it.endMs) }
             }
             is Sel.AudioSel -> selectedAudio(p)?.let { a -> origStart = a.startMs; origEnd = a.endMs; origTrim = a.trimStartMs }
+            is Sel.ScreenSel -> screenLayer(p)?.let { l ->
+                ensureSegs(l)
+                l.screenSegs.getOrNull((selection as Sel.ScreenSel).seg)?.let { sg -> origStart = sg.start; origEnd = sg.end }
+                origTrim = l.screenOffset
+            }
             else -> {}
         }
     }
@@ -816,6 +921,14 @@ class TimelineView(context: Context) : View(context) {
             }
             Drag.AUDIO_MOVE -> selectedAudio(p)?.let { a -> a.startMs = max(0, origStart + dMs) }
             Drag.KEYFRAME -> selectedLayer(p)?.let { l -> keyDrag?.let { k -> k.t = (keyOrigT + dMs).coerceIn(0, l.durationMs) } }
+            Drag.SCR_L, Drag.SCR_R -> screenLayer(p)?.let { l ->
+                val sg = l.screenSegs.getOrNull((selection as Sel.ScreenSel).seg) ?: return@let
+                val dur = (mediaDur[l.videoSource() ?: ""] ?: 0L).coerceAtLeast(sg.end)
+                val dSrc = (dMs * l.screenSpeed).toLong()
+                if (drag == Drag.SCR_L) sg.start = (origStart + dSrc).coerceIn(0, sg.end - 100)
+                else sg.end = (origEnd + dSrc).coerceIn(sg.start + 100, dur)
+            }
+            Drag.SCR_MOVE -> screenLayer(p)?.let { l -> l.screenOffset = (origTrim + dMs).coerceIn(0, (l.durationMs - 100).coerceAtLeast(0)) }
             else -> {}
         }
     }
@@ -849,6 +962,18 @@ class TimelineView(context: Context) : View(context) {
         for ((i, l) in p.layers.withIndex()) {
             val top = layerTop(i)
             if (y in top..(top + layerH) && t >= l.startMs && t <= l.endMs) { select(Sel.LayerSel(l.id)); return }
+            if (hasScreen(l)) {
+                val st = screenTop(i)
+                if (y in st..(st + subH) && t >= l.startMs && t <= l.endMs) {
+                    val pieces = screenPieces(l)
+                    val base = l.startMs + l.screenOffset
+                    val cycle = (pieces.lastOrNull()?.third ?: base) - base
+                    var local = t - base
+                    if (l.screenLoop && cycle > 0 && local >= 0) local %= cycle
+                    val hit = pieces.firstOrNull { base + local >= it.second && base + local < it.third } ?: pieces.firstOrNull()
+                    select(Sel.ScreenSel(l.id, hit?.first ?: 0)); return
+                }
+            }
         }
         select(null)
     }
