@@ -177,8 +177,8 @@ object TextAnimator {
         val outActive = l.textOut != TextAnim.NONE && until < outMs
         // letters / words / lines: chosen by the user, else the animation's own way
         fun unitOf(a: TextAnim): Int = when {
-            a == TextAnim.CUSTOM -> l.taUnit
             l.textUnit in 0..2 -> l.textUnit
+            a == TextAnim.CUSTOM -> l.taUnit
             wordBased(a, l) -> 1
             else -> 0
         }
@@ -206,18 +206,18 @@ object TextAnimator {
         val inP = if (inActive) since.toFloat() / inMs else 1f
         val outP = if (outActive) until.toFloat() / outMs else 1f
         val order = IntArray(n) { it }
-        val custom = (inActive && l.textIn == TextAnim.CUSTOM) || (outActive && l.textOut == TextAnim.CUSTOM)
-        if ((inActive && l.textIn == TextAnim.RANDOM) || (outActive && l.textOut == TextAnim.RANDOM) || (custom && l.taOrder == 3)) {
+        // order and overlap (Custom tab) shape every text animation, ready-made ones too
+        if ((inActive && l.textIn == TextAnim.RANDOM) || (outActive && l.textOut == TextAnim.RANDOM) || l.taOrder == 3) {
             val sorted = (0 until n).sortedBy { hash(it, 42) }
             for ((rank, idx) in sorted.withIndex()) order[idx] = rank
-        } else if (custom && l.taOrder == 1) {
+        } else if (l.taOrder == 1) {
             for (i in 0 until n) order[i] = n - 1 - i
-        } else if (custom && l.taOrder == 2) {
+        } else if (l.taOrder == 2) {
             val c = (n - 1) / 2f
             val sorted = (0 until n).sortedBy { abs(it - c) }
             for ((rank, idx) in sorted.withIndex()) order[idx] = rank
         }
-        val window = if (custom) l.taOverlap.coerceIn(0.03f, 1f) else 0.35f
+        val window = l.taOverlap.coerceIn(0.03f, 1f)
 
         canvas.save()
         canvas.concat(m)
@@ -280,13 +280,13 @@ object TextAnimator {
                 if (l.textIn == TextAnim.TRACKING) {
                     val f = Ease.apply(Easing.EASE_OUT, inP)
                     st.dx += (i - center) * (1f - f) * px * 0.6f; st.alpha *= f; st.blur = maxOf(st.blur, (1f - f) * 0.5f)
-                } else applyAnim(st, l.textIn, stagger(inP, order[i], n, if (l.textIn == TextAnim.CUSTOM) window else 0.35f), i, n, px, l, t)
+                } else applyAnim(st, l.textIn, stagger(inP, order[i], n, window), i, n, px, l, t)
             }
             if (outActive) {
                 if (l.textOut == TextAnim.TRACKING) {
                     val f = Ease.apply(Easing.EASE_OUT, outP)
                     st.dx += (i - center) * (1f - f) * px * 0.6f; st.alpha *= f
-                } else applyAnim(st, l.textOut, stagger(outP, n - 1 - order[i], n, if (l.textOut == TextAnim.CUSTOM) window else 0.35f), i, n, px, l, t)
+                } else applyAnim(st, l.textOut, stagger(outP, n - 1 - order[i], n, window), i, n, px, l, t)
             }
             applyLoop(st, l.textLoop, s, i, n, px, l, u, sp.layoutW.toFloat())
             if (st.alpha <= 0.004f) continue

@@ -2264,18 +2264,24 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             },
             tr("Gaar ah", "Custom") to { body: LinearLayout ->
                 if (!isText) { body.addView(Ui.label(this, tr("Qeybtan waxay u shaqeysaa qoraalka.", "This is for text layers."))); return@to }
-                body.addView(Ui.choiceRow(this, listOf(tr("Xaraf", "Letters"), tr("Eray", "Words"), tr("Sadar", "Lines")), l.taUnit) { l.taUnit = it; previewAnim(l, true) })
+                // 1) applies to EVERY text animation (the ready-made ones too)
+                body.addView(Ui.label(this, tr("Dhammaan animation-yada qoraalka", "All text animations")))
+                body.addView(Ui.choiceRow(this, listOf(tr("Caadi", "Auto"), tr("Xaraf", "Letters"), tr("Eray", "Words"), tr("Sadar", "Lines")), l.textUnit + 1) {
+                    l.textUnit = it - 1; if (it > 0) l.taUnit = it - 1; previewAnim(l, true) })
                 body.addView(Ui.choiceRow(this, listOf(tr("Hore", "Forward"), tr("Gadaal", "Backward"), tr("Dhexda", "From centre"), tr("Kala firdhi", "Random")), l.taOrder) { l.taOrder = it; previewAnim(l, true) })
-                body.addView(Ui.sliderRow(this, tr("Isku dhafan", "Overlap"), 0.03f, 1f, l.taOverlap.coerceIn(0.03f, 1f)) { l.taOverlap = it })
-                body.addView(Ui.sliderRow(this, "X", -3f, 3f, l.taDx.coerceIn(-3f, 3f)) { l.taDx = it })
-                body.addView(Ui.sliderRow(this, "Y", -3f, 3f, l.taDy.coerceIn(-3f, 3f)) { l.taDy = it })
-                body.addView(Ui.sliderRow(this, tr("Cabbir", "Scale"), 0f, 4f, l.taScale.coerceIn(0f, 4f)) { l.taScale = it })
-                body.addView(Ui.sliderRow(this, tr("Wareeg", "Rotation"), -360f, 360f, l.taRot.coerceIn(-360f, 360f)) { l.taRot = it })
-                body.addView(Ui.sliderRow(this, tr("Daahsoon", "Opacity"), 0f, 1f, l.taOpacity.coerceIn(0f, 1f)) { l.taOpacity = it })
-                body.addView(Ui.sliderRow(this, tr("Qariin", "Blur"), 0f, 1f, l.taBlur.coerceIn(0f, 1f)) { l.taBlur = it })
+                body.addView(Ui.sliderRow(this, tr("Isku dhafan", "Overlap"), 0.03f, 1f, l.taOverlap.coerceIn(0.03f, 1f)) { l.taOverlap = it; if (!engine.isPlaying) previewAnim(l, true) })
+                // 2) your own move: touching any of these makes the In animation "Custom"
+                body.addView(Ui.label(this, tr("Dhaqdhaqaaqaaga gaarka ah (wuxuu noqonayaa Gal-ka)", "Your own move (becomes the In animation)")))
+                fun mine() { if (l.textIn != TextAnim.CUSTOM) { l.textIn = TextAnim.CUSTOM; l.animIn = LayerAnim.NONE }; if (!engine.isPlaying) previewAnim(l, true) else live() }
+                body.addView(Ui.sliderRow(this, "X", -3f, 3f, l.taDx.coerceIn(-3f, 3f)) { l.taDx = it; mine() })
+                body.addView(Ui.sliderRow(this, "Y", -3f, 3f, l.taDy.coerceIn(-3f, 3f)) { l.taDy = it; mine() })
+                body.addView(Ui.sliderRow(this, tr("Cabbir", "Scale"), 0f, 4f, l.taScale.coerceIn(0f, 4f)) { l.taScale = it; mine() })
+                body.addView(Ui.sliderRow(this, tr("Wareeg", "Rotation"), -360f, 360f, l.taRot.coerceIn(-360f, 360f)) { l.taRot = it; mine() })
+                body.addView(Ui.sliderRow(this, tr("Daahsoon", "Opacity"), 0f, 1f, l.taOpacity.coerceIn(0f, 1f)) { l.taOpacity = it; mine() })
+                body.addView(Ui.sliderRow(this, tr("Qariin", "Blur"), 0f, 1f, l.taBlur.coerceIn(0f, 1f)) { l.taBlur = it; mine() })
                 body.addView(Ui.choiceRow(this, Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }.map { it.label },
                     Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }.indexOf(l.taEase)) { i ->
-                    l.taEase = Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }[i]
+                    l.taEase = Easing.entries.filter { it != Easing.CUSTOM && it != Easing.HOLD }[i]; mine()
                 })
                 buttonRow(body,
                     tr("U isticmaal Gal", "Use as In") to { l.textIn = TextAnim.CUSTOM; l.animIn = LayerAnim.NONE; previewAnim(l, true) },
