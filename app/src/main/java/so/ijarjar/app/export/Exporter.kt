@@ -98,6 +98,20 @@ class Exporter(
             if (a.startMs >= total || a.durationMs <= 0) continue
             sequences.add(audioSequence(a, total))
         }
+        // the sound of a video on a 3D screen (its first piece, from where it starts)
+        for (l in project.layers) {
+            if (l.kind != LayerKind.MODEL3D || l.hidden || l.volume <= 0f || l.screenSpeed != 1f) continue
+            val src = l.videoSource() ?: continue
+            val info = so.ijarjar.app.media.MediaUtils.probe(context, Uri.parse(src)) ?: continue
+            if (!info.hasAudio) continue
+            val seg = l.screenSegs.firstOrNull()
+            val start = l.startMs + l.screenOffset
+            if (start >= total) continue
+            val from = seg?.start ?: 0L
+            val len = minOf((seg?.length ?: info.durationMs), l.endMs - start, info.durationMs - from).coerceAtLeast(100)
+            sequences.add(audioSequence(AudioTrack(uri = src, startMs = start, trimStartMs = from, durationMs = len,
+                sourceDurationMs = info.durationMs, volume = l.volume), total))
+        }
         // the sound of overlay videos (picture-in-picture)
         for (l in project.layers) {
             if (l.kind != LayerKind.VIDEO || l.hidden || l.uri == null || l.volume <= 0f || l.startMs >= total) continue

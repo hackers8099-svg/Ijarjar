@@ -464,6 +464,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private var panelPlay: ImageView? = null
     private var activeDope: DopeSheetView? = null
+    private var easeLabelRef: (() -> Unit)? = null
     /** The keyframe sheet fills the screen (Fit). */
     private var panelFull = false
     private var graphProp = 0
@@ -3467,6 +3468,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             diamond.imageTintList = ColorStateList.valueOf(if (on != null) 0xFFFFCC00.toInt() else Ui.TEXT)
             info.text = if (ks.isEmpty()) tr("Keyframe ma jiro — ◆ riix", "No keyframes — tap ◆")
             else (if (on != null) "◆ ${ks.indexOf(on) + 1}/${ks.size}" else "${ks.size} keyframe") + " · " + TimelineView.fmt(timeMs - l.startMs)
+            easeLabelRef?.invoke()
         }
         fun jump(next: Boolean) {
             val rel = timeMs - l.startMs
@@ -3505,7 +3507,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         d.view.addView(View(this).apply { tag = "mini"; visibility = View.GONE })
         val sheet = DopeSheetView(this, l, { timeMs }, { t -> onKeyframeTap(t); refreshNav() }) { live(); refreshNav() }
         activeDope = sheet
-        sheet.onSelect = { k -> activeGraph?.selected = k }
+        sheet.onSelect = { k -> activeGraph?.selected = k; easeLabelRef?.invoke() }
         sheet.onAddKey = { t ->
             onKeyframeTap(t)
             if (LayerRenderer.keyframeAt(l, timeMs) == null && l.isActive(timeMs)) toggleKeyframe(false)
@@ -3539,11 +3541,16 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 3 -> { if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, true) }
                 else -> k.ease = Easing.HOLD
             }
-            live(); sheet.invalidate(); activeGraph?.invalidate(); timeline.invalidate()
-            toast(tr("${targets.size} keyframe ayaa la beddelay", "${targets.size} keyframe(s) changed"))
+            live(); sheet.invalidate(); activeGraph?.invalidate(); timeline.invalidate(); easeLabelRef?.invoke()
+            toast(KeyIcon.name(if (mode == 1 || mode == 2) KeyIcon.EASED else KeyIcon.LINEAR, when (mode) { 1, 3 -> KeyIcon.EASED; 4 -> KeyIcon.HOLD; else -> KeyIcon.LINEAR }) + " · ${targets.size} keyframe")
         }
         // Ease ▾ : a small menu — pick the kind, for the picked keyframes or all of them
-        val easeBtn = Ui.button(this, "⧓ Ease ▾", false) {}
+        val easeBtn = Ui.button(this, "Ease ▾", false) {}
+        fun easeLabel() {
+            val k = sheet.picked.firstOrNull() ?: LayerRenderer.keyframeAt(l, timeMs)
+            easeBtn.text = if (k == null) "Ease ▾" else KeyIcon.kinds(l, k).let { (a, b) -> KeyIcon.name(a, b) } + " ▾"
+        }
+        easeLabel()
         easeBtn.setOnClickListener {
             val n = sheet.picked.size
             val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16f), dp(8f), dp(16f), 0) }
@@ -3556,23 +3563,21 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             listOf(Triple(KeyIcon.LINEAR, KeyIcon.LINEAR, "Linear"), Triple(KeyIcon.EASED, KeyIcon.EASED, "Easy Ease"),
                 Triple(KeyIcon.EASED, KeyIcon.LINEAR, "Ease In"), Triple(KeyIcon.LINEAR, KeyIcon.EASED, "Ease Out"),
                 Triple(KeyIcon.LINEAR, KeyIcon.HOLD, "Hold")).forEachIndexed { i, (a, b, name) ->
-                erow.addView(Ui.press(EaseButton(this, a, b, name, true).apply { setOnClickListener { ease(i, all); dlg.dismiss() } }),
+                erow.addView(Ui.press(EaseButton(this, a, b, name, false).apply { setOnClickListener { ease(i, all); dlg.dismiss() } }),
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(5f) })
             }
             dlg.show()
         }
+        easeLabelRef = { easeLabel() }
         ctl.addView(easeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(4f) })
         ctl.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { sheet.zoom(0.5f) })
         ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { sheet.zoom(2f) })
         // Fit: the sheet fills the screen with the curve of the picked row under it; tap again to make it small
-        val bigGraph = GraphView(this, l, { live(); sheet.invalidate() }) { t -> onKeyframeTap(t); refreshNav() }.apply { visibility = View.GONE }
         val fitBtn = Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(10f), dp(7f), dp(10f), dp(7f)); background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()); Ui.press(this) }
         fitBtn.setOnClickListener {
             panelFull = !panelFull
             sheet.big = panelFull; sheet.fit()
-            bigGraph.visibility = if (panelFull) View.VISIBLE else View.GONE
-            if (panelFull) { bigGraph.prop = graphProp; bigGraph.selected = sheet.selected; activeGraph = bigGraph }
             fitBtn.text = if (panelFull) "Fit ✕" else "Fit"
             fitBtn.background = Ui.roundBg(if (panelFull) Ui.ACCENT else Ui.SURFACE2, dp(12f).toFloat())
             fitBtn.setTextColor(if (panelFull) 0xFF00201E.toInt() else Ui.TEXT)
@@ -3581,7 +3586,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         ctl.addView(fitBtn)
         d.top.addView(ctl)
         d.top.addView(sheet, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
-        d.top.addView(bigGraph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240f)).apply { topMargin = dp(8f) })
+
 
         Ui.tabs(this, root, listOf(
             tr("Qiimaha", "Values") to { body: LinearLayout ->

@@ -177,21 +177,36 @@ object KeyIcon {
 
     private val path = Path()
 
+    /** Name of the look, like the After Effects menu. */
+    fun name(inK: Int, outK: Int): String = when {
+        outK == HOLD -> "Hold"
+        inK == LINEAR && outK == LINEAR -> "Linear"
+        inK == EASED && outK == EASED -> "Easy Ease"
+        inK == EASED -> "Easy Ease In"
+        else -> "Easy Ease Out"
+    }
+
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33000000 }
+
+    /**
+     * After Effects keyframe icons: each half shows its side —
+     * linear = half diamond, eased (bezier) = half hourglass (concave side), hold = half square.
+     */
     fun draw(c: Canvas, x: Float, y: Float, r: Float, inK: Int, outK: Int, fill: Paint, outline: Paint? = null) {
         path.reset()
-        // left half
-        when (inK) {
-            EASED -> { path.moveTo(x, y); path.lineTo(x - r * 0.85f, y - r); path.lineTo(x - r * 0.85f, y + r); path.close() }
-            HOLD -> path.addRect(x - r * 0.8f, y - r * 0.8f, x, y + r * 0.8f, Path.Direction.CW)
-            else -> { path.moveTo(x, y - r); path.lineTo(x - r, y); path.lineTo(x, y + r); path.close() }
+        fun half(kind: Int, dir: Float) {      // dir -1 = left (incoming), 1 = right (outgoing)
+            val ox = x + dir * r
+            when (kind) {
+                EASED -> { path.moveTo(x, y - r); path.lineTo(ox, y - r); path.quadTo(x + dir * r * 0.2f, y, ox, y + r); path.lineTo(x, y + r); path.close() }
+                HOLD -> { path.moveTo(x, y - r * 0.8f); path.lineTo(x + dir * r * 0.85f, y - r * 0.8f); path.lineTo(x + dir * r * 0.85f, y + r * 0.8f); path.lineTo(x, y + r * 0.8f); path.close() }
+                else -> { path.moveTo(x, y - r); path.lineTo(ox, y); path.lineTo(x, y + r); path.close() }
+            }
         }
-        when (outK) {
-            EASED -> { path.moveTo(x, y); path.lineTo(x + r * 0.85f, y - r); path.lineTo(x + r * 0.85f, y + r); path.close() }
-            HOLD -> path.addRect(x, y - r * 0.8f, x + r * 0.8f, y + r * 0.8f, Path.Direction.CW)
-            else -> { path.moveTo(x, y - r); path.lineTo(x + r, y); path.lineTo(x, y + r); path.close() }
-        }
+        half(inK, -1f); half(outK, 1f)
         if (outline != null) c.drawPath(path, outline)
         c.drawPath(path, fill)
+        // two-tone like AE: the left half a little darker
+        c.save(); c.clipRect(x - r * 1.2f, y - r * 1.2f, x, y + r * 1.2f); c.drawPath(path, shade); c.restore()
     }
 
     fun draw(c: Canvas, l: Layer, k: Keyframe, x: Float, y: Float, r: Float, fill: Paint, outline: Paint? = null) {
@@ -299,15 +314,24 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
     private fun sorted() = layer.keyframes.sortedBy { it.t }
     private fun nextOf(k: Keyframe): Keyframe? = sorted().firstOrNull { it.t > k.t }
 
-    /** Graph positions of the two handles of the selected keyframe's segment. */
-    private fun handles(): Pair<FloatArray, FloatArray>? {
-        val a = selected ?: return null
-        val b = nextOf(a) ?: return null
+    private fun prevOf(k: Keyframe): Keyframe? = sorted().lastOrNull { it.t < k.t }
+
+    /** AE style: the picked keyframe shows its IN handle (segment before) and OUT handle (its own segment). */
+    private fun handles(): Pair<FloatArray?, FloatArray?>? {
+        val k = selected ?: return null
+        val hIn = prevOf(k)?.let { a -> segHandle(a, k, 1) }
+        val hOut = nextOf(k)?.let { b -> segHandle(k, b, 0) }
+        if (hIn == null && hOut == null) return null
+        return Pair(hIn, hOut)
+    }
+
+    private fun segHandle(a: Keyframe, b: Keyframe, which: Int): FloatArray {
         val va = kv(a); var dv = kv(b) - va
         if (abs(dv) < (vMax - vMin) * 0.05f) dv = (vMax - vMin) * 0.3f
         val dt = (b.t - a.t).toFloat()
-        val (x1, y1, x2, y2) = curvePts(a)
-        return Pair(floatArrayOf(tx(a.t + (x1 * dt).toLong()), ty(va + y1 * dv)), floatArrayOf(tx(a.t + (x2 * dt).toLong()), ty(va + y2 * dv)))
+        val p = curvePts(a)
+        return if (which == 0) floatArrayOf(tx(a.t + (p[0] * dt).toLong()), ty(va + p[1] * dv))
+        else floatArrayOf(tx(a.t + (p[2] * dt).toLong()), ty(va + p[3] * dv))
     }
 
     private fun curvePts(a: Keyframe): FloatArray = when (a.ease) {
@@ -365,9 +389,9 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                     onSeek(layer.startMs + tOf(e.x)); return true
                 }
                 dragging = 6
-                handles()?.let { (h1, h2) ->
-                    if (hypot(e.x - h1[0], e.y - h1[1]) < 22 * d) dragging = 0
-                    else if (hypot(e.x - h2[0], e.y - h2[1]) < 22 * d) dragging = 1
+                handles()?.let { (hIn, hOut) ->
+                    if (hOut != null && hypot(e.x - hOut[0], e.y - hOut[1]) < 22 * d) dragging = 0
+                    else if (hIn != null && hypot(e.x - hIn[0], e.y - hIn[1]) < 22 * d) dragging = 1
                 }
                 if (dragging == 6) {
                     val hit = layer.keyframes.minByOrNull { hypot(tx(it.t) - e.x, ty(kv(it)) - e.y) }
@@ -404,14 +428,16 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
                 }
                 if (dragging == 2) onSeek(layer.startMs + tOf(e.x))
                 else if (a != null && (dragging == 0 || dragging == 1)) {
-                    val b = nextOf(a) ?: return true
-                    val pts = curvePts(a)
-                    val va = kv(a); var dv = kv(b) - va
+                    // 0 = out handle (segment a→next), 1 = in handle (segment prev→a)
+                    val s0 = if (dragging == 0) a else (prevOf(a) ?: return true)
+                    val s1 = if (dragging == 0) (nextOf(a) ?: return true) else a
+                    val pts = curvePts(s0)
+                    val va = kv(s0); var dv = kv(s1) - va
                     if (abs(dv) < (vMax - vMin) * 0.05f) dv = (vMax - vMin) * 0.3f
-                    val fx = ((tOf(e.x) - a.t).toFloat() / (b.t - a.t).coerceAtLeast(1)).coerceIn(0f, 1f)
+                    val fx = ((tOf(e.x) - s0.t).toFloat() / (s1.t - s0.t).coerceAtLeast(1)).coerceIn(0f, 1f)
                     val fy = ((vOf(e.y) - va) / dv).coerceIn(-1.5f, 2.5f)
                     if (dragging == 0) { pts[0] = fx; pts[1] = fy } else { pts[2] = fx; pts[3] = fy }
-                    a.ease = Easing.CUSTOM; a.bx1 = pts[0]; a.by1 = pts[1]; a.bx2 = pts[2]; a.by2 = pts[3]
+                    s0.ease = Easing.CUSTOM; s0.bx1 = pts[0]; s0.by1 = pts[1]; s0.bx2 = pts[2]; s0.by2 = pts[3]
                     onEdit(); invalidate()
                 }
             }
@@ -473,17 +499,17 @@ class GraphView(context: Context, private val layer: Layer, private val onEdit: 
         c.drawPath(ex, exprP)
         c.drawPath(path, curveP)
         // keyframes
+        // keyframes as small squares on the curve (like the AE graph editor)
         for (k in layer.keyframes) {
-            val x = tx(k.t); val y = ty(kv(k))
-            KeyIcon.draw(c, layer, k, x, y, 7 * d, if (k === selected) keySel else keyP, keyOutline)
+            val x = tx(k.t); val y = ty(kv(k)); val r = (if (k === selected) 6f else 5f) * d
+            c.drawRect(x - r - 1.5f * d, y - r - 1.5f * d, x + r + 1.5f * d, y + r + 1.5f * d, keyOutline)
+            c.drawRect(x - r, y - r, x + r, y + r, if (k === selected) keySel else keyP)
         }
         // handles of the selected segment
-        handles()?.let { (h1, h2) ->
-            val a = selected!!; val b = nextOf(a)!!
-            c.drawLine(tx(a.t), ty(kv(a)), h1[0], h1[1], handleLine)
-            c.drawLine(tx(b.t), ty(kv(b)), h2[0], h2[1], handleLine)
-            c.drawCircle(h1[0], h1[1], 6 * d, handleP)
-            c.drawCircle(h2[0], h2[1], 6 * d, handleP)
+        handles()?.let { (hIn, hOut) ->
+            val k = selected!!
+            val kx = tx(k.t); val ky = ty(kv(k))
+            for (h in listOfNotNull(hIn, hOut)) { c.drawLine(kx, ky, h[0], h[1], handleLine); c.drawCircle(h[0], h[1], 6 * d, handleP) }
         }
         val px = tx(playheadMs - layer.startMs)
         c.drawLine(px, padT - 10 * d, px, height - padB, playP)

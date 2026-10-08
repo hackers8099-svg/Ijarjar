@@ -181,7 +181,7 @@ class PreviewEngine(private val context: Context, private val stage: StageView) 
 
     fun refreshVolumes() {
         applyClipState()
-        for (l in project.layers) if (l.kind == LayerKind.VIDEO) overlayPlayers[l.id]?.let {
+        for (l in project.layers) if (l.videoSource() != null) overlayPlayers[l.id]?.let {
             it.volume = l.volume.coerceIn(0f, 1f)
             if (it.playbackParameters.pitch != l.voice.pitch) it.playbackParameters = PlaybackParameters(1f, l.voice.pitch)
         }

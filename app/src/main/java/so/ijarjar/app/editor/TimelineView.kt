@@ -164,7 +164,8 @@ class TimelineView(context: Context) : View(context) {
         drawIcon(canvas, res, cx - dp(8f), cy, dp(16f), if (on) Color.WHITE else 0xFFFF6B6B.toInt())
     }
 
-    private fun hasSound(l: Layer) = l.kind == LayerKind.VIDEO
+    /** Video layers and 3D layers with a video on the screen have sound: they get a mute button too. */
+    private fun hasSound(l: Layer) = l.kind == LayerKind.VIDEO || (l.kind == LayerKind.MODEL3D && l.videoSource() != null)
 
     private fun drawGutter(canvas: Canvas, p: Project) {
         // fade so the rows slide under the buttons
