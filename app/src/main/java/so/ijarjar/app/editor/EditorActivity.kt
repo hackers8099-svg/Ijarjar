@@ -2015,7 +2015,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 hlOptions()
             }
         // everything for text in one place: text, style, font… and its animations
-        ) + animTabs(l).map { (name, f) -> (tr("Anim ", "Anim ") + name) to f })
+        ) + animTabs(l) { d.dismiss(); showTextEditor(l) }.map { (name, f) -> (tr("Anim ", "Anim ") + name) to f })
         if (l.isCaption) buttonRow(root, tr("U dabaq dhammaan qoraal-hoosaadyada", "Apply to all captions") to {
             for (o in project.layers) if (o.isCaption && o.id != l.id) copyTextStyle(l, o)
             d.dismiss()
@@ -2226,12 +2226,12 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private fun showAnimation(l: Layer) {
         val (d, root) = Ui.sheet(this, tr("Dhaqdhaqaaq", "Animation")) { commit() }
-        Ui.tabs(this, root, animTabs(l))
+        Ui.tabs(this, root, animTabs(l) { d.dismiss(); showAnimation(l) })
         d.show()
     }
 
     /** In / Out / Loop animation tabs (used by the Animation panel and inside the Text panel). */
-    private fun animTabs(l: Layer): List<Pair<String, (LinearLayout) -> Unit>> {
+    private fun animTabs(l: Layer, reopen: () -> Unit = {}): List<Pair<String, (LinearLayout) -> Unit>> {
         val isText = l.kind == LayerKind.TEXT
         val sample = sampleText(l)
         fun layerTile(setup: (Layer) -> Unit): LoopTile = AnimTile(this, if (isText) sample else "★") { setup(it) }
@@ -2286,6 +2286,19 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 buttonRow(body,
                     tr("U isticmaal Gal", "Use as In") to { l.textIn = TextAnim.CUSTOM; l.animIn = LayerAnim.NONE; previewAnim(l, true) },
                     tr("U isticmaal Bax", "Use as Out") to { l.textOut = TextAnim.CUSTOM; l.animOut = LayerAnim.NONE; previewAnim(l, false) })
+                buttonRow(body,
+                    "↺ " + tr("Dib u deji", "Reset") to {
+                        l.textUnit = -1; l.taUnit = 0; l.taDx = 0f; l.taDy = 0.8f; l.taScale = 1f; l.taRot = 0f; l.taOpacity = 0f; l.taBlur = 0.5f
+                        l.taOverlap = 0.35f; l.taOrder = 0; l.taEase = Easing.EASE_OUT
+                        if (l.textIn == TextAnim.CUSTOM) l.textIn = TextAnim.NONE
+                        if (l.textOut == TextAnim.CUSTOM) l.textOut = TextAnim.NONE
+                        live(); reopen()
+                    },
+                    tr("Ka saar dhammaan animation", "Remove all animation") to {
+                        l.textIn = TextAnim.NONE; l.textOut = TextAnim.NONE; l.textLoop = TextLoop.NONE
+                        l.animIn = LayerAnim.NONE; l.animOut = LayerAnim.NONE; l.animLoop = LoopAnim.NONE
+                        live(); reopen()
+                    })
             },
             tr("Wareeg", "Loop") to { body: LinearLayout ->
                 if (isText) {
