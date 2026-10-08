@@ -265,6 +265,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
             if (engine.isPlaying || t != lastDrawnT || frameTimeNanos - lastRefreshNs > 250_000_000L) {
                 stage.refresh(); lastDrawnT = t; lastRefreshNs = frameTimeNanos
                 miniTimeline?.let { m -> if (m.isAttachedToWindow) m.invalidate() else miniTimeline = null }
+                activeDope?.let { v -> if (v.isAttachedToWindow) v.invalidate() else activeDope = null }
             }
             activeGraph?.let { g -> if (g.isAttachedToWindow) { if (g.playheadMs != timeMs) g.playheadMs = timeMs } else activeGraph = null }
             if (!photo) {
@@ -461,6 +462,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
     }
 
     private var panelPlay: ImageView? = null
+    private var activeDope: DopeSheetView? = null
+    private var graphProp = 0
 
     private fun updatePlayButton() {
         playBtn.setImageResource(if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play)
@@ -3215,6 +3218,56 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         })
         refreshNav()
 
+        // ---- After Effects style: a row per property with its keyframes (replaces the small time bar)
+        d.view.addView(View(this).apply { tag = "mini"; visibility = View.GONE })
+        val sheet = DopeSheetView(this, l, { timeMs }, { t -> onKeyframeTap(t); refreshNav() }) { live(); refreshNav() }
+        activeDope = sheet
+        sheet.onSelect = { k -> activeGraph?.selected = k }
+        sheet.onRow = { p -> graphProp = p; activeGraph?.prop = p }
+        val ctl = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val pb = Ui.iconButton(this, if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play, 22f) { togglePlay() }
+        panelPlay = pb
+        ctl.addView(pb)
+        var allKeys = false
+        ctl.addView(Ui.choiceRow(this, listOf(tr("Keyframe-kan", "This key"), tr("Dhammaan", "All")), 0) { allKeys = it == 1 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { sheet.zoom(0.5f) })
+        ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { sheet.zoom(2f) })
+        ctl.addView(Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(8f), dp(8f), dp(8f), dp(8f)); setOnClickListener { sheet.fit() }; Ui.press(this) })
+        d.top.addView(ctl)
+        d.top.addView(sheet, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
+        fun ease(mode: Int) {
+            val ks = l.keyframes.sortedBy { it.t }
+            if (ks.isEmpty()) { toast(tr("Marka hore keyframe ku dar", "Add keyframes first")); return }
+            val sel = sheet.selected ?: activeGraph?.selected ?: LayerRenderer.keyframeAt(l, timeMs)
+            val targets = if (allKeys || sel == null) ks else listOf(sel)
+            fun setOut(k: Keyframe, eased: Boolean) {
+                val b = KeyIcon.bez(k); b[0] = 0.333f; b[1] = if (eased) 0f else 0.333f
+                k.ease = Easing.CUSTOM; k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3]
+            }
+            fun setIn(k: Keyframe, eased: Boolean) {
+                val prev = ks.getOrNull(ks.indexOf(k) - 1) ?: return
+                if (prev.ease == Easing.HOLD) return
+                val b = KeyIcon.bez(prev); b[2] = 0.667f; b[3] = if (eased) 1f else 0.667f
+                prev.ease = Easing.CUSTOM; prev.bx1 = b[0]; prev.by1 = b[1]; prev.bx2 = b[2]; prev.by2 = b[3]
+            }
+            for (k in targets) when (mode) {
+                0 -> { setIn(k, false); if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, false) }
+                1 -> { setIn(k, true); setOut(k, true) }
+                2 -> setIn(k, true)
+                3 -> { if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, true) }
+                else -> k.ease = Easing.HOLD
+            }
+            live(); sheet.invalidate(); activeGraph?.invalidate(); timeline.invalidate()
+        }
+        val (esv, erow) = Ui.hrow(this)
+        listOf(Triple(KeyIcon.LINEAR, KeyIcon.LINEAR, "Linear"), Triple(KeyIcon.EASED, KeyIcon.EASED, "Easy Ease"),
+            Triple(KeyIcon.EASED, KeyIcon.LINEAR, "Ease In"), Triple(KeyIcon.LINEAR, KeyIcon.EASED, "Ease Out"),
+            Triple(KeyIcon.LINEAR, KeyIcon.HOLD, "Hold")).forEachIndexed { i, (a, b, name) ->
+            erow.addView(Ui.press(EaseButton(this, a, b, name, true).apply { setOnClickListener { ease(i) } }),
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(5f) })
+        }
+        d.top.addView(esv)
+
         Ui.tabs(this, root, listOf(
             tr("Qiimaha", "Values") to { body: LinearLayout ->
                 fun blurRow() = body.addView(Ui.choiceRow(this, listOf("Motion blur: " + tr("Maya", "Off"), "Motion blur: " + tr("Haa", "On")), if (l.motionBlur) 1 else 0) { l.motionBlur = it == 1; live() })
@@ -3229,43 +3282,11 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
                 graph.selected = null
                 graph.playheadMs = timeMs
                 refreshBody = { graph.playheadMs = timeMs; graph.invalidate() }
-                body.addView(Ui.choiceRow(this, KEY_PROPS, 0) { graph.prop = it })
-                // AE-style: tap a keyframe, then pick how it moves; its icon changes shape
-                var all = false
-                fun ease(mode: Int) {
-                    val ks = l.keyframes.sortedBy { it.t }
-                    if (ks.isEmpty()) { toast(tr("Marka hore keyframe ku dar", "Add keyframes first")); return }
-                    val sel = graph.selected ?: LayerRenderer.keyframeAt(l, timeMs)
-                    val targets = if (all || sel == null) ks else listOf(sel)
-                    fun setOut(k: Keyframe, eased: Boolean) {
-                        val b = KeyIcon.bez(k); b[0] = 0.333f; b[1] = if (eased) 0f else 0.333f
-                        k.ease = Easing.CUSTOM; k.bx1 = b[0]; k.by1 = b[1]; k.bx2 = b[2]; k.by2 = b[3]
-                    }
-                    fun setIn(k: Keyframe, eased: Boolean) {
-                        val prev = ks.getOrNull(ks.indexOf(k) - 1) ?: return
-                        if (prev.ease == Easing.HOLD) return
-                        val b = KeyIcon.bez(prev); b[2] = 0.667f; b[3] = if (eased) 1f else 0.667f
-                        prev.ease = Easing.CUSTOM; prev.bx1 = b[0]; prev.by1 = b[1]; prev.bx2 = b[2]; prev.by2 = b[3]
-                    }
-                    for (k in targets) when (mode) {
-                        0 -> { setIn(k, false); if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, false) }   // linear
-                        1 -> { setIn(k, true); setOut(k, true) }                                                          // easy ease
-                        2 -> setIn(k, true)                                                                               // ease in (arrives slowly)
-                        3 -> { if (k.ease == Easing.HOLD) k.ease = Easing.LINEAR; setOut(k, true) }                       // ease out (leaves slowly)
-                        else -> k.ease = Easing.HOLD                                                                      // hold
-                    }
-                    live(); graph.invalidate(); miniTimeline?.invalidate(); timeline.invalidate()
-                }
-                val (esv, erow) = Ui.hrow(this)
-                listOf(Triple(KeyIcon.LINEAR, KeyIcon.LINEAR, "Linear"), Triple(KeyIcon.EASED, KeyIcon.EASED, "Easy Ease"),
-                    Triple(KeyIcon.EASED, KeyIcon.LINEAR, "Ease In"), Triple(KeyIcon.LINEAR, KeyIcon.EASED, "Ease Out"),
-                    Triple(KeyIcon.LINEAR, KeyIcon.HOLD, "Hold")).forEachIndexed { i, (a, b, name) ->
-                    erow.addView(Ui.press(EaseButton(this, a, b, name).apply { setOnClickListener { ease(i) } }),
-                        LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = dp(6f) })
-                }
-                body.addView(esv)
+                graph.prop = graphProp
+                graph.selected = activeDope?.selected
+                body.addView(Ui.choiceRow(this, KEY_PROPS, graphProp) { graph.prop = it; graphProp = it })
                 val opts = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-                opts.addView(Ui.choiceRow(this, listOf(tr("Keyframe-kan", "This keyframe"), tr("Dhammaan", "All")), 0) { all = it == 1 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                opts.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
                 opts.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { graph.zoom(0.5f, timeMs - l.startMs) })
                 opts.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { graph.zoom(2f, timeMs - l.startMs) })
                 opts.addView(Ui.button(this, tr("Dhammaan", "Fit"), false) { graph.fit() })

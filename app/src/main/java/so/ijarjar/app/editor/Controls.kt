@@ -201,16 +201,17 @@ object KeyIcon {
 
 /** A small button with an AE keyframe icon and a name (Linear, Easy Ease, Ease In, Ease Out, Hold). */
 @SuppressLint("ViewConstructor")
-class EaseButton(context: Context, private val inK: Int, private val outK: Int, private val label: String) : View(context) {
+class EaseButton(context: Context, private val inK: Int, private val outK: Int, private val label: String, private val compact: Boolean = false) : View(context) {
     private val d = resources.displayMetrics.density
     private val bg = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.SURFACE2 }
     private val ic = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
     private val tp = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.TEXT; textSize = 11f * d; textAlign = Paint.Align.CENTER }
-    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension((74 * d).toInt(), (58 * d).toInt())
+    override fun onMeasure(w: Int, h: Int) = if (compact) setMeasuredDimension((66 * d).toInt(), (46 * d).toInt()) else setMeasuredDimension((74 * d).toInt(), (58 * d).toInt())
     override fun onDraw(c: Canvas) {
         c.drawRoundRect(RectF(2 * d, 2 * d, width - 2 * d, height - 2 * d), 12 * d, 12 * d, bg)
-        KeyIcon.draw(c, width / 2f, 22 * d, 10 * d, inK, outK, ic)
-        c.drawText(label, width / 2f, height - 10 * d, tp)
+        KeyIcon.draw(c, width / 2f, (if (compact) 17 else 22) * d, (if (compact) 8 else 10) * d, inK, outK, ic)
+        if (compact) tp.textSize = 10f * d
+        c.drawText(label, width / 2f, height - (if (compact) 7 else 10) * d, tp)
     }
 }
 
@@ -628,5 +629,196 @@ class MiniTimeline(context: Context, private val duration: () -> Long, private v
         // zoomed in: small marks show there is more on either side
         if (a > 0) c.drawText("‹", l - 7 * d, cy + 4 * d, txt)
         if (b < duration()) c.drawText("›", r + 2 * d, cy + 4 * d, txt)
+    }
+}
+
+/**
+ * After Effects style keyframe sheet: one row per property (Position, Scale, Rotate, Opacity, 3D)
+ * with its keyframes, a time ruler and the playhead. Drag ◆ = move it in time, tap = pick it,
+ * drag the ruler or the line = move the playhead, two fingers = zoom / slide.
+ */
+@SuppressLint("ViewConstructor")
+class DopeSheetView(context: Context, private val layer: Layer, private val time: () -> Long,
+                    private val onSeek: (Long) -> Unit, private val onEdit: () -> Unit) : View(context) {
+    private val d = resources.displayMetrics.density
+    var selected: Keyframe? = null
+        set(v) { field = v; invalidate() }
+    var selectedRow = 0
+        set(v) { field = v; invalidate() }
+    var onSelect: ((Keyframe?) -> Unit)? = null
+    var onRow: ((Int) -> Unit)? = null
+
+    private class Row(val name: String, val graphProp: Int, val value: (Keyframe) -> FloatArray)
+    private val rows: List<Row> get() {
+        val r = arrayListOf(
+            Row("Position", 0) { floatArrayOf(it.cx, it.cy) },
+            Row("Scale", 2) { floatArrayOf(it.scale, it.sx, it.sy) },
+            Row("Rotate", 3) { floatArrayOf(it.rotation) },
+            Row("Opacity", 4) { floatArrayOf(it.opacity) })
+        if (layer.kind == so.ijarjar.app.model.LayerKind.MODEL3D || layer.keyframes.any { it.rx != 0f || it.ry != 0f || it.z != 0f } || layer.rotX != 0f || layer.rotY != 0f)
+            r.add(Row("3D X/Y/Z", 5) { floatArrayOf(it.rx, it.ry, it.z) })
+        return r
+    }
+
+    private val labelW get() = 76 * d
+    private val rulerH get() = 20 * d
+    private val rowH get() = 30 * d
+    override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (rulerH + rowH * rows.size + 4 * d).toInt())
+
+    // visible time (ms inside the layer)
+    private var vs = 0L
+    private var ve = -1L
+    private fun vEnd() = if (ve <= vs) layer.durationMs.coerceAtLeast(1) else ve
+    private fun x(t: Long) = labelW + 8 * d + (width - labelW - 16 * d) * ((t - vs).toFloat() / (vEnd() - vs).coerceAtLeast(1))
+    private fun t(x: Float) = (vs + (x - labelW - 8 * d) / (width - labelW - 16 * d) * (vEnd() - vs)).toLong().coerceIn(0, layer.durationMs)
+    private fun zoomed() = vEnd() - vs < layer.durationMs - 1
+    fun zoom(f: Float) {
+        val dur = layer.durationMs.coerceAtLeast(1)
+        val around = (time() - layer.startMs).coerceIn(0, dur)
+        val span = ((vEnd() - vs) / f).toLong().coerceIn(200L.coerceAtMost(dur), dur)
+        val frac = ((around - vs).toFloat() / (vEnd() - vs).coerceAtLeast(1)).coerceIn(0f, 1f)
+        vs = (around - (span * frac).toLong()).coerceIn(0, dur - span); ve = vs + span; invalidate()
+    }
+    fun fit() { vs = 0; ve = -1; invalidate() }
+    private fun panTo(s: Long) { val span = vEnd() - vs; vs = s.coerceIn(0, (layer.durationMs - span).coerceAtLeast(0)); ve = vs + span; invalidate() }
+
+    /** Does this row's value change at keyframe [k]? (AE shows a key only where the property is keyed.) */
+    private fun keyed(row: Row, k: Keyframe, ks: List<Keyframe>): Boolean {
+        if (ks.size <= 1) return true
+        val i = ks.indexOf(k); val v = row.value(k)
+        fun diff(o: Keyframe?) = o != null && row.value(o).zip(v.toList()).any { (a, b) -> abs(a - b) > 1e-4f }
+        return diff(ks.getOrNull(i - 1)) || diff(ks.getOrNull(i + 1))
+    }
+
+    private val bgA = Paint().apply { color = 0xFF202027.toInt() }
+    private val bgB = Paint().apply { color = 0xFF24242C.toInt() }
+    private val rowSel = Paint().apply { color = 0x2219D3C5 }
+    private val labelP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFC9C9D2.toInt(); textSize = 11f * d }
+    private val labelSelP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.ACCENT; textSize = 11f * d; isFakeBoldText = true }
+    private val rulerT = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Ui.TEXT2; textSize = 9f * d }
+    private val tickP = Paint().apply { color = 0x66FFFFFF; strokeWidth = 1f * d }
+    private val spanP = Paint().apply { color = 0x55FFCC00; strokeWidth = 2f * d }
+    private val keyP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFCC00.toInt() }
+    private val keySel = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val keyOutline = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xCC000000.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * d; strokeJoin = Paint.Join.ROUND }
+    private val headP = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFF3D7F.toInt(); strokeWidth = 2f * d }
+
+    override fun onDraw(c: Canvas) {
+        val rs = rows
+        val ks = layer.keyframes.sortedBy { it.t }
+        c.drawRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), 12 * d, 12 * d, bgA)
+        // ruler
+        val spanS = (vEnd() - vs) / 1000f
+        val usable = (width - labelW - 16 * d).coerceAtLeast(1f)
+        val steps = floatArrayOf(0.05f, 0.1f, 0.25f, 0.5f, 1f, 2f, 5f, 10f, 15f, 30f, 60f)
+        val stepS = steps.firstOrNull { usable * it / spanS >= 52 * d } ?: 120f
+        var s = kotlin.math.floor(vs / 1000f / stepS) * stepS
+        c.save(); c.clipRect(labelW, 0f, width.toFloat(), height.toFloat())
+        while (s <= vEnd() / 1000f + stepS) {
+            val xx = x((s * 1000).toLong())
+            c.drawLine(xx, rulerH - 6 * d, xx, rulerH, tickP)
+            c.drawText(if (stepS >= 1f) "${s.toInt()}s" else "%.2fs".format(s), xx + 2 * d, rulerH - 8 * d, rulerT)
+            s += stepS
+        }
+        c.restore()
+        // rows
+        for ((i, row) in rs.withIndex()) {
+            val top = rulerH + i * rowH
+            c.drawRect(0f, top, width.toFloat(), top + rowH, if (i % 2 == 0) bgB else bgA)
+            if (i == selectedRow) c.drawRect(0f, top, width.toFloat(), top + rowH, rowSel)
+            c.drawText(row.name, 10 * d, top + rowH / 2 + 4 * d, if (i == selectedRow) labelSelP else labelP)
+            val cy = top + rowH / 2
+            c.save(); c.clipRect(labelW, top, width.toFloat(), top + rowH)
+            val keyedHere = ks.filter { keyed(row, it, ks) }
+            for (j in 0 until keyedHere.size - 1) c.drawLine(x(keyedHere[j].t), cy, x(keyedHere[j + 1].t), cy, spanP)
+            for (k in keyedHere) KeyIcon.draw(c, layer, k, x(k.t), cy, 7 * d, if (k === selected) keySel else keyP, keyOutline)
+            c.restore()
+        }
+        // playhead
+        val px = x(time() - layer.startMs)
+        if (px >= labelW) {
+            c.drawLine(px, 2 * d, px, height.toFloat(), headP)
+            c.drawCircle(px, 4 * d, 3.5f * d, headP)
+        }
+    }
+
+    private var mode = 0       // 1 seek, 2 key, 3 pan, 4 pinch, 5 pending
+    private var dragKey: Keyframe? = null
+    private var downX = 0f; private var downY = 0f; private var panStart = 0L
+    private var pinch = 0f; private var pinchMid = 0f
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+
+    private fun keyAt(xx: Float, yy: Float): Keyframe? {
+        val rs = rows; val ks = layer.keyframes.sortedBy { it.t }
+        val ri = ((yy - rulerH) / rowH).toInt()
+        val row = rs.getOrNull(ri)
+        val cand = if (row != null) ks.filter { keyed(row, it, ks) } else ks
+        return cand.minByOrNull { abs(x(it.t) - xx) }?.takeIf { abs(x(it.t) - xx) < 16 * d }
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.pointerCount >= 2) {
+            val sp = abs(e.getX(0) - e.getX(1)).coerceAtLeast(1f); val mid = (e.getX(0) + e.getX(1)) / 2
+            when (e.actionMasked) {
+                MotionEvent.ACTION_POINTER_DOWN -> { mode = 4; pinch = sp; pinchMid = mid; parent?.requestDisallowInterceptTouchEvent(true) }
+                MotionEvent.ACTION_MOVE -> if (mode == 4) {
+                    val dur = layer.durationMs.coerceAtLeast(1)
+                    val focus = t(mid)
+                    val span = ((vEnd() - vs) * pinch / sp).toLong().coerceIn(200L.coerceAtMost(dur), dur)
+                    val frac = ((focus - vs).toFloat() / (vEnd() - vs).coerceAtLeast(1))
+                    var ns = focus - (span * frac).toLong() - ((mid - pinchMid) / (width - labelW) * span).toLong()
+                    ns = ns.coerceIn(0, dur - span); vs = ns; ve = ns + span
+                    pinch = sp; pinchMid = mid; invalidate()
+                }
+            }
+            return true
+        }
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = e.x; downY = e.y; panStart = vs
+                if (e.x < labelW && e.y > rulerH) {          // a row name: pick that property
+                    val ri = ((e.y - rulerH) / rowH).toInt().coerceIn(0, rows.size - 1)
+                    selectedRow = ri; onRow?.invoke(rows[ri].graphProp); mode = 0; return true
+                }
+                val px = x(time() - layer.startMs)
+                val k = if (e.y > rulerH) keyAt(e.x, e.y) else null
+                mode = when {
+                    k != null -> { dragKey = k; selected = k; onSelect?.invoke(k); 2 }
+                    e.y < rulerH || abs(e.x - px) < 14 * d -> 1
+                    else -> 5
+                }
+                if (mode != 5) parent?.requestDisallowInterceptTouchEvent(true)
+                if (mode == 1) onSeek(layer.startMs + t(e.x))
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (mode == 5) {
+                    val ax = abs(e.x - downX); val ay = abs(e.y - downY)
+                    if (ax < slop && ay < slop) return true
+                    if (ay > ax) { mode = 0; return false }        // vertical = scroll the panel
+                    mode = if (zoomed()) 3 else 1; parent?.requestDisallowInterceptTouchEvent(true)
+                }
+                when (mode) {
+                    1 -> onSeek(layer.startMs + t(e.x))
+                    2 -> dragKey?.let { k ->
+                        if (abs(e.x - downX) < slop) return true
+                        val ks = layer.keyframes.sortedBy { it.t }; val i = ks.indexOf(k)
+                        val lo = (ks.getOrNull(i - 1)?.t ?: -1L) + 20; val hi = (ks.getOrNull(i + 1)?.t ?: (layer.durationMs + 1)) - 20
+                        k.t = t(e.x).coerceIn(lo.coerceAtLeast(0), hi.coerceAtMost(layer.durationMs))
+                        onSeek(layer.startMs + k.t); onEdit(); invalidate()
+                    }
+                    3 -> panTo(panStart + ((downX - e.x) / (width - labelW - 16 * d) * (vEnd() - vs)).toLong())
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (mode == 5) {   // a tap on empty space: move the playhead there, drop the pick
+                    selected = null; onSelect?.invoke(null); onSeek(layer.startMs + t(e.x))
+                } else if (mode == 2 && abs(e.x - downX) < slop) dragKey?.let { onSeek(layer.startMs + it.t) }
+                mode = 0; dragKey = null
+            }
+            MotionEvent.ACTION_CANCEL -> { mode = 0; dragKey = null }
+        }
+        invalidate()
+        return true
     }
 }
