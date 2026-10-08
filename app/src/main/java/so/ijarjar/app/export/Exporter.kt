@@ -160,7 +160,14 @@ class Exporter(
         handler.postDelayed(object : Runnable {
             override fun run() {
                 val tr = transformer ?: return
-                if (tr.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) callback.onProgress(holder.progress)
+                // the encoder's number can reach 100% while layers (3D, videos) are still being drawn:
+                // show whichever is behind, so the bar tells the truth
+                var pct = if (tr.getProgress(holder) == Transformer.PROGRESS_STATE_AVAILABLE) holder.progress else 0
+                if (project.layers.isNotEmpty()) {
+                    val total = (project.durationMs * 30 / 1000).coerceAtLeast(1)
+                    pct = minOf(pct, (overlayFrames * 100 / total).toInt().coerceAtMost(99))
+                }
+                callback.onProgress(pct)
                 handler.postDelayed(this, 300)
             }
         }, 300)
@@ -331,6 +338,8 @@ class Exporter(
     // ------------------------------------------------------------------ transparent MOV
 
     @Volatile private var cancelled = false
+    /** Frames of layers drawn so far (for an honest progress bar). */
+    @Volatile var overlayFrames = 0L
 
     /**
      * Transparent video: every frame of the layers (no main track, no background) is drawn with the
@@ -398,6 +407,7 @@ class Exporter(
         private val settings = OverlaySettings.Builder().build()
 
         override fun getBitmap(presentationTimeUs: Long): Bitmap {
+            overlayFrames++
             val t = clipStartMs + clock.localMs(presentationTimeUs)
             val bmp = frameSource.canvasBitmap(w, h)
             val active = project.layers.filter { it.isActive(t) }

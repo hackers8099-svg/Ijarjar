@@ -367,7 +367,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         panelBox = object : FrameLayout(this) {
             // the panel never takes more than ~38% of the screen, so the preview stays big
             override fun onMeasure(w: Int, h: Int) {
-                val maxH = (resources.displayMetrics.heightPixels * 0.38f).toInt()
+                val maxH = (resources.displayMetrics.heightPixels * (if (panelFull) 0.86f else 0.38f)).toInt()
                 val mode = MeasureSpec.getMode(h)
                 val limit = if (mode == MeasureSpec.UNSPECIFIED) maxH else minOf(maxH, MeasureSpec.getSize(h))
                 super.onMeasure(w, MeasureSpec.makeMeasureSpec(limit, MeasureSpec.AT_MOST))
@@ -448,6 +448,7 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     override fun detachPanel(panel: Panel) {
         if (this.panel !== panel) return
+        if (panelFull) { panelFull = false; panelBox.requestLayout() }
         this.panel = null
         panelBox.removeAllViews()
         panelBox.visibility = View.GONE
@@ -463,6 +464,8 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
 
     private var panelPlay: ImageView? = null
     private var activeDope: DopeSheetView? = null
+    /** The keyframe sheet fills the screen (Fit). */
+    private var panelFull = false
     private var graphProp = 0
 
     private fun updatePlayButton() {
@@ -3266,10 +3269,17 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         refreshNav()
 
         // ---- After Effects style: a row per property with its keyframes (replaces the small time bar)
+        LayerRenderer.keyMode = 0
         d.view.addView(View(this).apply { tag = "mini"; visibility = View.GONE })
         val sheet = DopeSheetView(this, l, { timeMs }, { t -> onKeyframeTap(t); refreshNav() }) { live(); refreshNav() }
         activeDope = sheet
         sheet.onSelect = { k -> activeGraph?.selected = k }
+        sheet.onAddKey = { t ->
+            onKeyframeTap(t)
+            if (LayerRenderer.keyframeAt(l, timeMs) == null && l.isActive(timeMs)) toggleKeyframe(false)
+            sheet.selected = LayerRenderer.keyframeAt(l, timeMs)
+            refreshNav(); refreshBody(); sheet.invalidate()
+        }
         sheet.onRow = { p -> graphProp = p; activeGraph?.prop = p }
         val ctl = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val pb = Ui.iconButton(this, if (engine.isPlaying) R.drawable.ic_pause else R.drawable.ic_play, 22f) { togglePlay() }
@@ -3323,21 +3333,27 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         ctl.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_out, 20f) { sheet.zoom(0.5f) })
         ctl.addView(Ui.iconButton(this, R.drawable.ic_zoom_in, 20f) { sheet.zoom(2f) })
-        ctl.addView(Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(8f), dp(8f), dp(8f), dp(8f)); setOnClickListener { sheet.fit() }; Ui.press(this) })
+        // Fit: the sheet fills the screen with the curve of the picked row under it; tap again to make it small
+        val bigGraph = GraphView(this, l, { live(); sheet.invalidate() }) { t -> onKeyframeTap(t); refreshNav() }.apply { visibility = View.GONE }
+        val fitBtn = Ui.text(this, "Fit", 12f, Ui.TEXT).apply { setPadding(dp(10f), dp(7f), dp(10f), dp(7f)); background = Ui.roundBg(Ui.SURFACE2, dp(12f).toFloat()); Ui.press(this) }
+        fitBtn.setOnClickListener {
+            panelFull = !panelFull
+            sheet.big = panelFull; sheet.fit()
+            bigGraph.visibility = if (panelFull) View.VISIBLE else View.GONE
+            if (panelFull) { bigGraph.prop = graphProp; bigGraph.selected = sheet.selected; activeGraph = bigGraph }
+            fitBtn.text = if (panelFull) "Fit ✕" else "Fit"
+            fitBtn.background = Ui.roundBg(if (panelFull) Ui.ACCENT else Ui.SURFACE2, dp(12f).toFloat())
+            fitBtn.setTextColor(if (panelFull) 0xFF00201E.toInt() else Ui.TEXT)
+            panelBox.requestLayout()
+        }
+        ctl.addView(fitBtn)
         d.top.addView(ctl)
         d.top.addView(sheet, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(2f) })
+        d.top.addView(bigGraph, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(240f)).apply { topMargin = dp(8f) })
 
         Ui.tabs(this, root, listOf(
             tr("Qiimaha", "Values") to { body: LinearLayout ->
                 fun blurRow() {
-        body.addView(Ui.choiceRow(this, listOf(tr("◆ Keyframe cusub", "◆ New keyframe"), tr("Beddel kan u dhow", "Edit nearest"), tr("Dhaqaaji dhammaan", "Move all")), LayerRenderer.keyMode) {
-            LayerRenderer.keyMode = it
-            toast(when (it) {
-                0 -> tr("Marka aad layer-ka beddesho, keyframe cusub ayaa la samaynayaa (sida AE).", "Changing the layer adds a keyframe at the playhead (like AE).")
-                1 -> tr("Isbeddelku wuxuu galayaa keyframe-ka ugu dhow — mid cusub lama samaynayo.", "Changes go into the nearest keyframe — no new one is made.")
-                else -> tr("Animation-ka oo dhan ayaa dhaqaaqaya — keyframe-yada lama tirtirayo.", "The whole animation moves — no keyframe is removed.")
-            })
-        })
                     body.addView(Ui.choiceRow(this, listOf("Motion blur: " + tr("Maya", "Off"), "Motion blur: " + tr("Haa", "On")), if (l.motionBlur) 1 else 0) { l.motionBlur = it == 1; live() })
                 }
                 refreshBody = { body.removeAllViews(); blurRow(); keyDials(body, l) { refreshNav() } }
@@ -4331,32 +4347,46 @@ class EditorActivity : AppCompatActivity(), StageView.Listener, TimelineView.Lis
         root.addView(status)
         var exporter: Exporter? = null
         val startBtn = Ui.button(this, tr("Bilow dhoofinta", "Start export")) {}
+        val stopBtn = Ui.button(this, "■ " + tr("Jooji", "Stop"), false) {}.apply { visibility = View.GONE }
+        var started = 0L
+        stopBtn.setOnClickListener {
+            exporter?.cancel(); exporter = null
+            status.text = tr("Waa la joojiyay", "Stopped"); bar.visibility = View.GONE
+            stopBtn.visibility = View.GONE; startBtn.isEnabled = true; startBtn.visibility = View.VISIBLE
+        }
         startBtn.setOnClickListener {
             startBtn.isEnabled = false
+            startBtn.visibility = View.GONE; stopBtn.visibility = View.VISIBLE
+            started = System.currentTimeMillis()
             bar.visibility = View.VISIBLE
             status.text = tr("Waa la samaynayaa… fadlan sug", "Rendering… please wait")
             save()
             val mime = if (mov) "video/quicktime" else "video/mp4"
             exporter = Exporter(this, ProjectStore.fromJson(ProjectStore.toJson(project)), res, mov = mov, alpha = alpha, callback = object : Exporter.Callback {
-                override fun onProgress(percent: Int) { bar.progress = percent; status.text = tr("Waa la samaynayaa… ", "Rendering… ") + "$percent%" }
+                override fun onProgress(percent: Int) {
+                    bar.progress = percent
+                    val sec = (System.currentTimeMillis() - started) / 1000
+                    status.text = tr("Waa la samaynayaa… ", "Rendering… ") + "$percent%" + "  ·  ${sec / 60}:${"%02d".format(sec % 60)}"
+                }
                 override fun onDone(uri: Uri?, file: File) {
                     bar.progress = 100
                     val mb = "%.1f MB".format(file.length() / 1048576f)
                     status.text = tr("✓ Dhammaad: ", "✓ Finished: ") + TimelineView.fmt(project.durationMs) + " · " + mb + "\n" +
                         (if (uri != null) tr("Waa la keydiyay: Gallery → Movies/IjarJar", "Saved: Gallery → Movies/IjarJar") else tr("Diyaar", "Done"))
-                    startBtn.visibility = View.GONE
+                    startBtn.visibility = View.GONE; stopBtn.visibility = View.GONE
                     buttonRow(root, tr("Fur", "Open") to { openMedia(uri, file, mime) }, tr("Wadaag", "Share") to { shareMedia(uri, file, mime) })
                     exporter = null
                 }
                 override fun onError(message: String) {
                     status.text = tr("Khalad: ", "Error: ") + message + if (res > 1080) tr(" — isku day 1080p", " — try 1080p") else ""
-                    startBtn.isEnabled = true
+                    startBtn.isEnabled = true; startBtn.visibility = View.VISIBLE; stopBtn.visibility = View.GONE
                     exporter = null
                 }
             })
             exporter?.start()
         }
         root.addView(startBtn)
+        root.addView(stopBtn)
         d.setOnDismissListener { exporter?.cancel() }
         d.show()
     }

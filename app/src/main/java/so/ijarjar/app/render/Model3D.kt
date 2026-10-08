@@ -460,7 +460,7 @@ object Model3D {
         }
     }
 
-    /** Renders the model; safe to call from any thread (waits up to 2 s). */
+    /** Renders the model; safe to call from any thread (waits for the frame). */
     fun render(context: Context, uri: String, w: Int, h: Int, rx: Float, ry: Float,
                looks: List<Look> = emptyList(), highlight: String? = null, light: Light = Light()): Bitmap? {
         val hd = synchronized(this) {
@@ -476,7 +476,9 @@ object Model3D {
             out = try { renderNow(context.applicationContext, uri, w.coerceIn(16, 2048), h.coerceIn(16, 2048), rx, ry, looks, highlight, light) } catch (t: Throwable) { null }
             latch.countDown()
         }
-        latch.await(2, TimeUnit.SECONDS)
+        // export waits for every frame (a short timeout here made jobs pile up and export crawl);
+        // the screen thread never calls this (it uses renderAsync)
+        latch.await(15, TimeUnit.SECONDS)
         return out
     }
 

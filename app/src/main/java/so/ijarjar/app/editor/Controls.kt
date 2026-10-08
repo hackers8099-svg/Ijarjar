@@ -664,7 +664,11 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
 
     private val labelW get() = 76 * d
     private val rulerH get() = 20 * d
-    private val rowH get() = 26 * d
+    /** Big rows when the sheet fills the screen (Fit). */
+    var big = false
+        set(v) { field = v; requestLayout(); invalidate() }
+    var onAddKey: ((Long) -> Unit)? = null
+    private val rowH get() = (if (big) 44 else 26) * d
     override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), (rulerH + rowH * rows.size + 4 * d).toInt())
 
     // visible time (ms inside the layer)
@@ -809,17 +813,21 @@ class DopeSheetView(context: Context, private val layer: Layer, private val time
                     1 -> onSeek(layer.startMs + t(e.x))
                     2 -> dragKey?.let { k ->
                         if (abs(e.x - downX) < slop) return true
-                        val ks = layer.keyframes.sortedBy { it.t }; val i = ks.indexOf(k)
-                        val lo = (ks.getOrNull(i - 1)?.t ?: -1L) + 20; val hi = (ks.getOrNull(i + 1)?.t ?: (layer.durationMs + 1)) - 20
-                        k.t = t(e.x).coerceIn(lo.coerceAtLeast(0), hi.coerceAtMost(layer.durationMs))
+                        // free: a keyframe can go anywhere, even past the others
+                        var nt = t(e.x)
+                        while (layer.keyframes.any { it !== k && abs(it.t - nt) < 10 }) nt += 10
+                        k.t = nt.coerceIn(0, layer.durationMs)
                         onSeek(layer.startMs + k.t); onEdit(); invalidate()
                     }
                     3 -> panTo(panStart + ((downX - e.x) / (width - labelW - 16 * d) * (vEnd() - vs)).toLong())
                 }
             }
             MotionEvent.ACTION_UP -> {
-                if (mode == 5) {   // a tap on empty space: move the playhead there, drop the pick
-                    selected = null; onSelect?.invoke(null); onSeek(layer.startMs + t(e.x))
+                if (mode == 5) {
+                    // a tap on an empty spot of a row: a new keyframe there (like clicking the AE timeline with the stopwatch on)
+                    val tt = layer.startMs + t(e.x)
+                    if (e.y > rulerH && onAddKey != null) { selectedRow = ((e.y - rulerH) / rowH).toInt().coerceIn(0, rows.size - 1); onAddKey?.invoke(tt) }
+                    else { selected = null; onSelect?.invoke(null); onSeek(tt) }
                 } else if (mode == 2 && abs(e.x - downX) < slop) dragKey?.let { onSeek(layer.startMs + it.t) }
                 mode = 0; dragKey = null
             }
